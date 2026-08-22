@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -9,16 +10,17 @@ import (
 )
 
 // Metrics aggregates proxy-wide Prometheus counters and latency histograms.
+// Each Server owns a private registry so multiple servers (and tests) can
+// coexist in one process without duplicate-registration panics.
 type Metrics struct {
 	requests        *prometheus.CounterVec
 	requestDuration *prometheus.HistogramVec
 	authSuccesses   *prometheus.CounterVec
 	authFailures    prometheus.Counter
-	reg             prometheus.Registerer
+	reg             *prometheus.Registry
 }
 
 func newMetrics() *Metrics {
-	reg := prometheus.DefaultRegisterer
 	m := &Metrics{
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "llm_proxy_requests_total",
@@ -37,9 +39,9 @@ func newMetrics() *Metrics {
 			Name: "llm_proxy_auth_failure_total",
 			Help: "Rejected API-key authentications.",
 		}),
-		reg: reg,
+		reg: prometheus.NewRegistry(),
 	}
-	reg.MustRegister(m.requests, m.requestDuration, m.authSuccesses, m.authFailures)
+	m.reg.MustRegister(m.requests, m.requestDuration, m.authSuccesses, m.authFailures)
 	return m
 }
 
@@ -48,32 +50,10 @@ func (m *Metrics) observe(method, path string, status int, d time.Duration) {
 	if code == 0 {
 		code = http.StatusOK
 	}
-	m.requests.WithLabelValues(method, path, itoa(code)).Inc()
+	m.requests.WithLabelValues(method, path, strconv.Itoa(code)).Inc()
 	m.requestDuration.WithLabelValues(method, path).Observe(d.Seconds())
 }
 
 func (m *Metrics) handler() http.Handler {
-	return promhttp.Handler()
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	neg := i < 0
-	if neg {
-		i = -i
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
+	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{})
 }

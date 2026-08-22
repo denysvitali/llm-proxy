@@ -6,7 +6,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 	"sync"
@@ -48,6 +47,7 @@ func New(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends
 		backends: backends,
 		byName:   byName,
 		metrics:  newMetrics(),
+		catalogs: newCatalogCache(),
 	}
 }
 
@@ -207,5 +207,3 @@ func (s *Server) sortedRoutes() []string {
 	sort.Strings(keys)
 	return keys
 }
-
-var _ = fmt.Sprintf // keep fmt imported during incremental bring-up
