@@ -67,7 +67,11 @@ jobs:
         env:
           VENICE_API_KEY: ${{ secrets.VENICE_API_KEY }}
 
+      # Each step runs with a fresh environment, so the secret must be mapped
+      # here too — llm-proxy reads it (api_key_env) when the serve step starts.
       - name: Start llm-proxy
+        env:
+          VENICE_API_KEY: ${{ secrets.VENICE_API_KEY }}
         run: |
           set -euo pipefail
           ./llm-proxy serve --config /tmp/llm-proxy-e2e/config.yaml > /tmp/llm-proxy-e2e/proxy.log 2>&1 &
