@@ -129,14 +129,12 @@ jobs:
           [model_providers.llm_proxy]
           name = "llm-proxy"
           base_url = "http://127.0.0.1:8090/v1"
-          wire_api = "chat"
+          env_key = "CODEX_PROVIDER_KEY"
+          wire_api = "responses"
           requires_openai_auth = false
-
-          [model_providers.llm_proxy.auth]
-          type = "static"
-          token = "$KEY"
           EOF
-          codex exec "Reply with exactly: E2E_OK" | tee /tmp/llm-proxy-e2e/codex.out
+          export CODEX_PROVIDER_KEY="$KEY"
+          codex exec --skip-git-repo-check "Reply with exactly: E2E_OK" | tee /tmp/llm-proxy-e2e/codex.out
           grep -q "E2E_OK" /tmp/llm-proxy-e2e/codex.out
 
       - name: Dump proxy log on failure
