@@ -84,9 +84,10 @@ jobs:
           ./llm-proxy keys create e2e --name ci --store /tmp/llm-proxy-e2e/keys.json | head -1 > /tmp/llm-proxy-e2e/proxy-key
           test -s /tmp/llm-proxy-e2e/proxy-key
 
-      # A valid key with an empty Venice balance answers HTTP 402; skip the
-      # live-model steps in that case instead of failing every push. Any other
-      # probe failure is real and fails the job.
+      # A valid key with an empty Venice balance answers HTTP 402, and an
+      # invalid key answers HTTP 401 ("invalid API key"); skip the live-model
+      # steps in those cases instead of failing every push. Any other probe
+      # failure is real and fails the job.
       - name: Probe Venice inference
         run: |
           set -euo pipefail
@@ -100,9 +101,9 @@ jobs:
             http://127.0.0.1:8090/v1/chat/completions \
             -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
             -d '{"model":"'$VENICE_MODEL'","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}' || echo 000)
-          if [ "$code" = "402" ] || grep -qiE 'insufficient.*(usd|diem|balance)|authentication failed' /tmp/llm-proxy-e2e/probe.json; then
+          if [ "$code" = "402" ] || grep -qiE 'insufficient.*(usd|diem|balance)|invalid api key|authentication' /tmp/llm-proxy-e2e/probe.json; then
             echo "LIVE_INFERENCE=no" >> "$GITHUB_ENV"
-            echo "::notice title=Live-model E2E skipped::Venice rejected inference (HTTP $code). Top up credits at https://venice.ai/settings/api or fix the VENICE_API_KEY secret."
+            echo "::notice title=Live-model E2E skipped::Venice rejected inference (HTTP $code). Fix the VENICE_API_KEY secret (paste the key exactly, no quotes/newline) or top up credits at https://venice.ai/settings/api."
             cat /tmp/llm-proxy-e2e/probe.json
           elif [ "$code" != "200" ]; then
             echo "unexpected probe failure (HTTP $code)"; cat /tmp/llm-proxy-e2e/probe.json; exit 1
