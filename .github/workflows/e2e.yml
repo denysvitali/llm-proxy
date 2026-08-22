@@ -55,6 +55,12 @@ jobs:
             # mismatched secret can be diagnosed without leaking it.
             echo "secret length: ${#VENICE_API_KEY}"
             echo "secret sha256: $(printf '%s' "$VENICE_API_KEY" | sha256sum | cut -d' ' -f1)"
+            # Origin check: does Venice accept this exact key from the
+            # runner's network? (Same key works from other networks; a 401
+            # here means origin-based rejection, not a bad secret.)
+            echo "runner egress: $(curl -sS -m 10 https://ipinfo.io/json | tr -d '\n' || echo unknown)"
+            echo "direct /models from runner: $(curl -s -o /dev/null -w '%{http_code}' -m 30 https://api.venice.ai/api/v1/models -H "Authorization: Bearer $VENICE_API_KEY")"
+            echo "direct /chat/completions from runner: $(curl -s -o /dev/null -w '%{http_code}' -m 60 https://api.venice.ai/api/v1/chat/completions -H "Authorization: Bearer $VENICE_API_KEY" -H 'Content-Type: application/json' -d '{"model":"'$VENICE_MODEL'","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}')"
           fi
           cat > /tmp/llm-proxy-e2e/config.yaml <<EOF
           server:
