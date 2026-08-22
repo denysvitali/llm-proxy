@@ -45,10 +45,10 @@ func New(baseURL, key string) *Client {
 
 func (c *Client) Name() string { return "venice" }
 
-// Supports: Venice is OpenAI-compatible; Anthropic requests are translated
-// by the server's translate package before reaching Send.
+// Supports: Venice exposes OpenAI Chat Completions natively; Anthropic and
+// Responses requests are translated or rejected by the server.
 func (c *Client) Supports(kind backend.Kind) bool {
-	return kind == backend.KindOpenAIChat || kind == backend.KindOpenAIResponses
+	return kind == backend.KindOpenAIChat
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {

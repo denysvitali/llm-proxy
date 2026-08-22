@@ -24,7 +24,7 @@ func TestSupports(t *testing.T) {
 		want bool
 	}{
 		{backend.KindOpenAIChat, true},
-		{backend.KindOpenAIResponses, true},
+		{backend.KindOpenAIResponses, false},
 		{backend.KindAnthropic, false},
 		{"", false},
 	} {
