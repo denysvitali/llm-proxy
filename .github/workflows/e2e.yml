@@ -51,6 +51,10 @@ jobs:
             echo "VENICE_API_KEY not set; live-model E2E steps will be skipped"
           else
             echo "HAS_KEY=yes" >> "$GITHUB_ENV"
+            # Fingerprint the stored value (never the value itself) so a
+            # mismatched secret can be diagnosed without leaking it.
+            echo "secret length: ${#VENICE_API_KEY}"
+            echo "secret sha256: $(printf '%s' "$VENICE_API_KEY" | sha256sum | cut -d' ' -f1)"
           fi
           cat > /tmp/llm-proxy-e2e/config.yaml <<EOF
           server:
