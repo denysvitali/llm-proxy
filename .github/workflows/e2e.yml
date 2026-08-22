@@ -51,16 +51,6 @@ jobs:
             echo "VENICE_API_KEY not set; live-model E2E steps will be skipped"
           else
             echo "HAS_KEY=yes" >> "$GITHUB_ENV"
-            # Fingerprint the stored value (never the value itself) so a
-            # mismatched secret can be diagnosed without leaking it.
-            echo "secret length: ${#VENICE_API_KEY}"
-            echo "secret sha256: $(printf '%s' "$VENICE_API_KEY" | sha256sum | cut -d' ' -f1)"
-            # Origin check: does Venice accept this exact key from the
-            # runner's network? (Same key works from other networks; a 401
-            # here means origin-based rejection, not a bad secret.)
-            echo "runner egress: $(curl -sS -m 10 https://ipinfo.io/json | tr -d '\n' || echo unknown)"
-            echo "direct /models from runner: $(curl -s -o /dev/null -w '%{http_code}' -m 30 https://api.venice.ai/api/v1/models -H "Authorization: Bearer $VENICE_API_KEY")"
-            echo "direct /chat/completions from runner: $(curl -s -o /dev/null -w '%{http_code}' -m 60 https://api.venice.ai/api/v1/chat/completions -H "Authorization: Bearer $VENICE_API_KEY" -H 'Content-Type: application/json' -d '{"model":"'$VENICE_MODEL'","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}')"
           fi
           cat > /tmp/llm-proxy-e2e/config.yaml <<EOF
           server:
@@ -77,6 +67,16 @@ jobs:
         env:
           VENICE_API_KEY: ${{ secrets.VENICE_API_KEY }}
 
+      # Create the user and key BEFORE starting the proxy: the server loads
+      # the keystore once at startup and does not watch the file, so keys
+      # written afterwards are unknown to it (401 on every request).
+      - name: Create proxy user and key
+        run: |
+          set -euo pipefail
+          ./llm-proxy keys create-user e2e --store /tmp/llm-proxy-e2e/keys.json
+          ./llm-proxy keys create e2e --name ci --store /tmp/llm-proxy-e2e/keys.json | head -1 > /tmp/llm-proxy-e2e/proxy-key
+          test -s /tmp/llm-proxy-e2e/proxy-key
+
       # Each step runs with a fresh environment, so the secret must be mapped
       # here too — llm-proxy reads it (api_key_env) when the serve step starts.
       - name: Start llm-proxy
@@ -90,13 +90,6 @@ jobs:
             sleep 0.2
           done
           echo "proxy did not become healthy"; cat /tmp/llm-proxy-e2e/proxy.log; exit 1
-
-      - name: Create proxy user and key
-        run: |
-          set -euo pipefail
-          ./llm-proxy keys create-user e2e --store /tmp/llm-proxy-e2e/keys.json
-          ./llm-proxy keys create e2e --name ci --store /tmp/llm-proxy-e2e/keys.json | head -1 > /tmp/llm-proxy-e2e/proxy-key
-          test -s /tmp/llm-proxy-e2e/proxy-key
 
       # A valid key with an empty Venice balance answers HTTP 402, and an
       # invalid key answers HTTP 401 ("invalid API key"); skip the live-model
