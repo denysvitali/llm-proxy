@@ -51,6 +51,10 @@ type Backend interface {
 	// Models lists model IDs this backend serves. Used by /v1/models and the
 	// dashboard; backends with no catalog may return a static list.
 	Models(ctx context.Context) ([]string, error)
+	// Supports reports whether this backend accepts the given inbound API
+	// shape natively (passthrough, no translation). The server translates
+	// when Supports is false and a route exists.
+	Supports(kind Kind) bool
 	// Send forwards a request upstream and returns the raw upstream response.
 	// The caller owns closing Response.Body. Implementations translate the
 	// Request into their native wire format themselves.

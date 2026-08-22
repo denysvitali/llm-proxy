@@ -45,6 +45,12 @@ func New(baseURL, key string) *Client {
 
 func (c *Client) Name() string { return "venice" }
 
+// Supports: Venice is OpenAI-compatible; Anthropic requests are translated
+// by the server's translate package before reaching Send.
+func (c *Client) Supports(kind backend.Kind) bool {
+	return kind == backend.KindOpenAIChat || kind == backend.KindOpenAIResponses
+}
+
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
 	if c.Key == "" {
 		return nil, fmt.Errorf("venice backend has no API key configured")
