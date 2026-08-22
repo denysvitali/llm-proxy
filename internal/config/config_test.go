@@ -1,0 +1,42 @@
+package config
+
+import (
+	"strings"
+	"testing"
+
+	_ "github.com/denysvitali/llm-proxy/internal/backend/all"
+)
+
+func TestValidateAcceptsRegisteredBackends(t *testing.T) {
+	cfg := &Config{
+		Server: ServerConfig{Listen: "127.0.0.1:8090"},
+		Backends: []BackendConfig{
+			{Type: "venice"},
+			{Type: "nous", APIKeyEnv: "NOUS_KEY"},
+		},
+		Routes: map[string]ModelRoute{
+			"stealth/ox-alpha": {Backend: "nous"},
+		},
+		DefaultRoute: ModelRoute{Backend: "venice"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateRejectsUnknownBackend(t *testing.T) {
+	cfg := &Config{
+		Server:   ServerConfig{Listen: "127.0.0.1:8090"},
+		Backends: []BackendConfig{{Type: "not-a-backend"}},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted unknown backend type")
+	}
+	if !strings.Contains(err.Error(), `unknown type "not-a-backend"`) {
+		t.Fatalf("error %q should name the unknown type", err)
+	}
+	if !strings.Contains(err.Error(), "venice") {
+		t.Fatalf("error %q should list registered backends", err)
+	}
+}

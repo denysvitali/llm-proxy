@@ -55,6 +55,12 @@ func (c *Client) HasAPIKey() bool {
 	return c.Key != ""
 }
 
+func init() {
+	backend.Register("opencode", func(opts backend.Options) (backend.Backend, error) {
+		return New(opts.BaseURL, opts.APIKey), nil
+	})
+}
+
 func (c *Client) Name() string { return "opencode" }
 
 // Supports: Zen exposes /messages and /chat/completions natively, so both

@@ -5,11 +5,15 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 // BackendConfig is one upstream provider entry.
 type BackendConfig struct {
-	// Type is "venice", "opencode", or "grok".
+	// Type is the registered backend identifier ("venice", "opencode",
+	// "grok", "nous", ...). Valid types come from the backend registry;
+	// binaries populate it by importing internal/backend/all.
 	Type string `mapstructure:"type"`
 	// BaseURL overrides the provider default endpoint.
 	BaseURL string `mapstructure:"base_url"`
@@ -89,10 +93,8 @@ func (c *Config) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, b := range c.Backends {
-		switch b.Type {
-		case "venice", "opencode", "grok":
-		default:
-			return fmt.Errorf("backends: unknown type %q", b.Type)
+		if !backend.Has(b.Type) {
+			return fmt.Errorf("backends: unknown type %q (registered: %v)", b.Type, backend.Names())
 		}
 		if seen[b.Type] {
 			return fmt.Errorf("backends: duplicate type %q", b.Type)

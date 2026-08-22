@@ -1,7 +1,9 @@
-// Package venice implements the Venice AI backend. Venice exposes an
-// OpenAI-compatible API, so chat-completions requests pass through with the
-// upstream key swapped in.
-package venice
+// Package nous implements the Nous Portal inference backend
+// (portal.nousresearch.com). The Portal exposes an OpenAI-compatible API at
+// inference-api.nousresearch.com serving chat completions, legacy completions,
+// embeddings, and the model catalog, so chat-completions requests pass through
+// with the upstream key swapped in.
+package nous
 
 import (
 	"bytes"
@@ -16,7 +18,7 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
-const defaultBaseURL = "https://api.venice.ai/api/v1"
+const defaultBaseURL = "https://inference-api.nousresearch.com/v1"
 
 type Client struct {
 	BaseURL string
@@ -43,34 +45,26 @@ func New(baseURL, key string) *Client {
 	}
 }
 
+func (c *Client) Name() string { return "nous" }
+
 func init() {
-	backend.Register("venice", func(opts backend.Options) (backend.Backend, error) {
+	backend.Register("nous", func(opts backend.Options) (backend.Backend, error) {
 		return New(opts.BaseURL, opts.APIKey), nil
 	})
 }
 
-func (c *Client) Name() string { return "venice" }
-
-// Supports: Venice exposes OpenAI Chat Completions natively; Anthropic and
-// Responses requests are translated or rejected by the server.
+// Supports: the Portal serves /chat/completions natively; Anthropic requests
+// are translated by the server's translate package before reaching Send. The
+// upstream has no Responses API endpoint.
 func (c *Client) Supports(kind backend.Kind) bool {
 	return kind == backend.KindOpenAIChat
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
 	if c.Key == "" {
-		return nil, fmt.Errorf("venice backend has no API key configured")
+		return nil, fmt.Errorf("nous backend has no API key configured")
 	}
-	var path string
-	switch req.Kind {
-	case backend.KindOpenAIChat:
-		path = "/chat/completions"
-	case backend.KindOpenAIResponses:
-		path = "/responses"
-	default:
-		return nil, fmt.Errorf("venice backend does not support kind %q", req.Kind)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(req.RawBody))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(req.RawBody))
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +76,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("request to Venice failed: %w", err)
+		return nil, fmt.Errorf("request to Nous Portal failed: %w", err)
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
@@ -103,9 +97,9 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	}
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("request to Venice failed: %w", err)
+		return nil, fmt.Errorf("request to Nous Portal failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, err
@@ -132,12 +126,12 @@ type HTTPError struct {
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("Venice returned HTTP %d: %s", e.Status, strings.TrimSpace(string(e.Body)))
+	return fmt.Sprintf("Nous Portal returned HTTP %d: %s", e.Status, strings.TrimSpace(string(e.Body)))
 }
 
 // ReadError drains an error response so its body can be surfaced to the client.
 func ReadError(resp *http.Response) *HTTPError {
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return &HTTPError{Status: resp.StatusCode, Body: b}
 }

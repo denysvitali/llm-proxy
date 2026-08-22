@@ -49,6 +49,12 @@ func New(baseURL, token string) *Client {
 
 func (c *Client) Name() string { return "grok" }
 
+func init() {
+	backend.Register("grok", func(opts backend.Options) (backend.Backend, error) {
+		return New(opts.BaseURL, opts.APIKey), nil
+	})
+}
+
 // Supports: the Grok subscription endpoint only speaks the OpenAI Responses
 // API; every other inbound shape is translated by the server before Send.
 func (c *Client) Supports(kind backend.Kind) bool {

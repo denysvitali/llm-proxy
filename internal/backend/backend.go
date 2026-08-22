@@ -45,8 +45,8 @@ type Response struct {
 // Backend is one upstream provider. Implementations must be safe for
 // concurrent use.
 type Backend interface {
-	// Name returns the backend identifier used in config and metrics ("venice",
-	// "opencode", "grok").
+	// Name returns the backend identifier used in config and metrics
+	// ("venice", "opencode", "grok", "nous").
 	Name() string
 	// Models lists model IDs this backend serves. Used by /v1/models and the
 	// dashboard; backends with no catalog may return a static list.
