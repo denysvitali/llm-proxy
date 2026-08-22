@@ -18,7 +18,7 @@ import (
 type responsesRequest struct {
 	Model             string                  `json:"model"`
 	Instructions      string                  `json:"instructions,omitempty"`
-	Input             []responsesInputItem    `json:"input"`
+	Input             responsesInputItems     `json:"input"`
 	Tools             []responsesFunctionTool `json:"tools,omitempty"`
 	ToolChoice        any                     `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool                   `json:"parallel_tool_calls,omitempty"`
@@ -28,6 +28,27 @@ type responsesRequest struct {
 	MaxOutputTokens   int                     `json:"max_output_tokens,omitempty"`
 	Temperature       *float64                `json:"temperature,omitempty"`
 	TopP              *float64                `json:"top_p,omitempty"`
+}
+
+// responsesInputItems accepts the two legal shapes of a Responses request
+// "input": an array of items, or a plain string treated as one user message.
+type responsesInputItems []responsesInputItem
+
+func (f *responsesInputItems) UnmarshalJSON(data []byte) error {
+	if text, ok := plainString(data); ok {
+		if strings.TrimSpace(text) == "" {
+			*f = nil
+			return nil
+		}
+		*f = responsesInputItems{responsesMessageItem("user", "input_text", text)}
+		return nil
+	}
+	var items []responsesInputItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		return err
+	}
+	*f = items
+	return nil
 }
 
 type responsesReasoning struct {
@@ -410,7 +431,7 @@ func ChatToResponses(body []byte, model string) ([]byte, error) {
 
 	converted := responsesRequest{
 		Model:           model,
-		Input:           []responsesInputItem{},
+		Input:           responsesInputItems{},
 		Stream:          chat.Stream,
 		Temperature:     chat.Temperature,
 		TopP:            chat.TopP,

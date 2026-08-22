@@ -355,33 +355,34 @@ func TestResponsesPassthroughRewritesModel(t *testing.T) {
 	}
 }
 
-func TestResponsesRejectedOnChatOnlyBackend(t *testing.T) {
+func TestResponsesTranslatedOnChatOnlyBackend(t *testing.T) {
 	fb := &fakeOABackend{
 		name:  "fakeoa",
 		kinds: map[backend.Kind]bool{backend.KindOpenAIChat: true},
+		body:  `{"id":"chatcmpl-x","choices":[{"message":{"role":"assistant","content":"E2E_OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
 	}
 	s := newOATestServer(t, fb, map[string]config.ModelRoute{
 		"gpt-c": {Backend: "fakeoa"},
 	})
 
+	// Plain-string "input" (one of the two legal Responses shapes) must be
+	// translated and served by a chat-only backend.
 	rec := postOpenAI(t, s, "/v1/responses", `{"model":"gpt-c","input":"hi"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
 	}
-	var body openAIErrorBody
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode error body: %v", err)
+		t.Fatalf("decode response body: %v", err)
 	}
-	if body.Error.Type != "invalid_request_error" {
-		t.Errorf("type = %q, want invalid_request_error", body.Error.Type)
+	if body["status"] != "completed" {
+		t.Errorf("status = %v, want completed", body["status"])
 	}
-	for _, want := range []string{"does not accept the Responses API", "; use /v1/chat/completions"} {
-		if !strings.Contains(body.Error.Message, want) {
-			t.Errorf("message = %q, want substring %q", body.Error.Message, want)
-		}
-	}
-	if fb.lastRequest() != nil {
-		t.Error("no request should have reached the backend")
+
+	// Malformed input still answers 400 with a translation error.
+	bad := postOpenAI(t, s, "/v1/responses", `{"model":"gpt-c","input":[{"type":"item_reference","id":"x"}]}`)
+	if bad.Code != http.StatusBadRequest {
+		t.Errorf("bad input status = %d, want 400, body = %s", bad.Code, bad.Body.String())
 	}
 }
 
