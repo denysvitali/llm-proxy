@@ -212,13 +212,11 @@ func HashKey(plain string) string {
 // VerifyHash reports whether plain matches a stored hash from HashKey.
 // A legacy/invalid hash format never matches.
 func VerifyHash(stored, plain string) bool {
-	var saltHex, sumHex string
-	if n, err := fmt.Sscanf(stored, "%64x:%64x", &saltHex, &sumHex); err != nil || n != 2 {
+	var salt, sum []byte
+	if n, err := fmt.Sscanf(stored, "%64x:%64x", &salt, &sum); err != nil || n != 2 {
 		return false
 	}
-	salt, err1 := hex.DecodeString(saltHex)
-	sum, err2 := hex.DecodeString(sumHex)
-	if err1 != nil || err2 != nil || len(salt) != 16 || len(sum) != sha256.Size {
+	if len(salt) != 16 || len(sum) != sha256.Size {
 		return false
 	}
 	calc := sha256.Sum256(append(salt, []byte(plain)...))
