@@ -30,6 +30,13 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Flush promotes streaming so SSE handlers flush through the wrapper.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // withMiddleware wraps the mux with panic recovery, request IDs, access
 // logging, metrics, body limits, and API-key authentication.
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
@@ -59,11 +66,17 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 			}).Info("request")
 		}()
 
-		if !s.authenticate(rec, r) {
+		if !isProbePath(r.URL.Path) && !s.authenticate(rec, r) {
 			return
 		}
 		next.ServeHTTP(rec, r)
 	})
+}
+
+// isProbePath reports whether a path must stay reachable without an API key
+// so orchestrators' liveness/readiness probes work.
+func isProbePath(path string) bool {
+	return path == "/healthz" || path == "/readyz"
 }
 
 // authenticate enforces the user API-key store when one is configured.

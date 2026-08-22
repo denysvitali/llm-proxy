@@ -11,6 +11,13 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
+// flusherFor returns a Flusher for w; middleware's statusRecorder implements
+// Flush so SSE handlers can flush through it.
+func flusherFor(w http.ResponseWriter) http.Flusher {
+	flusher, _ := w.(http.Flusher)
+	return flusher
+}
+
 // maxTranslatedResponse caps how much of an upstream response is buffered
 // when it must be translated before being handed to the client.
 const maxTranslatedResponse = 16 << 20
@@ -55,7 +62,7 @@ func copyUpstreamRequestID(dst, src http.Header) {
 // streamOpenAIBody copies an upstream body to the client, flushing after
 // every read (at most 32 KiB) so SSE events are delivered as they arrive.
 func streamOpenAIBody(w http.ResponseWriter, body io.Reader) {
-	flusher, _ := w.(http.Flusher)
+	flusher := flusherFor(w)
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := body.Read(buf)
@@ -77,7 +84,7 @@ func streamOpenAIBody(w http.ResponseWriter, body io.Reader) {
 // maxErrorRelay bytes of the upstream body (with its Content-Type) when there
 // is one, otherwise synthesize an OpenAI error with the mapped type.
 func relayOpenAIUpstreamError(w http.ResponseWriter, resp *backend.Response) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorRelay))
 	copyUpstreamRequestID(w.Header(), resp.Header)
 	if len(bytes.TrimSpace(data)) > 0 {
@@ -96,7 +103,7 @@ func relayOpenAIUpstreamError(w http.ResponseWriter, resp *backend.Response) {
 // relayOpenAIBody streams a successful upstream response through to the
 // client verbatim, preserving Content-Type and streaming with flushes.
 func relayOpenAIBody(w http.ResponseWriter, resp *backend.Response) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	copyUpstreamRequestID(w.Header(), resp.Header)
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		w.Header().Set("Content-Type", ct)
@@ -108,7 +115,7 @@ func relayOpenAIBody(w http.ResponseWriter, resp *backend.Response) {
 // relayOpenAITranslatedBody buffers a successful upstream Responses payload,
 // converts it to a chat-completions response, and writes it as JSON.
 func (s *Server) relayOpenAITranslatedBody(w http.ResponseWriter, resp *backend.Response, backendName, model string) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTranslatedResponse+1))
 	if err != nil {
 		s.log.WithError(err).WithField("backend", backendName).Warn("failed reading upstream response")
@@ -134,11 +141,11 @@ func (s *Server) relayOpenAITranslatedBody(w http.ResponseWriter, resp *backend.
 // relayOpenAIResponsesStream converts an upstream Responses SSE stream into
 // chat-completions chunks on the fly.
 func relayOpenAIResponsesStream(w http.ResponseWriter, resp *backend.Response, model string) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	copyUpstreamRequestID(w.Header(), resp.Header)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
+	flusher := flusherFor(w)
 	flush := func() {
 		if flusher != nil {
 			flusher.Flush()

@@ -154,7 +154,7 @@ func (s *Server) forwardNative(w http.ResponseWriter, r *http.Request, log logru
 		writeAnthropicError(w, http.StatusBadGateway, "api_error", "backend request failed")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.Status < 200 || resp.Status >= 300 {
 		s.relayUpstreamError(w, log, resp)
@@ -221,7 +221,7 @@ func (s *Server) forwardTranslated(
 		writeAnthropicError(w, http.StatusBadGateway, "api_error", "backend request failed")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.Status < 200 || resp.Status >= 300 {
 		s.relayUpstreamError(w, log, resp)

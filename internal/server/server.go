@@ -191,7 +191,7 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 // readBody enforces the configured maximum request body size.
 func (s *Server) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	body, err := readAll(r.Body, s.cfg.Server.MaxBodyBytes)
-	if err != nil {
+	if err != nil || bodyTooLarge(body, s.cfg.Server.MaxBodyBytes) {
 		writeError(w, r, http.StatusRequestEntityTooLarge, "invalid_request_error", "request body too large")
 		return nil, false
 	}
