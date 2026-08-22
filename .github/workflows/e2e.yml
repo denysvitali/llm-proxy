@@ -84,8 +84,34 @@ jobs:
           ./llm-proxy keys create e2e --name ci --store /tmp/llm-proxy-e2e/keys.json | head -1 > /tmp/llm-proxy-e2e/proxy-key
           test -s /tmp/llm-proxy-e2e/proxy-key
 
+      # A valid key with an empty Venice balance answers HTTP 402; skip the
+      # live-model steps in that case instead of failing every push. Any other
+      # probe failure is real and fails the job.
+      - name: Probe Venice inference
+        run: |
+          set -euo pipefail
+          if [ "${HAS_KEY}" != "yes" ]; then
+            echo "LIVE_INFERENCE=no" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
+          touch /tmp/llm-proxy-e2e/probe.json
+          code=$(curl -sS -o /tmp/llm-proxy-e2e/probe.json -w '%{http_code}' \
+            http://127.0.0.1:8090/v1/chat/completions \
+            -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+            -d '{"model":"'$VENICE_MODEL'","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}' || echo 000)
+          if [ "$code" = "402" ] || grep -qiE 'insufficient.*(usd|diem|balance)|authentication failed' /tmp/llm-proxy-e2e/probe.json; then
+            echo "LIVE_INFERENCE=no" >> "$GITHUB_ENV"
+            echo "::notice title=Live-model E2E skipped::Venice rejected inference (HTTP $code). Top up credits at https://venice.ai/settings/api or fix the VENICE_API_KEY secret."
+            cat /tmp/llm-proxy-e2e/probe.json
+          elif [ "$code" != "200" ]; then
+            echo "unexpected probe failure (HTTP $code)"; cat /tmp/llm-proxy-e2e/probe.json; exit 1
+          else
+            echo "LIVE_INFERENCE=yes" >> "$GITHUB_ENV"
+          fi
+
       - name: Smoke test Anthropic endpoint
-        if: env.HAS_KEY == 'yes'
+        if: env.HAS_KEY == 'yes' && env.LIVE_INFERENCE == 'yes'
         run: |
           set -euo pipefail
           KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
@@ -96,7 +122,7 @@ jobs:
           grep -q "content" /tmp/llm-proxy-e2e/messages.json
 
       - name: Smoke test OpenAI endpoint
-        if: env.HAS_KEY == 'yes'
+        if: env.HAS_KEY == 'yes' && env.LIVE_INFERENCE == 'yes'
         run: |
           set -euo pipefail
           KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
@@ -107,7 +133,7 @@ jobs:
           grep -q "choices" /tmp/llm-proxy-e2e/chat.json
 
       - name: Claude Code end-to-end
-        if: env.HAS_KEY == 'yes'
+        if: env.HAS_KEY == 'yes' && env.LIVE_INFERENCE == 'yes'
         run: |
           set -euo pipefail
           KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
@@ -117,7 +143,7 @@ jobs:
           grep -q "E2E_OK" /tmp/llm-proxy-e2e/claude.out
 
       - name: Codex end-to-end
-        if: env.HAS_KEY == 'yes'
+        if: env.HAS_KEY == 'yes' && env.LIVE_INFERENCE == 'yes'
         run: |
           set -euo pipefail
           KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
