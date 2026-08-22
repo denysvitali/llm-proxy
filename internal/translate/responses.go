@@ -18,7 +18,7 @@ import (
 type responsesRequest struct {
 	Model             string                  `json:"model"`
 	Instructions      string                  `json:"instructions,omitempty"`
-	Input             responsesInputItems     `json:"input"`
+	Input             json.RawMessage         `json:"input,omitempty"`
 	Tools             []responsesFunctionTool `json:"tools,omitempty"`
 	ToolChoice        any                     `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool                   `json:"parallel_tool_calls,omitempty"`
@@ -30,25 +30,28 @@ type responsesRequest struct {
 	TopP              *float64                `json:"top_p,omitempty"`
 }
 
-// responsesInputItems accepts the two legal shapes of a Responses request
-// "input": an array of items, or a plain string treated as one user message.
-type responsesInputItems []responsesInputItem
-
-func (f *responsesInputItems) UnmarshalJSON(data []byte) error {
-	if text, ok := plainString(data); ok {
-		if strings.TrimSpace(text) == "" {
-			*f = nil
-			return nil
+// inputItems decodes the request's input, which the Responses API allows as
+// either an array of typed items or the plain-string shorthand.
+func (r *responsesRequest) inputItems() ([]responsesInputItem, error) {
+	if len(r.Input) == 0 {
+		return nil, nil
+	}
+	if r.Input[0] == '"' {
+		var text string
+		if err := json.Unmarshal(r.Input, &text); err != nil {
+			return nil, err
 		}
-		*f = responsesInputItems{responsesMessageItem("user", "input_text", text)}
-		return nil
+		return []responsesInputItem{{
+			Type:    "message",
+			Role:    "user",
+			Content: mustMarshal([]responsesInputContent{{Type: "input_text", Text: text}}),
+		}}, nil
 	}
 	var items []responsesInputItem
-	if err := json.Unmarshal(data, &items); err != nil {
-		return err
+	if err := json.Unmarshal(r.Input, &items); err != nil {
+		return nil, err
 	}
-	*f = items
-	return nil
+	return items, nil
 }
 
 type responsesReasoning struct {
@@ -139,16 +142,18 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 		TopP:            request.TopP,
 	}
 
+	var inputItems []responsesInputItem
 	for _, message := range request.Messages {
 		items, err := responsesItems(message)
 		if err != nil {
 			return nil, err
 		}
-		converted.Input = append(converted.Input, items...)
+		inputItems = append(inputItems, items...)
 	}
-	if len(converted.Input) == 0 {
+	if len(inputItems) == 0 {
 		return nil, fmt.Errorf("request contains no messages")
 	}
+	converted.Input = mustMarshal(inputItems)
 
 	for _, tool := range request.Tools {
 		if tool.Name == "" {
@@ -431,12 +436,13 @@ func ChatToResponses(body []byte, model string) ([]byte, error) {
 
 	converted := responsesRequest{
 		Model:           model,
-		Input:           responsesInputItems{},
 		Stream:          chat.Stream,
 		Temperature:     chat.Temperature,
 		TopP:            chat.TopP,
 		MaxOutputTokens: chat.MaxCompletionTokens,
 	}
+
+	var inputItems []responsesInputItem
 	if converted.MaxOutputTokens <= 0 {
 		converted.MaxOutputTokens = chat.MaxTokens
 	}
@@ -453,10 +459,10 @@ func ChatToResponses(body []byte, model string) ([]byte, error) {
 			}
 		case "assistant":
 			if text := chatContentText(message.Content); text != "" {
-				converted.Input = append(converted.Input, responsesMessageItem("assistant", "output_text", text))
+				inputItems = append(inputItems, responsesMessageItem("assistant", "output_text", text))
 			}
 			for _, call := range message.ToolCalls {
-				converted.Input = append(converted.Input, responsesInputItem{
+				inputItems = append(inputItems, responsesInputItem{
 					Type:      "function_call",
 					CallID:    call.ID,
 					Name:      call.Function.Name,
@@ -464,15 +470,19 @@ func ChatToResponses(body []byte, model string) ([]byte, error) {
 				})
 			}
 		case "tool":
-			converted.Input = append(converted.Input, responsesInputItem{
+			inputItems = append(inputItems, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: message.ToolCallID,
 				Output: chatContentText(message.Content),
 			})
 		default:
-			converted.Input = append(converted.Input, chatUserItems(message)...)
+			inputItems = append(inputItems, chatUserItems(message)...)
 		}
 	}
+	if len(inputItems) == 0 {
+		return nil, fmt.Errorf("request contains no translatable messages")
+	}
+	converted.Input = mustMarshal(inputItems)
 	converted.Instructions = instructions.String()
 
 	for _, tool := range chat.Tools {
@@ -605,9 +615,10 @@ type chatChoiceOut struct {
 }
 
 type chatMessageOut struct {
-	Role      string            `json:"role"`
-	Content   string            `json:"content"`
-	ToolCalls []chatToolCallOut `json:"tool_calls,omitempty"`
+	Role             string            `json:"role"`
+	Content          string            `json:"content"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	ToolCalls        []chatToolCallOut `json:"tool_calls,omitempty"`
 }
 
 type chatToolCallOut struct {
@@ -622,9 +633,15 @@ type chatFuncOut struct {
 }
 
 type chatUsageOut struct {
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	PromptTokens        int64               `json:"prompt_tokens"`
+	CompletionTokens    int64               `json:"completion_tokens"`
+	TotalTokens         int64               `json:"total_tokens"`
+	PromptTokensDetails *cachedTokensDetail `json:"prompt_tokens_details,omitempty"`
+}
+
+// cachedTokensDetail is the OpenAI usage detail carrying cache-hit counts.
+type cachedTokensDetail struct {
+	CachedTokens int64 `json:"cached_tokens"`
 }
 
 // ChatFromResponses converts a non-streaming Responses API response into an

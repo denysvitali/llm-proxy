@@ -23,7 +23,11 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
 	}
-	if len(req.Input) == 0 {
+	input, err := req.inputItems()
+	if err != nil {
+		return nil, fmt.Errorf("decode input: %w", err)
+	}
+	if len(input) == 0 {
 		return nil, fmt.Errorf("request contains no input items")
 	}
 
@@ -47,7 +51,7 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 		})
 	}
 
-	for i, item := range req.Input {
+	for i, item := range input {
 		switch item.Type {
 		case "message":
 			msg, err := chatMessageFromItem(item)

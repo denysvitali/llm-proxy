@@ -97,11 +97,17 @@ func TestHandleModelsMergesAndSorts(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
+	// Qualified "<backend>/<id>" entries always appear; bare IDs only when
+	// unambiguous, so "shared-model" (both backends) exists in qualified
+	// form only.
 	want := modelList{
 		Object: "list",
 		Data: []modelEntry{
 			{ID: "alpha", Object: "model", OwnedBy: "opencode"},
-			{ID: "shared-model", Object: "model", OwnedBy: "venice"}, // dedup: first backend wins
+			{ID: "opencode/alpha", Object: "model", OwnedBy: "opencode"},
+			{ID: "opencode/shared-model", Object: "model", OwnedBy: "opencode"},
+			{ID: "venice/shared-model", Object: "model", OwnedBy: "venice"},
+			{ID: "venice/zephyr", Object: "model", OwnedBy: "venice"},
 			{ID: "zephyr", Object: "model", OwnedBy: "venice"},
 		},
 	}
@@ -126,6 +132,7 @@ func TestHandleModelsToleratesBackendFailure(t *testing.T) {
 	}
 	want := modelList{Object: "list", Data: []modelEntry{
 		{ID: "venice-only", Object: "model", OwnedBy: "venice"},
+		{ID: "venice/venice-only", Object: "model", OwnedBy: "venice"},
 	}}
 	if !reflect.DeepEqual(list, want) {
 		t.Errorf("list mismatch:\n got %+v\nwant %+v", list, want)

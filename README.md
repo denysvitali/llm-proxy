@@ -94,7 +94,11 @@ claude
 ```
 
 Requests hit `/v1/messages`; models are routed as described under
-[Model routing](#model-routing).
+[Model routing](#model-routing). To pin one backend regardless of routes,
+prefix the model with the backend name, e.g.
+`claude --model grok/grok-4-0709` or `claude --model venice/qwen3-235b` —
+the proxy translates Anthropic Messages to that backend's wire format
+automatically (see [API translation](#api-translation)).
 
 ### Codex
 
@@ -111,7 +115,29 @@ wire_api = "responses"
 env_key = "LLM_PROXY_API_KEY"
 ```
 
-Then run Codex with `LLM_PROXY_API_KEY` set to a `llx_...` key.
+Then run Codex with `LLM_PROXY_API_KEY` set to a `llx_...` key and pick any
+served model — e.g. `codex -m "venice/qwen3-235b-a32b-fp8"`. Chat-only and
+Anthropic-only backends work too: the proxy translates the Responses API onto
+whatever the backend speaks (see [API translation](#api-translation)).
+
+## API translation
+
+Every endpoint accepts every backend: the proxy carries a full translation
+matrix between the three supported client APIs and the three upstream wire
+formats, so a single proxy hostname serves any client against any backend.
+
+| Client speaks ↓ / Backend speaks → | Anthropic Messages | Chat Completions | Responses |
+| --- | --- | --- | --- |
+| **Anthropic Messages** (`/v1/messages`) | passthrough | translated | translated |
+| **Chat Completions** (`/v1/chat/completions`) | translated | passthrough | translated |
+| **Responses** (`/v1/responses`) | translated | translated | passthrough |
+
+Translation covers requests, non-streaming responses, and streaming (SSE)
+events in both directions — including tool definitions, tool calls/results,
+thinking/reasoning content, images, token usage (with cache-hit details), and
+stop/finish reasons. When a backend supports several wire formats, the most
+natural one for the inbound API is used (native first, then OpenAI shapes
+before Anthropic).
 
 ### Generic OpenAI SDKs
 
@@ -140,6 +166,13 @@ key as `api_key`.
 
 Every inbound request carries a model name, which resolves in this order:
 
+0. **Qualified IDs** — `<backend>/<model>` addresses one backend directly and
+   beats every other rule. The prefix must name a registered, enabled backend;
+   the remainder (split at the *first* slash) is sent upstream verbatim, so
+   nested upstream names work: `nous/nousresearch/hermes-4-70b` routes to the
+   `nous` backend with model `nousresearch/hermes-4-70b`. This lets a client
+   be configured once with the proxy hostname and select per-request which
+   backend serves it.
 1. **Explicit routes** — an exact match in `routes`.
 2. **Backend catalogs** — the enabled backends' live model lists, consulted in
    configuration order; first catalog containing the model wins. Catalogs are
@@ -148,7 +181,13 @@ Every inbound request carries a model name, which resolves in this order:
 3. **Default route** — `default_route.backend`, with the model rewritten by
    `default_route.model` when set.
 
-Unroutable models answer `404`.
+Unroutable models answer `404`; a qualified ID naming a disabled backend
+answers `404` too rather than falling through to another backend.
+
+`GET /v1/models` lists every enabled backend's catalog both bare and in its
+qualified `<backend>/<id>` form (bare IDs only when unambiguous across
+backends), so clients can copy an ID straight into their configuration.
+`?backend=<name>` restricts the answer to one backend's catalog.
 
 ## Configuration
 
@@ -214,11 +253,11 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 
 | Method | Path                          | Purpose                                        |
 | ------ | ----------------------------- | ---------------------------------------------- |
-| POST   | `/v1/messages`                | Anthropic Messages API                         |
+| POST   | `/v1/messages`                | Anthropic Messages API (any backend, via [translation](#api-translation)) |
 | POST   | `/v1/messages/count_tokens`   | Anthropic token counting                       |
-| POST   | `/v1/chat/completions`        | OpenAI Chat Completions API                    |
-| POST   | `/v1/responses`               | OpenAI Responses API                           |
-| GET    | `/v1/models`                  | Merged model catalog across enabled backends   |
+| POST   | `/v1/chat/completions`        | OpenAI Chat Completions API (any backend)      |
+| POST   | `/v1/responses`               | OpenAI Responses API (any backend)             |
+| GET    | `/v1/models`                  | Merged model catalog, bare + qualified `<backend>/<id>` IDs |
 | GET    | `/`                           | Dashboard: status, routing, per-model stats, client setup |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |

@@ -357,26 +357,70 @@ func TestResponsesPassthroughRewritesModel(t *testing.T) {
 
 func TestResponsesTranslatedOnChatOnlyBackend(t *testing.T) {
 	fb := &fakeOABackend{
-		name:  "fakeoa",
-		kinds: map[backend.Kind]bool{backend.KindOpenAIChat: true},
-		body:  `{"id":"chatcmpl-x","choices":[{"message":{"role":"assistant","content":"E2E_OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+		name:   "fakeoa",
+		kinds:  map[backend.Kind]bool{backend.KindOpenAIChat: true},
+		header: http.Header{"Content-Type": []string{"application/json"}},
+		body: `{"id":"chatcmpl-1","model":"upstream-c","choices":[{"index":0,` +
+			`"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],` +
+			`"usage":{"prompt_tokens":3,"completion_tokens":2}}`,
 	}
 	s := newOATestServer(t, fb, map[string]config.ModelRoute{
-		"gpt-c": {Backend: "fakeoa"},
+		"gpt-c": {Backend: "fakeoa", Model: "upstream-c"},
 	})
 
-	// Plain-string "input" (one of the two legal Responses shapes) must be
-	// translated and served by a chat-only backend.
 	rec := postOpenAI(t, s, "/v1/responses", `{"model":"gpt-c","input":"hi"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
 	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	req := fb.lastRequest()
+	if req == nil {
+		t.Fatal("no request reached the backend")
+	}
+	if req.Kind != backend.KindOpenAIChat {
+		t.Errorf("Kind = %q, want %q", req.Kind, backend.KindOpenAIChat)
+	}
+	if req.Model != "upstream-c" {
+		t.Errorf("Model = %q, want upstream-c", req.Model)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(req.RawBody, &forwarded); err != nil {
+		t.Fatalf("decode forwarded body: %v", err)
+	}
+	if _, ok := forwarded["messages"]; !ok {
+		t.Errorf("forwarded body = %v, want chat messages", forwarded)
+	}
+
+	var out struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		Output []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response body: %v", err)
 	}
-	if body["status"] != "completed" {
-		t.Errorf("status = %v, want completed", body["status"])
+	if out.Status != "completed" {
+		t.Errorf("status = %q, want completed", out.Status)
+	}
+	found := false
+	for _, item := range out.Output {
+		for _, c := range item.Content {
+			if c.Type == "output_text" && c.Text == "hello" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("output = %+v, want an output_text item carrying %q", out.Output, "hello")
 	}
 
 	// Malformed input still answers 400 with a translation error.

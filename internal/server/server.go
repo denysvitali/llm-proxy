@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,10 +79,21 @@ type route struct {
 }
 
 // resolve maps an inbound model name to a backend + upstream model.
-// Order: explicit Routes entry, then live catalogs of enabled backends in
-// config order, then DefaultRoute. ok=false means no route exists; callers
-// answer 404 (model not found).
+// A "<backend>/<model>" ID has highest precedence: it addresses one backend
+// directly, bypassing routes, catalogs and DefaultRoute (split at the first
+// "/", so nested upstream names like "nousresearch/hermes-4-70b" on backend
+// "nous" work). Otherwise: explicit Routes entry, then live catalogs of
+// enabled backends in config order, then DefaultRoute. ok=false means no
+// route exists; callers answer 404 (model not found).
 func (s *Server) resolve(ctx context.Context, model string) (route, bool) {
+	if prefix, rest, found := strings.Cut(model, "/"); found && rest != "" {
+		if b, known := s.byName[prefix]; known {
+			if !s.enabled(prefix) {
+				return route{}, false
+			}
+			return route{backend: b, model: rest}, true
+		}
+	}
 	if r, ok := s.cfg.Routes[model]; ok {
 		if b, known := s.byName[r.Backend]; known && s.enabled(r.Backend) {
 			upstream := r.Model

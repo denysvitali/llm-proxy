@@ -1,143 +1,49 @@
 package translate
 
 import (
-	"bufio"
 	"encoding/json"
 	"io"
 	"strings"
 )
 
-// ResponsesStreamFromChat converts an upstream OpenAI chat-completions SSE
-// stream into OpenAI Responses API events, so Responses clients (Codex) can
-// consume chat-only backends. It mirrors the event subset the real API
-// emits for plain text and function calls: response.created,
-// response.output_item.added, response.output_text.delta,
-// response.function_call_arguments.delta, response.output_item.done and
-// response.completed.
-type ResponsesStreamFromChatWriter struct {
+// This file routes OpenAI Responses API clients (e.g. Codex, which no longer
+// supports wire_api="chat") onto chat-completions-only backends such as
+// Venice: requests are rewritten from Responses input items to chat messages,
+// non-streaming replies are converted back into a Responses response object,
+// and streaming replies are re-emitted as Responses SSE events.
+//
+// The event sequence itself (response.created → output_item.added / deltas /
+// output_item.done → response.completed) is built by responsesItemStream and
+// shared with the Anthropic-upstream adapter in responses_anthropic.go.
+
+// responsesItemStream assembles Responses API SSE events regardless of which
+// upstream dialect feeds it. Adapters translate their upstream events into
+// openItem/closeItem/append* calls; the stream owns sequencing, item IDs and
+// the terminal response.completed payload.
+type responsesItemStream struct {
 	writer io.Writer
 	flush  func()
 	model  string
 	id     string
 
+	started    bool // response.created emitted
 	finished   bool
-	createdID  bool
 	outputIdx  int
 	itemOpen   string // type of the currently open output item ("" = none)
 	itemText   strings.Builder
 	args       strings.Builder
 	callID     string
 	callName   string
-	finishSeen string
-	usage      *chatUsageOut
+	incomplete bool
+	usageIn    int64
+	usageOut   int64
 	doneItems  []map[string]any
-}
-
-func NewResponsesStreamFromChat(writer io.Writer, flush func(), model string) *ResponsesStreamFromChatWriter {
-	return &ResponsesStreamFromChatWriter{
-		writer: writer,
-		flush:  flush,
-		model:  model,
-		id:     "resp_llm-proxy",
-	}
-}
-
-// Consume reads the upstream chat-completions SSE stream to completion.
-func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		if payload == "[DONE]" {
-			s.Finish()
-			return nil
-		}
-		var chunk chatChunk
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue
-		}
-		if chunk.ID != "" {
-			s.id = chunk.ID
-		}
-		if chunk.Model != "" {
-			s.model = chunk.Model
-		}
-		s.consumeChunk(chunk)
-	}
-	s.Finish()
-	return scanner.Err()
-}
-
-func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) {
-	for _, choice := range chunk.Choices {
-		delta := choice.Delta
-		if delta.ReasoningContent != "" && !s.openItem("reasoning") {
-			return
-		}
-		if delta.Content != nil && *delta.Content != "" {
-			if !s.openItem("message") {
-				return
-			}
-			s.itemText.WriteString(*delta.Content)
-			s.emit("response.output_text.delta", map[string]any{
-				"type":         "response.output_text.delta",
-				"item_id":      s.id + "_msg",
-				"output_index": s.outputIdx,
-				"delta":        *delta.Content,
-			})
-		}
-		if delta.ReasoningContent != "" {
-			s.emit("response.reasoning_text.delta", map[string]any{
-				"type":         "response.reasoning_text.delta",
-				"item_id":      s.id + "_reasoning",
-				"output_index": s.outputIdx,
-				"delta":        delta.ReasoningContent,
-			})
-		}
-		for _, call := range delta.ToolCalls {
-			if call.ID != "" || call.Function.Name != "" {
-				// First fragment of a new tool call: open a function_call item.
-				s.closeItem()
-				s.callID = call.ID
-				s.callName = call.Function.Name
-				s.args.Reset()
-				if !s.openItem("function_call") {
-					return
-				}
-			}
-			if call.Function.Arguments != "" {
-				if s.itemOpen != "function_call" {
-					continue
-				}
-				s.args.WriteString(call.Function.Arguments)
-				s.emit("response.function_call_arguments.delta", map[string]any{
-					"type":         "response.function_call_arguments.delta",
-					"item_id":      s.callID,
-					"output_index": s.outputIdx,
-					"delta":        call.Function.Arguments,
-				})
-			}
-		}
-		if choice.FinishReason != nil {
-			s.finishSeen = *choice.FinishReason
-		}
-	}
-	if chunk.Usage != nil {
-		s.usage = chunk.Usage
-	}
 }
 
 // openItem emits response.created (once) and response.output_item.added for a
 // new output item of the given type. It returns false if the stream already
 // finished.
-func (s *ResponsesStreamFromChatWriter) openItem(kind string) bool {
+func (s *responsesItemStream) openItem(kind string) bool {
 	if s.finished {
 		return false
 	}
@@ -185,7 +91,7 @@ func (s *ResponsesStreamFromChatWriter) openItem(kind string) bool {
 }
 
 // closeItem emits response.output_item.done for the currently open item.
-func (s *ResponsesStreamFromChatWriter) closeItem() {
+func (s *responsesItemStream) closeItem() {
 	if s.itemOpen == "" {
 		return
 	}
@@ -222,11 +128,59 @@ func (s *ResponsesStreamFromChatWriter) closeItem() {
 	s.itemText.Reset()
 }
 
-func (s *ResponsesStreamFromChatWriter) ensureCreated() {
-	if s.createdID {
+// appendText streams one text fragment into the open message item.
+func (s *responsesItemStream) appendText(delta string) {
+	s.itemText.WriteString(delta)
+	s.emit("response.output_text.delta", map[string]any{
+		"type":         "response.output_text.delta",
+		"item_id":      s.id + "_msg",
+		"output_index": s.outputIdx,
+		"delta":        delta,
+	})
+}
+
+// appendReasoning streams one reasoning fragment into the open reasoning item.
+func (s *responsesItemStream) appendReasoning(delta string) {
+	s.emit("response.reasoning_text.delta", map[string]any{
+		"type":         "response.reasoning_text.delta",
+		"item_id":      s.id + "_reasoning",
+		"output_index": s.outputIdx,
+		"delta":        delta,
+	})
+}
+
+// appendArgs streams one function-arguments fragment into the open
+// function_call item.
+func (s *responsesItemStream) appendArgs(delta string) {
+	s.args.WriteString(delta)
+	s.emit("response.function_call_arguments.delta", map[string]any{
+		"type":         "response.function_call_arguments.delta",
+		"item_id":      s.callID,
+		"output_index": s.outputIdx,
+		"delta":        delta,
+	})
+}
+
+// startToolCall closes whatever is open and prepares a fresh function_call
+// item under the given call identity.
+func (s *responsesItemStream) startToolCall(callID, name string) {
+	s.closeItem()
+	s.callID = callID
+	s.callName = name
+	s.args.Reset()
+	s.openItem("function_call")
+}
+
+// setUsage records the final token counts reported upstream.
+func (s *responsesItemStream) setUsage(in, out int64) {
+	s.usageIn, s.usageOut = in, out
+}
+
+func (s *responsesItemStream) ensureCreated() {
+	if s.started {
 		return
 	}
-	s.createdID = true
+	s.started = true
 	s.emit("response.created", map[string]any{
 		"type": "response.created",
 		"response": map[string]any{
@@ -235,32 +189,30 @@ func (s *ResponsesStreamFromChatWriter) ensureCreated() {
 	})
 }
 
-// Finish closes any open item and emits response.completed.
-func (s *ResponsesStreamFromChatWriter) Finish() {
+// Finish closes any open item and emits response.completed. It is safe to
+// call more than once.
+func (s *responsesItemStream) Finish() {
 	if s.finished {
 		return
 	}
 	s.finished = true
-	if !s.createdID {
+	if !s.started {
 		// Upstream produced nothing; still answer with a valid empty response.
 		s.ensureCreated()
 	}
 	s.closeItem()
 
 	status := "completed"
-	incomplete := map[string]any(nil)
-	if s.finishSeen == "length" {
+	if s.incomplete {
 		status = "incomplete"
-		incomplete = map[string]any{"reason": "max_output_tokens"}
 	}
-
 	response := map[string]any{
 		"id": s.id, "model": s.model, "status": status,
 		"output": s.collectedOutput(), "usage": s.usagePayload(),
 		"object": "response", "created_at": nowUnix(),
 	}
-	if incomplete != nil {
-		response["incomplete_details"] = incomplete
+	if s.incomplete {
+		response["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
 	}
 	s.emit("response.completed", map[string]any{
 		"type": "response.completed", "response": response,
@@ -269,26 +221,21 @@ func (s *ResponsesStreamFromChatWriter) Finish() {
 
 // collectedOutput returns the finished items for the terminal
 // response.completed payload.
-func (s *ResponsesStreamFromChatWriter) collectedOutput() []map[string]any {
+func (s *responsesItemStream) collectedOutput() []map[string]any {
 	if s.doneItems == nil {
 		return []map[string]any{}
 	}
 	return s.doneItems
 }
 
-func (s *ResponsesStreamFromChatWriter) usagePayload() map[string]any {
-	input, output := int64(0), int64(0)
-	if s.usage != nil {
-		input = s.usage.PromptTokens
-		output = s.usage.CompletionTokens
-	}
-	total := input + output
+func (s *responsesItemStream) usagePayload() map[string]any {
+	total := s.usageIn + s.usageOut
 	return map[string]any{
-		"input_tokens": input, "output_tokens": output, "total_tokens": total,
+		"input_tokens": s.usageIn, "output_tokens": s.usageOut, "total_tokens": total,
 	}
 }
 
-func (s *ResponsesStreamFromChatWriter) emit(event string, payload any) {
+func (s *responsesItemStream) emit(event string, payload any) {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return
@@ -299,4 +246,82 @@ func (s *ResponsesStreamFromChatWriter) emit(event string, payload any) {
 	if s.flush != nil {
 		s.flush()
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Chat-completions upstream adapter.
+
+// ResponsesStreamFromChat converts an upstream OpenAI chat-completions SSE
+// stream into OpenAI Responses API events, so Responses clients (Codex) can
+// consume chat-only backends. It mirrors the event subset the real API emits
+// for plain text and function calls.
+type ResponsesStreamFromChatWriter struct {
+	stream responsesItemStream
+}
+
+func NewResponsesStreamFromChat(writer io.Writer, flush func(), model string) *ResponsesStreamFromChatWriter {
+	return &ResponsesStreamFromChatWriter{stream: responsesItemStream{
+		writer: writer,
+		flush:  flush,
+		model:  model,
+		id:     "resp_llm-proxy",
+	}}
+}
+
+// Consume reads the upstream chat-completions SSE stream to completion.
+func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
+	err := scanSSE(body, func(payload []byte) (bool, error) {
+		var chunk chatChunk
+		if err := json.Unmarshal(payload, &chunk); err != nil {
+			return false, nil
+		}
+		if chunk.ID != "" {
+			s.stream.id = chunk.ID
+		}
+		if chunk.Model != "" {
+			s.stream.model = chunk.Model
+		}
+		s.consumeChunk(chunk)
+		return s.stream.finished, nil
+	})
+	s.Finish()
+	return err
+}
+
+func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) {
+	for _, choice := range chunk.Choices {
+		delta := choice.Delta
+		if delta.Content != nil && *delta.Content != "" {
+			if !s.stream.openItem("message") {
+				return
+			}
+			s.stream.appendText(*delta.Content)
+		}
+		if delta.ReasoningContent != "" {
+			if !s.stream.openItem("reasoning") {
+				return
+			}
+			s.stream.appendReasoning(delta.ReasoningContent)
+		}
+		for _, call := range delta.ToolCalls {
+			if call.ID != "" || call.Function.Name != "" {
+				// First fragment of a new tool call: open a function_call item.
+				s.stream.startToolCall(call.ID, call.Function.Name)
+			}
+			if call.Function.Arguments != "" && s.stream.itemOpen == "function_call" {
+				s.stream.appendArgs(call.Function.Arguments)
+			}
+		}
+		if choice.FinishReason != nil && *choice.FinishReason == "length" {
+			s.stream.incomplete = true
+		}
+	}
+	if chunk.Usage != nil {
+		s.stream.setUsage(chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens)
+	}
+}
+
+// Finish closes any open item and emits response.completed.
+func (s *ResponsesStreamFromChatWriter) Finish() {
+	s.stream.Finish()
 }

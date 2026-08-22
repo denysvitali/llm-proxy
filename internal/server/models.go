@@ -52,8 +52,11 @@ func (s *Server) enabledBackends() []backend.Backend {
 }
 
 // handleModels serves GET /v1/models with the merged catalogs of all enabled
-// backends, deduplicated and sorted. One failing backend is logged and
-// skipped; when every enabled backend fails the answer is 502.
+// backends. Every entry is also listed in its qualified "<backend>/<id>"
+// form — the ID clients can use on any endpoint to pin one backend. Bare IDs
+// are listed only when unique across backends (ambiguous ones exist solely
+// in qualified form). One failing backend is logged and skipped; when every
+// enabled backend fails the answer is 502.
 // ?backend=<name> restricts the answer to a single backend.
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if name := strings.TrimSpace(r.URL.Query().Get("backend")); name != "" {
@@ -62,8 +65,11 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	all := s.enabledBackends()
-	data := make([]modelEntry, 0, len(all)*8)
-	seen := make(map[string]bool)
+	type catalog struct {
+		name   string
+		models []string
+	}
+	lists := make([]catalog, 0, len(all))
 	failures := 0
 	for _, b := range all {
 		models, err := s.backendCatalog(r.Context(), b)
@@ -72,17 +78,37 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			s.log.WithError(err).WithField("backend", b.Name()).Warn("catalog fetch failed")
 			continue
 		}
-		for _, id := range models {
-			if id == "" || seen[id] {
-				continue
-			}
-			seen[id] = true
-			data = append(data, modelEntry{ID: id, Object: "model", OwnedBy: b.Name()})
-		}
+		lists = append(lists, catalog{name: b.Name(), models: models})
 	}
 	if failures > 0 && failures == len(all) {
 		writeOpenAIError(w, http.StatusBadGateway, "api_error", "all backend catalogs are unavailable")
 		return
+	}
+
+	bare := make(map[string]int)
+	for _, c := range lists {
+		for _, id := range c.models {
+			if id != "" {
+				bare[id]++
+			}
+		}
+	}
+	data := make([]modelEntry, 0, 2*len(bare))
+	seen := make(map[string]bool)
+	add := func(id, owner string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		data = append(data, modelEntry{ID: id, Object: "model", OwnedBy: owner})
+	}
+	for _, c := range lists {
+		for _, id := range c.models {
+			add(c.name+"/"+id, c.name)
+			if bare[id] == 1 {
+				add(id, c.name)
+			}
+		}
 	}
 	sort.Slice(data, func(i, j int) bool { return data[i].ID < data[j].ID })
 	writeJSON(w, http.StatusOK, modelList{Object: "list", Data: data})
