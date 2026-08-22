@@ -106,7 +106,7 @@ func TestSendRouting(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Send(%q) returned error: %v", tt.kind, err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if rec.Method != http.MethodPost {
 				t.Errorf("method = %q, want POST", rec.Method)
@@ -128,7 +128,7 @@ func TestSendUnsupportedKind(t *testing.T) {
 		RawBody: []byte(`{}`),
 	})
 	if err == nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		t.Fatalf("Send(KindOpenAIResponses) succeeded, want error")
 	}
 	if !strings.Contains(err.Error(), "does not support") {
@@ -147,7 +147,7 @@ func TestSendAnthropicHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send returned error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if got, want := rec.Header.Get("Anthropic-Version"), "2023-06-01"; got != want {
 		t.Errorf("Anthropic-Version = %q, want %q", got, want)
@@ -183,7 +183,7 @@ func TestSendAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Send returned error: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if got := rec.Header.Get("Authorization"); got != tt.wantAuth {
 				t.Errorf("Authorization = %q, want %q", got, tt.wantAuth)
@@ -212,7 +212,7 @@ func TestSendAcceptSwitchesOnStreaming(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Send returned error: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if got := rec.Header.Get("Accept"); got != tt.want {
 				t.Errorf("Accept = %q, want %q", got, tt.want)
@@ -232,7 +232,7 @@ func TestSendRawBodyForwardedByteForByte(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send returned error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if len(rec.Body) != len(raw) {
 		t.Fatalf("forwarded body length = %d, want %d (%q)", len(rec.Body), len(raw), rec.Body)

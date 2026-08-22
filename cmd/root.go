@@ -3,7 +3,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -36,10 +35,4 @@ var versionCmd = &cobra.Command{
 	Run: func(*cobra.Command, []string) {
 		fmt.Println("llm-proxy " + version)
 	},
-}
-
-// fatal prints an error and exits non-zero.
-func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "error:", err)
-	os.Exit(1)
 }

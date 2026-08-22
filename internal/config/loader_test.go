@@ -19,7 +19,7 @@ func isolateEnv(t *testing.T) {
 			continue
 		}
 		old, had := os.LookupEnv(key)
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 		if had {
 			v := old
 			restore = append(restore, func() { _ = os.Setenv(key, v) })

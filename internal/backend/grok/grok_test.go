@@ -88,7 +88,7 @@ func TestSendHeadersAndBody(t *testing.T) {
 
 				w.Header().Set("Content-Type", tt.wantAccept)
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, `{"ok":true}`)
+				_, _ = fmt.Fprint(w, `{"ok":true}`)
 			}))
 			defer srv.Close()
 
@@ -102,7 +102,7 @@ func TestSendHeadersAndBody(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Send: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if gotPath != "/responses" {
 				t.Errorf("request path = %q, want %q", gotPath, "/responses")
@@ -136,7 +136,7 @@ func TestSendEmptyToken(t *testing.T) {
 	})
 	if err == nil {
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		t.Fatal("Send with empty token returned nil error, want error before any HTTP call")
 	}

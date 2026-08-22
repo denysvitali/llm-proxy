@@ -90,13 +90,13 @@ func init() {
 				return err
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNAME\tCREATED\tSTATUS")
+			_, _ = fmt.Fprintln(w, "ID\tNAME\tCREATED\tSTATUS")
 			for _, k := range keys {
 				status := "active"
 				if k.Disabled {
 					status = "disabled"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", k.ID, k.Name, k.CreatedAt.Format("2006-01-02"), status)
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", k.ID, k.Name, k.CreatedAt.Format("2006-01-02"), status)
 			}
 			return w.Flush()
 		},

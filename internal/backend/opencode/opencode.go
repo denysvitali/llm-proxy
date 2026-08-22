@@ -133,7 +133,7 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, err
@@ -166,7 +166,7 @@ func (e *HTTPError) Error() string {
 
 // ReadError drains an error response so its body can be surfaced to the client.
 func ReadError(resp *http.Response) *HTTPError {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return &HTTPError{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: b}
 }

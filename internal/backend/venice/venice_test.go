@@ -109,7 +109,7 @@ func TestSendRoutingHeadersAndBody(t *testing.T) {
 				}
 
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, `{"ok":true}`)
+				_, _ = fmt.Fprint(w, `{"ok":true}`)
 			}))
 			defer srv.Close()
 
@@ -123,7 +123,7 @@ func TestSendRoutingHeadersAndBody(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Send: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if gotMethod != http.MethodPost {
 				t.Errorf("request method = %q, want POST", gotMethod)
@@ -161,7 +161,7 @@ func TestSendUnsupportedKind(t *testing.T) {
 		})
 		if err == nil {
 			if resp != nil && resp.Body != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 			t.Errorf("Send(%q) returned nil error, want unsupported-kind error", kind)
 			continue
@@ -190,7 +190,7 @@ func TestSendEmptyKey(t *testing.T) {
 	})
 	if err == nil {
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		t.Fatal("Send with empty key returned nil error, want error before any HTTP call")
 	}
@@ -221,7 +221,7 @@ func TestModelsFiltersEmptyIDsAndAuth(t *testing.T) {
 				if tt.wantHeader && r.Header.Get("Authorization") != "Bearer "+tt.key {
 					t.Errorf("Authorization = %q, want %q", r.Header.Get("Authorization"), "Bearer "+tt.key)
 				}
-				fmt.Fprint(w, payload)
+				_, _ = fmt.Fprint(w, payload)
 			}))
 			defer srv.Close()
 
