@@ -1,0 +1,58 @@
+// Package backend defines the interface every upstream provider implements
+// and the shared request/response types that flow through the proxy.
+package backend
+
+import (
+	"context"
+	"net/http"
+)
+
+// Kind selects which inbound API shape the client used.
+type Kind string
+
+const (
+	// KindAnthropic is the Anthropic Messages API (/v1/messages).
+	KindAnthropic Kind = "anthropic"
+	// KindOpenAIChat is the OpenAI Chat Completions API (/v1/chat/completions).
+	KindOpenAIChat Kind = "openai-chat"
+	// KindOpenAIResponses is the OpenAI Responses API (/v1/responses).
+	KindOpenAIResponses Kind = "openai-responses"
+)
+
+// Request carries the decoded inbound request. RawBody keeps the exact bytes
+// the client sent so passthrough backends can forward them unmodified, while
+// Model holds the client-requested model name for routing decisions.
+type Request struct {
+	Kind      Kind
+	Model     string
+	RawBody   []byte
+	Header    http.Header
+	Streaming bool
+}
+
+// Response is what a backend hands back to the server layer: an upstream HTTP
+// response whose body is streamed straight to the client (after any required
+// translation).
+type Response struct {
+	Status int
+	Header http.Header
+	Body   interface {
+		Read([]byte) (int, error)
+		Close() error
+	}
+}
+
+// Backend is one upstream provider. Implementations must be safe for
+// concurrent use.
+type Backend interface {
+	// Name returns the backend identifier used in config and metrics ("venice",
+	// "opencode", "grok").
+	Name() string
+	// Models lists model IDs this backend serves. Used by /v1/models and the
+	// dashboard; backends with no catalog may return a static list.
+	Models(ctx context.Context) ([]string, error)
+	// Send forwards a request upstream and returns the raw upstream response.
+	// The caller owns closing Response.Body. Implementations translate the
+	// Request into their native wire format themselves.
+	Send(ctx context.Context, req *Request) (*Response, error)
+}
