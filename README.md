@@ -22,6 +22,7 @@ credentials.
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
 | `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
+| `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
 
 When an inbound request targets an API shape the routed backend does not speak
@@ -162,7 +163,7 @@ flags are applied afterwards.
 | `server.listen`              | `LLM_PROXY_SERVER_LISTEN`            | `127.0.0.1:8090`         | HTTP listen address.                                                        |
 | `server.max_body_bytes`      | `LLM_PROXY_SERVER_MAX_BODY_BYTES`    | `16777216`               | Maximum request body size (16 MiB).                                         |
 | `auth.file`                  | `LLM_PROXY_AUTH_FILE`                | *(empty)*                | Path to the JSON key store. Empty disables client authentication — keep the listener on loopback if you do. |
-| `backends[].type`            | —                                    | required                 | `venice`, `opencode`, or `grok`; at most one backend per type.              |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`venice`, `opencode`, `grok`, `nous`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding the upstream key (recommended).     |
 | `backends[].api_key`         | —                                    | —                        | Literal upstream key; only used when `api_key_env` is unset or empty.       |

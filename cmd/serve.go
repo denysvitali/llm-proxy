@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,9 +12,7 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/auth"
 	"github.com/denysvitali/llm-proxy/internal/backend"
-	"github.com/denysvitali/llm-proxy/internal/backend/grok"
-	"github.com/denysvitali/llm-proxy/internal/backend/opencode"
-	"github.com/denysvitali/llm-proxy/internal/backend/venice"
+	_ "github.com/denysvitali/llm-proxy/internal/backend/all"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/denysvitali/llm-proxy/internal/server"
 	"github.com/sirupsen/logrus"
@@ -48,21 +47,21 @@ func init() {
 	serveCmd.Flags().StringVar(&serveConfig, "config", "", "path to config.yaml")
 }
 
-// buildBackends constructs the enabled backends in configuration order.
-func buildBackends(cfg *config.Config) []backend.Backend {
-	var out []backend.Backend
+// buildBackends constructs the enabled backends in configuration order via
+// the backend registry.
+func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
+	out := make([]backend.Backend, 0, len(cfg.Backends))
 	for _, bc := range cfg.EnabledBackends() {
-		key := bc.ResolveKey(os.Getenv)
-		switch bc.Type {
-		case "venice":
-			out = append(out, venice.New(bc.BaseURL, key))
-		case "opencode":
-			out = append(out, opencode.New(bc.BaseURL, key))
-		case "grok":
-			out = append(out, grok.New(bc.BaseURL, key))
+		b, err := backend.New(bc.Type, backend.Options{
+			BaseURL: bc.BaseURL,
+			APIKey:  bc.ResolveKey(os.Getenv),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("backends: %w", err)
 		}
+		out = append(out, b)
 	}
-	return out
+	return out, nil
 }
 
 func runServe(cfg *config.Config) error {
@@ -84,7 +83,10 @@ func runServe(cfg *config.Config) error {
 		}
 	}
 
-	backends := buildBackends(cfg)
+	backends, err := buildBackends(cfg)
+	if err != nil {
+		return err
+	}
 	if len(backends) == 0 {
 		log.Warn("no backends configured; only health/dashboard endpoints will work")
 	}

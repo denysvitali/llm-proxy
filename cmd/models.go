@@ -17,7 +17,10 @@ var modelsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		backends := buildBackends(cfg)
+		backends, err := buildBackends(cfg)
+		if err != nil {
+			return err
+		}
 		if len(backends) == 0 {
 			return fmt.Errorf("no backends configured")
 		}
