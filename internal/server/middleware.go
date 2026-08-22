@@ -1,0 +1,106 @@
+package server
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// statusRecorder captures the response status for logging and metrics.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	n, err := r.ResponseWriter.Write(b)
+	r.bytes += int64(n)
+	return n, err
+}
+
+// withMiddleware wraps the mux with panic recovery, request IDs, access
+// logging, metrics, body limits, and API-key authentication.
+func (s *Server) withMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		requestID := newRequestID()
+		w.Header().Set("X-Request-Id", requestID)
+		rec := &statusRecorder{ResponseWriter: w}
+		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID))
+
+		defer func() {
+			if p := recover(); p != nil {
+				s.log.WithField("request_id", requestID).
+					Errorf("panic serving %s %s: %v", r.Method, r.URL.Path, p)
+				if rec.status == 0 {
+					writeError(rec, r, http.StatusInternalServerError, "api_error", "internal proxy error")
+				}
+			}
+			s.metrics.observe(r.Method, r.URL.Path, rec.status, time.Since(start))
+			s.log.WithFields(map[string]any{
+				"request_id": requestID,
+				"method":     r.Method,
+				"path":       r.URL.Path,
+				"status":     rec.status,
+				"bytes":      rec.bytes,
+				"duration":   time.Since(start).String(),
+			}).Info("request")
+		}()
+
+		if !s.authenticate(rec, r) {
+			return
+		}
+		next.ServeHTTP(rec, r)
+	})
+}
+
+// authenticate enforces the user API-key store when one is configured.
+// Keys arrive as Authorization: Bearer or x-api-key. Anthropic clients get an
+// Anthropic-shaped 401, OpenAI clients an OpenAI-shaped one.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
+	if s.auth == nil {
+		return true
+	}
+	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if key == "" || key == "Bearer" {
+		key = r.Header.Get("x-api-key")
+	}
+	user, ok := s.auth.Verify(key)
+	if !ok {
+		s.metrics.authFailures.Inc()
+		message := "invalid API key"
+		if key == "" {
+			message = "missing API key"
+		}
+		writeError(w, r, http.StatusUnauthorized, "authentication_error", message)
+		return false
+	}
+	s.metrics.authSuccesses.WithLabelValues(user).Inc()
+	return true
+}
+
+type requestIDKey struct{}
+
+// RequestID extracts the middleware-assigned request ID.
+func RequestID(ctx context.Context) string {
+	v, _ := ctx.Value(requestIDKey{}).(string)
+	return v
+}
+
+func newRequestID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}

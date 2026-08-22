@@ -46,9 +46,9 @@ type AuthConfig struct {
 
 // Config is the whole configuration document.
 type Config struct {
-	BaseURL string        `mapstructure:"base_url"`
-	Server  ServerConfig  `mapstructure:"server"`
-	Auth    AuthConfig    `mapstructure:"auth"`
+	BaseURL  string          `mapstructure:"base_url"`
+	Server   ServerConfig    `mapstructure:"server"`
+	Auth     AuthConfig      `mapstructure:"auth"`
 	Backends []BackendConfig `mapstructure:"backends"`
 
 	// Routes maps inbound model name -> explicit route. Models not listed are
@@ -111,6 +111,28 @@ func (c *Config) Validate() error {
 		_ = b.Enabled
 	}
 	return nil
+}
+
+// BackendByType returns the backend entry of the given type.
+func (c *Config) BackendByType(t string) (BackendConfig, bool) {
+	for _, b := range c.Backends {
+		if b.Type == t {
+			return b, true
+		}
+	}
+	return BackendConfig{}, false
+}
+
+// EnabledBackends returns entries whose Enabled flag is not false, in
+// configuration order.
+func (c *Config) EnabledBackends() []BackendConfig {
+	out := make([]BackendConfig, 0, len(c.Backends))
+	for _, b := range c.Backends {
+		if b.IsEnabled() {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // ResolveKey returns the upstream key for a backend: env var first, literal second.
