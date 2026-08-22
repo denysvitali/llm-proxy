@@ -1,0 +1,148 @@
+name: E2E
+
+# End-to-end tests: build llm-proxy, point Claude Code and Codex at it, and
+# exercise a real upstream (Venice). Skips gracefully when the VENICE_API_KEY
+# secret is not configured.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VENICE_MODEL: stealth-ox-alpha
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build llm-proxy
+        run: go build -o llm-proxy .
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install Codex
+        run: npm install -g @openai/codex
+
+      - name: Configure proxy
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/llm-proxy-e2e
+          if [ -z "${VENICE_API_KEY:-}" ]; then
+            echo "HAS_KEY=no" >> "$GITHUB_ENV"
+            echo "VENICE_API_KEY not set; live-model E2E steps will be skipped"
+          else
+            echo "HAS_KEY=yes" >> "$GITHUB_ENV"
+          fi
+          cat > /tmp/llm-proxy-e2e/config.yaml <<EOF
+          server:
+            listen: 127.0.0.1:8090
+          auth:
+            file: /tmp/llm-proxy-e2e/keys.json
+          log_level: info
+          backends:
+            - type: venice
+              api_key_env: VENICE_API_KEY
+          default_route:
+            backend: venice
+          EOF
+        env:
+          VENICE_API_KEY: ${{ secrets.VENICE_API_KEY }}
+
+      - name: Start llm-proxy
+        run: |
+          set -euo pipefail
+          ./llm-proxy serve --config /tmp/llm-proxy-e2e/config.yaml > /tmp/llm-proxy-e2e/proxy.log 2>&1 &
+          for i in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:8090/healthz > /dev/null; then exit 0; fi
+            sleep 0.2
+          done
+          echo "proxy did not become healthy"; cat /tmp/llm-proxy-e2e/proxy.log; exit 1
+
+      - name: Create proxy user and key
+        run: |
+          set -euo pipefail
+          ./llm-proxy keys create-user e2e --store /tmp/llm-proxy-e2e/keys.json
+          ./llm-proxy keys create e2e --name ci --store /tmp/llm-proxy-e2e/keys.json | head -1 > /tmp/llm-proxy-e2e/proxy-key
+          test -s /tmp/llm-proxy-e2e/proxy-key
+
+      - name: Smoke test Anthropic endpoint
+        if: env.HAS_KEY == 'yes'
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
+          curl -fsS http://127.0.0.1:8090/v1/messages \
+            -H "x-api-key: $KEY" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" \
+            -d '{"model":"'$VENICE_MODEL'","max_tokens":64,"messages":[{"role":"user","content":"Reply with exactly: E2E_OK"}]}' \
+            | tee /tmp/llm-proxy-e2e/messages.json
+          grep -q "content" /tmp/llm-proxy-e2e/messages.json
+
+      - name: Smoke test OpenAI endpoint
+        if: env.HAS_KEY == 'yes'
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
+          curl -fsS http://127.0.0.1:8090/v1/chat/completions \
+            -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+            -d '{"model":"'$VENICE_MODEL'","max_tokens":64,"messages":[{"role":"user","content":"Reply with exactly: E2E_OK"}]}' \
+            | tee /tmp/llm-proxy-e2e/chat.json
+          grep -q "choices" /tmp/llm-proxy-e2e/chat.json
+
+      - name: Claude Code end-to-end
+        if: env.HAS_KEY == 'yes'
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
+          export ANTHROPIC_BASE_URL=http://127.0.0.1:8090
+          export ANTHROPIC_AUTH_TOKEN="$KEY"
+          claude --model "$VENICE_MODEL" -p "Reply with exactly: E2E_OK" | tee /tmp/llm-proxy-e2e/claude.out
+          grep -q "E2E_OK" /tmp/llm-proxy-e2e/claude.out
+
+      - name: Codex end-to-end
+        if: env.HAS_KEY == 'yes'
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
+          mkdir -p ~/.codex
+          cat > ~/.codex/config.toml <<EOF
+          model = "$VENICE_MODEL"
+          model_provider = "llm_proxy"
+
+          [model_providers.llm_proxy]
+          name = "llm-proxy"
+          base_url = "http://127.0.0.1:8090/v1"
+          wire_api = "chat"
+          requires_openai_auth = false
+
+          [model_providers.llm_proxy.auth]
+          type = "static"
+          token = "$KEY"
+          EOF
+          codex exec "Reply with exactly: E2E_OK" | tee /tmp/llm-proxy-e2e/codex.out
+          grep -q "E2E_OK" /tmp/llm-proxy-e2e/codex.out
+
+      - name: Dump proxy log on failure
+        if: failure()
+        run: cat /tmp/llm-proxy-e2e/proxy.log || true
+
+      - name: Stop llm-proxy
+        if: always()
+        run: pkill -f 'llm-proxy serve' || true

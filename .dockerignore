@@ -1,0 +1,6 @@
+.git
+.github
+dist/
+*.md
+config.yaml
+keys.json

@@ -19,6 +19,15 @@ func Load() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	// Register defaults for the scalar keys: viper's AutomaticEnv only
+	// consults the environment for keys it already knows about, so without
+	// these an LLM_PROXY_* variable would be silently ignored whenever the
+	// key was absent from the config file.
+	v.SetDefault("server.listen", "127.0.0.1:8090")
+	v.SetDefault("server.max_body_bytes", 16<<20)
+	v.SetDefault("log_level", "info")
+	v.SetDefault("log_format", "text")
+
 	path := os.Getenv("LLM_PROXY_CONFIG")
 	if path == "" {
 		home, err := os.UserHomeDir()

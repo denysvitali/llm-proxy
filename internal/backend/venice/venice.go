@@ -55,10 +55,14 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if c.Key == "" {
 		return nil, fmt.Errorf("venice backend has no API key configured")
 	}
-	path := "/chat/completions"
+	var path string
 	switch req.Kind {
+	case backend.KindOpenAIChat:
+		path = "/chat/completions"
 	case backend.KindOpenAIResponses:
 		path = "/responses"
+	default:
+		return nil, fmt.Errorf("venice backend does not support kind %q", req.Kind)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(req.RawBody))
 	if err != nil {
