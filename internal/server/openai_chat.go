@@ -196,6 +196,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case route.backend.Supports(backend.KindOpenAIChat):
+		tr := s.stats.track(route.backend.Name(), route.model)
+		defer tr.done()
 		rewritten, err := rewriteModel(body, route.model)
 		if err != nil {
 			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
@@ -207,13 +209,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			s.failOpenAIBackend(w, route.backend, err)
 			return
 		}
+		tr.setUpstreamStatus(resp.Status)
 		if resp.Status < 200 || resp.Status > 299 {
 			relayOpenAIUpstreamError(w, resp)
 			return
 		}
+		sn := wrapUpstreamBody(tr, resp, env.Stream)
+		defer func() { sn.Finish(); _ = sn.Close() }()
 		relayOpenAIBody(w, resp)
 
 	case route.backend.Supports(backend.KindOpenAIResponses):
+		tr := s.stats.track(route.backend.Name(), route.model)
+		defer tr.done()
 		translated, err := translate.ChatToResponses(body, route.model)
 		if err != nil {
 			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
@@ -225,10 +232,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			s.failOpenAIBackend(w, route.backend, err)
 			return
 		}
+		tr.setUpstreamStatus(resp.Status)
 		if resp.Status < 200 || resp.Status > 299 {
 			relayOpenAIUpstreamError(w, resp)
 			return
 		}
+		sn := wrapUpstreamBody(tr, resp, env.Stream)
+		defer func() { sn.Finish(); _ = sn.Close() }()
 		if env.Stream {
 			relayOpenAIResponsesStream(w, resp, route.model)
 			return

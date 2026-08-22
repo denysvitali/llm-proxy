@@ -35,6 +35,8 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tr := s.stats.track(route.backend.Name(), route.model)
+	defer tr.done()
 	rewritten, err := rewriteModel(body, route.model)
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
@@ -46,9 +48,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		s.failOpenAIBackend(w, route.backend, err)
 		return
 	}
+	tr.setUpstreamStatus(resp.Status)
 	if resp.Status < 200 || resp.Status > 299 {
 		relayOpenAIUpstreamError(w, resp)
 		return
 	}
+	sn := wrapUpstreamBody(tr, resp, env.Stream)
+	defer func() { sn.Finish(); _ = sn.Close() }()
 	relayOpenAIBody(w, resp)
 }

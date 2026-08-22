@@ -55,7 +55,7 @@ func TestLiveNous(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data := make([]byte, 0, 8192)
 	buf := make([]byte, 4096)
 	for {

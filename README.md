@@ -219,10 +219,24 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | POST   | `/v1/chat/completions`        | OpenAI Chat Completions API                    |
 | POST   | `/v1/responses`               | OpenAI Responses API                           |
 | GET    | `/v1/models`                  | Merged model catalog across enabled backends   |
-| GET    | `/`                           | Dashboard: status, routing, client setup       |
+| GET    | `/`                           | Dashboard: status, routing, per-model stats, client setup |
+| GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |
 | GET    | `/metrics`                    | Prometheus metrics                             |
+
+### Model stats
+
+Every upstream request is recorded per backend + model. `/stats` (and the
+dashboard's *Model stats* table) summarizes it OpenRouter-style: uptime
+(successful / total requests), TTFT and end-to-end latency p50/p90/p99,
+output-token throughput p50/p90/p99, cache-hit rate, and tool-call error rate
+(errored `tool_result`s seen in later requests over tool calls observed in
+responses). Raw series for Prometheus/Grafana live under `/metrics`:
+`llm_proxy_model_requests_total`, `llm_proxy_model_ttft_seconds`,
+`llm_proxy_model_e2e_seconds`, `llm_proxy_model_tokens_total`,
+`llm_proxy_model_output_tokens_per_second`, `llm_proxy_model_tool_calls_total`,
+`llm_proxy_model_tool_errors_total`.
 
 ## Development
 

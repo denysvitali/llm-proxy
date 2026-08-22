@@ -26,6 +26,7 @@ type Server struct {
 	backends []backend.Backend
 	byName   map[string]backend.Backend
 	metrics  *Metrics
+	stats    *Stats
 	catalogs catalogCache
 }
 
@@ -40,13 +41,15 @@ func New(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends
 		byName[b.Name()] = b
 	}
 	cfg.Defaults()
+	metrics := newMetrics()
 	return &Server{
 		cfg:      cfg,
 		log:      log,
 		auth:     store,
 		backends: backends,
 		byName:   byName,
-		metrics:  newMetrics(),
+		metrics:  metrics,
+		stats:    newStats(metrics.reg),
 		catalogs: newCatalogCache(),
 	}
 }
@@ -59,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/responses", s.handleResponses)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics.handler())

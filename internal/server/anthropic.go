@@ -64,6 +64,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Errored tool results arrive one turn after the call they answer;
+	// counting them here is what makes the tool-call error rate meaningful.
+	s.stats.recordInboundToolErrors(body, route.backend.Name(), route.model)
+
 	log := s.log.WithFields(logrus.Fields{
 		"request_id": RequestID(r.Context()),
 		"model":      envelope.Model,
@@ -142,6 +146,9 @@ func wantsThinking(request *translate.Request) bool {
 // forwardNative sends an Anthropic-shaped body upstream unchanged except for
 // the rewritten model field, and relays the raw upstream response.
 func (s *Server) forwardNative(w http.ResponseWriter, r *http.Request, log logrus.FieldLogger, rt route, payload []byte, header http.Header, streaming bool) {
+	tr := s.stats.track(rt.backend.Name(), rt.model)
+	defer tr.done()
+
 	resp, err := rt.backend.Send(r.Context(), &backend.Request{
 		Kind:      backend.KindAnthropic,
 		Model:     rt.model,
@@ -154,7 +161,10 @@ func (s *Server) forwardNative(w http.ResponseWriter, r *http.Request, log logru
 		writeAnthropicError(w, http.StatusBadGateway, "api_error", "backend request failed")
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
+	tr.setUpstreamStatus(resp.Status)
+
+	sn := wrapUpstreamBody(tr, resp, streaming)
+	defer func() { sn.Finish(); _ = sn.Close() }()
 
 	if resp.Status < 200 || resp.Status >= 300 {
 		s.relayUpstreamError(w, log, resp)
@@ -209,6 +219,9 @@ func (s *Server) forwardTranslated(
 	newStream func(client io.Writer, flush func()) anthropicStreamWriter,
 	convert func([]byte) ([]byte, error),
 ) {
+	tr := s.stats.track(rt.backend.Name(), rt.model)
+	defer tr.done()
+
 	resp, err := rt.backend.Send(r.Context(), &backend.Request{
 		Kind:      kind,
 		Model:     rt.model,
@@ -221,7 +234,10 @@ func (s *Server) forwardTranslated(
 		writeAnthropicError(w, http.StatusBadGateway, "api_error", "backend request failed")
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
+	tr.setUpstreamStatus(resp.Status)
+
+	sn := wrapUpstreamBody(tr, resp, streaming)
+	defer func() { sn.Finish(); _ = sn.Close() }()
 
 	if resp.Status < 200 || resp.Status >= 300 {
 		s.relayUpstreamError(w, log, resp)

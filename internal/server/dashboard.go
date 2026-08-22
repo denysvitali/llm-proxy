@@ -43,6 +43,7 @@ type dashboardPage struct {
 	AuthEnabled   bool
 	Backends      []dashBackend
 	Routes        []dashRoute
+	Stats         []ModelStat
 	HasDefault    bool
 	DefaultRoute  dashRoute
 	ExampleModel  string
@@ -107,6 +108,8 @@ func (s *Server) buildDashboardPage(r *http.Request) dashboardPage {
 		page.DefaultRoute = dashRoute{Model: "anything unmatched", Backend: d.Backend, Upstream: d.Model}
 	}
 
+	page.Stats = s.stats.snapshot()
+
 	page.ClaudeSnippet = fmt.Sprintf(
 		"ANTHROPIC_BASE_URL=http://%s ANTHROPIC_AUTH_TOKEN=<key> claude --model %s",
 		r.Host, page.ExampleModel)
@@ -163,7 +166,14 @@ func baseURLHost(raw string) string {
 	return u.Host
 }
 
-var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html>
+// dashboardFuncs formats stat floats for the model-stats table.
+var dashboardFuncs = template.FuncMap{
+	"pct": func(f float64) string { return fmt.Sprintf("%.1f%%", f*100) },
+	"sec": func(f float64) string { return fmt.Sprintf("%.2fs", f) },
+	"tps": func(f float64) string { return fmt.Sprintf("%.0f", f) },
+}
+
+var dashboardTemplate = template.Must(template.New("dashboard").Funcs(dashboardFuncs).Parse(`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -262,6 +272,33 @@ p { margin: 6px 0 0; }
 </table>
 {{- else}}
 <p class="muted">No explicit routes configured.</p>
+{{- end}}
+</section>
+
+<section>
+<h2>Model stats</h2>
+<p class="muted">Per-model traffic since proxy start. Full percentiles in the <a href="/stats"><code>/stats</code></a> JSON; raw histograms under <code>/metrics</code>.</p>
+{{- if not .Stats}}
+<p class="muted">No model traffic recorded yet.</p>
+{{- else}}
+<table>
+<thead><tr><th>Backend / model</th><th>Requests</th><th>Uptime</th><th>TTFT p50 / p99</th><th>E2E p50 / p99</th><th>tok/s p50</th><th>Cache hit</th><th>Tool calls</th><th>Tool err rate</th></tr></thead>
+<tbody>
+{{- range .Stats}}
+<tr>
+<td><code>{{.Backend}}/{{.Model}}</code></td>
+<td>{{.Requests}}</td>
+<td>{{pct .Uptime}}</td>
+<td>{{sec .TTFT.P50}} / {{sec .TTFT.P99}}</td>
+<td>{{sec .E2E.P50}} / {{sec .E2E.P99}}</td>
+<td>{{tps .Throughput.P50}}</td>
+<td>{{pct .CacheRate}}</td>
+<td>{{.ToolCalls}}</td>
+<td>{{pct .ToolErrorRate}}</td>
+</tr>
+{{- end}}
+</tbody>
+</table>
 {{- end}}
 </section>
 
