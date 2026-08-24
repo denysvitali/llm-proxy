@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -22,7 +23,24 @@ type Client struct {
 	BaseURL string
 	Key     string
 	HTTP    *http.Client
+	// FreeOnly restricts the backend to models Venice prices at $0. The
+	// catalog is filtered and Send refuses anything not proven free.
+	FreeOnly bool
+
+	mu     sync.Mutex
+	prices map[string]modelPrice
 }
+
+// modelPrice holds Venice's published per-1M-token USD pricing. ok is false
+// when the /models payload carried no pricing block, which free_only treats
+// as "not proven free".
+type modelPrice struct {
+	InputUSD  float64
+	OutputUSD float64
+	ok        bool
+}
+
+func (p modelPrice) free() bool { return p.ok && p.InputUSD == 0 && p.OutputUSD == 0 }
 
 func New(baseURL, key string) *Client {
 	if baseURL == "" {
@@ -45,7 +63,9 @@ func New(baseURL, key string) *Client {
 
 func init() {
 	backend.Register("venice", func(opts backend.Options) (backend.Backend, error) {
-		return New(opts.BaseURL, opts.APIKey), nil
+		c := New(opts.BaseURL, opts.APIKey)
+		c.FreeOnly = opts.FreeOnly
+		return c, nil
 	})
 }
 
@@ -60,6 +80,14 @@ func (c *Client) Supports(kind backend.Kind) bool {
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
 	if c.Key == "" {
 		return nil, fmt.Errorf("venice backend has no API key configured")
+	}
+	if c.FreeOnly {
+		if err := c.ensurePrices(ctx); err != nil {
+			return nil, fmt.Errorf("venice free_only: load pricing: %w", err)
+		}
+		if p, known := c.priceFor(req.Model); !known || !p.free() {
+			return nil, fmt.Errorf("venice free_only: model %q is not free", req.Model)
+		}
 	}
 	var path string
 	switch req.Kind {
@@ -89,8 +117,54 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 
 type modelList struct {
 	Data []struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		ModelSpec *struct {
+			Pricing *struct {
+				Input *struct {
+					USD float64 `json:"usd"`
+				} `json:"input"`
+				Output *struct {
+					USD float64 `json:"usd"`
+				} `json:"output"`
+			} `json:"pricing"`
+		} `json:"model_spec"`
 	} `json:"data"`
+}
+
+// recordPrices folds a fetched catalog into the price cache under lock.
+func (c *Client) recordPrices(list *modelList) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.prices == nil {
+		c.prices = make(map[string]modelPrice, len(list.Data))
+	}
+	for _, m := range list.Data {
+		p := modelPrice{}
+		if m.ModelSpec != nil && m.ModelSpec.Pricing != nil && m.ModelSpec.Pricing.Input != nil && m.ModelSpec.Pricing.Output != nil {
+			p = modelPrice{InputUSD: m.ModelSpec.Pricing.Input.USD, OutputUSD: m.ModelSpec.Pricing.Output.USD, ok: true}
+		}
+		c.prices[m.ID] = p
+	}
+}
+
+// ensurePrices lazily fetches the catalog so Send can enforce free_only even
+// when no /v1/models listing ran first.
+func (c *Client) ensurePrices(ctx context.Context) error {
+	c.mu.Lock()
+	loaded := c.prices != nil
+	c.mu.Unlock()
+	if loaded {
+		return nil
+	}
+	_, err := c.Models(ctx)
+	return err
+}
+
+func (c *Client) priceFor(model string) (modelPrice, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p, ok := c.prices[model]
+	return p, ok
 }
 
 func (c *Client) Models(ctx context.Context) ([]string, error) {
@@ -117,11 +191,18 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	if err := json.Unmarshal(data, &list); err != nil {
 		return nil, err
 	}
+	c.recordPrices(&list)
 	models := make([]string, 0, len(list.Data))
 	for _, m := range list.Data {
-		if m.ID != "" {
-			models = append(models, m.ID)
+		if m.ID == "" {
+			continue
 		}
+		if c.FreeOnly {
+			if p, known := c.priceFor(m.ID); !known || !p.free() {
+				continue
+			}
+		}
+		models = append(models, m.ID)
 	}
 	return models, nil
 }

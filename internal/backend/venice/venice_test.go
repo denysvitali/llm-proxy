@@ -264,6 +264,86 @@ func TestModelsNon2xxHTTPError(t *testing.T) {
 	}
 }
 
+const freeOnlyCatalogPayload = `{"data":[
+	{"id":"stealth-ox-alpha","model_spec":{"pricing":{"input":{"usd":0},"output":{"usd":0}}}},
+	{"id":"claude-opus-5","model_spec":{"pricing":{"input":{"usd":1.25},"output":{"usd":6.25}}}},
+	{"id":"no-pricing-model"},
+	{"id":"half-priced","model_spec":{"pricing":{"input":{"usd":0},"output":{"usd":0.5}}}}
+]}`
+
+func TestModelsFreeOnlyFiltersCatalog(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, freeOnlyCatalogPayload)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	c.FreeOnly = true
+	models, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	want := []string{"stealth-ox-alpha"}
+	if !reflect.DeepEqual(models, want) {
+		t.Errorf("Models() = %#v, want %#v", models, want)
+	}
+}
+
+func TestModelsKeepsAllWithoutFreeOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, freeOnlyCatalogPayload)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	models, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	want := []string{"stealth-ox-alpha", "claude-opus-5", "no-pricing-model", "half-priced"}
+	if !reflect.DeepEqual(models, want) {
+		t.Errorf("Models() = %#v, want %#v", models, want)
+	}
+}
+
+func TestSendFreeOnlyBlocksPaidUnknownAndAllowsFree(t *testing.T) {
+	upstreamHits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			_, _ = fmt.Fprint(w, freeOnlyCatalogPayload)
+		case "/chat/completions":
+			upstreamHits++
+			_, _ = fmt.Fprint(w, `{"id":"x","choices":[]}`)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	c.FreeOnly = true
+	req := func(model string) *backend.Request {
+		return &backend.Request{Kind: backend.KindOpenAIChat, Model: model, RawBody: []byte(`{}`)}
+	}
+
+	for _, model := range []string{"claude-opus-5", "no-pricing-model", "totally-unknown"} {
+		if _, err := c.Send(context.Background(), req(model)); err == nil {
+			t.Errorf("Send(%q) succeeded, want free_only rejection", model)
+		}
+	}
+	if upstreamHits != 0 {
+		t.Errorf("upstream received %d requests, want 0 (all must be blocked client-side)", upstreamHits)
+	}
+
+	if _, err := c.Send(context.Background(), req("stealth-ox-alpha")); err != nil {
+		t.Errorf("Send(free model): %v", err)
+	}
+	if upstreamHits != 1 {
+		t.Errorf("upstream hits = %d, want 1 (free request must pass through)", upstreamHits)
+	}
+}
+
 func TestReadErrorDrainsAndPreservesStatus(t *testing.T) {
 	closed := false
 	httpResp := &http.Response{

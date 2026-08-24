@@ -13,6 +13,9 @@ type Options struct {
 	BaseURL string
 	// APIKey is the resolved upstream credential (env var or literal).
 	APIKey string
+	// FreeOnly asks the backend to refuse any model that is not free of
+	// charge. Backends without a pricing concept ignore it.
+	FreeOnly bool
 }
 
 // Factory builds a backend instance from its configuration options.

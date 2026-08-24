@@ -53,8 +53,9 @@ func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
 	out := make([]backend.Backend, 0, len(cfg.Backends))
 	for _, bc := range cfg.EnabledBackends() {
 		b, err := backend.New(bc.Type, backend.Options{
-			BaseURL: bc.BaseURL,
-			APIKey:  bc.ResolveKey(os.Getenv),
+			BaseURL:  bc.BaseURL,
+			APIKey:   bc.ResolveKey(os.Getenv),
+			FreeOnly: bc.FreeOnly,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("backends: %w", err)

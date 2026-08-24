@@ -27,6 +27,9 @@ type BackendConfig struct {
 	// DefaultModel is used when a client model cannot be routed to this
 	// backend's catalog.
 	DefaultModel string `mapstructure:"default_model"`
+	// FreeOnly restricts the backend to zero-cost models. Only backends with
+	// published pricing (venice) honor it; others ignore the flag.
+	FreeOnly bool `mapstructure:"free_only"`
 }
 
 // ModelRoute maps an inbound model name to backend + upstream model.
