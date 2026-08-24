@@ -108,7 +108,7 @@ jobs:
             http://127.0.0.1:8090/v1/chat/completions \
             -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
             -d '{"model":"'$VENICE_MODEL'","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}' || echo 000)
-          if [ "$code" = "402" ] || grep -qiE 'insufficient.*(usd|diem|balance)|invalid api key|authentication' /tmp/llm-proxy-e2e/probe.json; then
+          if [ "$code" = "402" ] || grep -qiE 'insufficient.*(usd|diem|balance)|invalid api key|authentication|spend limit' /tmp/llm-proxy-e2e/probe.json; then
             echo "LIVE_INFERENCE=no" >> "$GITHUB_ENV"
             echo "::notice title=Live-model E2E skipped::Venice rejected inference (HTTP $code). Fix the VENICE_API_KEY secret (paste the key exactly, no quotes/newline) or top up credits at https://venice.ai/settings/api."
             cat /tmp/llm-proxy-e2e/probe.json
