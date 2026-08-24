@@ -19,36 +19,36 @@ const (
 // dashBackend is one row of the backend table, plus the grouped catalog
 // listing shown under it. It never carries key material — only HasKey.
 type dashBackend struct {
-	Name      string
-	Enabled   bool
-	Host      string
-	HasKey    bool
-	Models    []string
-	CatalogOK bool
+	Name      string   `json:"name"`
+	Enabled   bool     `json:"enabled"`
+	Host      string   `json:"host"`
+	HasKey    bool     `json:"hasKey"`
+	Models    []string `json:"models"`
+	CatalogOK bool     `json:"catalogOK"`
 }
 
 // dashRoute is one row of the routing table. An empty Upstream means the
 // requested model name is forwarded unchanged.
 type dashRoute struct {
-	Model    string
-	Backend  string
-	Upstream string
+	Model    string `json:"model"`
+	Backend  string `json:"backend"`
+	Upstream string `json:"upstream"`
 }
 
 // dashboardPage carries everything the dashboard template renders.
 type dashboardPage struct {
-	Name          string
-	Version       string
-	Listen        string
-	AuthEnabled   bool
-	Backends      []dashBackend
-	Routes        []dashRoute
-	Stats         []ModelStat
-	HasDefault    bool
-	DefaultRoute  dashRoute
-	ExampleModel  string
-	ClaudeSnippet string
-	CodexSnippet  string
+	Name          string        `json:"name"`
+	Version       string        `json:"version"`
+	Listen        string        `json:"listen"`
+	AuthEnabled   bool          `json:"authEnabled"`
+	Backends      []dashBackend `json:"backends"`
+	Routes        []dashRoute   `json:"routes"`
+	Stats         []ModelStat   `json:"stats,omitempty"`
+	HasDefault    bool          `json:"hasDefault"`
+	DefaultRoute  dashRoute     `json:"defaultRoute"`
+	ExampleModel  string        `json:"exampleModel"`
+	ClaudeSnippet string        `json:"claudeSnippet"`
+	CodexSnippet  string        `json:"codexSnippet"`
 }
 
 // handleDashboard serves GET / — status page with routing and client setup.
@@ -62,6 +62,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = buf.WriteTo(w)
+}
+
+// handleOverview serves GET /api/overview: the dashboard page's data as JSON
+// for the SPA. Key material is never included — only its presence.
+func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.buildDashboardPage(r))
 }
 
 // buildDashboardPage collects dashboard data. Upstream API keys are never

@@ -1,0 +1,42 @@
+/* App-level chrome that sits under Mantine's tokens. Loaded after
+   @mantine/core styles so these win where they overlap. */
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Subtle tinted app background so cards read as raised surfaces. */
+[data-mantine-color-scheme='light'] body {
+  background:
+    radial-gradient(1200px 600px at 100% -10%, #eaf0ff 0%, rgba(234, 240, 255, 0) 55%),
+    radial-gradient(900px 500px at -10% 0%, #eef7f2 0%, rgba(238, 247, 242, 0) 50%),
+    var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme='dark'] body {
+  background:
+    radial-gradient(1100px 600px at 100% -10%, #14203f 0%, rgba(20, 32, 63, 0) 55%),
+    var(--mantine-color-dark-8, #0d0e12);
+}
+
+/* Sticky, frosted header. */
+.mantine-AppShell-header {
+  backdrop-filter: saturate(1.4) blur(10px);
+  background-color: color-mix(in srgb, var(--mantine-color-body) 78%, transparent);
+}
+
+.mantine-AppShell-footer {
+  backdrop-filter: saturate(1.4) blur(10px);
+  background-color: color-mix(in srgb, var(--mantine-color-body) 82%, transparent);
+}
+
+/* Cards lift slightly on hover when they're interactive. */
+a,
+.mantine-UnstyledButton-root {
+  -webkit-tap-highlight-color: transparent;
+}

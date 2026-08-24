@@ -18,7 +18,7 @@ import (
 // stack, and returns the recorder plus the unescaped page text.
 func renderDashboard(t *testing.T, s *Server, header func(*http.Request)) (*httptest.ResponseRecorder, string) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	if header != nil {
 		header(req)
 	}

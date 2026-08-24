@@ -64,10 +64,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/responses", s.handleResponses)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /stats", s.handleStats)
+	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics.handler())
-	mux.HandleFunc("GET /{$}", s.handleDashboard)
+	mux.HandleFunc("GET /dashboard", s.handleDashboard)
+	mux.HandleFunc("GET /{$}", s.handleSPA)
+	mux.HandleFunc("GET /{path...}", s.handleSPA)
 	return s.withMiddleware(mux)
 }
 
