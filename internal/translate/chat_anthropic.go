@@ -3,6 +3,7 @@ package translate
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -385,7 +386,10 @@ type anthropicEvent struct {
 
 // scanSSE hands each data payload of an SSE body to handle until handle
 // reports terminal (true) or the body ends. Undecodable payloads are skipped
-// silently — translation must never fail because of one bad frame.
+// silently — translation must never fail because of one bad frame. The
+// [DONE] sentinel is handed through so chat-upstream adapters can recognize
+// their completion marker; Anthropic-upstream adapters simply fail to decode
+// it and skip it as before.
 func scanSSE(body io.Reader, decode func([]byte) (bool, error)) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
@@ -395,7 +399,7 @@ func scanSSE(body io.Reader, decode func([]byte) (bool, error)) error {
 			continue
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
+		if payload == "" {
 			continue
 		}
 		stop, err := decode([]byte(payload))
@@ -442,7 +446,10 @@ func NewChatStreamFromAnthropic(writer io.Writer, flush func(), model string) *C
 	}
 }
 
-// Consume reads the upstream SSE stream to completion.
+// Consume reads the upstream SSE stream to completion. It returns an error
+// when the upstream breaks mid-stream or ends without its message_stop, so
+// the caller can end the stream with an explicit failure instead of one that
+// hides the truncation.
 func (c *ChatStreamFromAnthropic) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		var event anthropicEvent
@@ -451,8 +458,16 @@ func (c *ChatStreamFromAnthropic) Consume(body io.Reader) error {
 		}
 		return c.consumeEvent(event), nil
 	})
-	c.Finish()
-	return err
+	if err != nil {
+		return err
+	}
+	if c.finished {
+		return nil
+	}
+	if c.started {
+		return errors.New("upstream stream ended before the completion marker")
+	}
+	return errors.New("upstream stream ended without emitting any events")
 }
 
 // consumeEvent handles one upstream event and reports whether the stream is
@@ -615,4 +630,22 @@ func (c *ChatStreamFromAnthropic) Finish() {
 		Usage:   &c.usage,
 	})
 	c.writeString("data: [DONE]\n\n")
+}
+
+// Fail aborts the stream with an error chunk instead of the terminating
+// finish_reason chunk and [DONE], so a mid-stream break reaches the client
+// as a real failure rather than a completed turn.
+func (c *ChatStreamFromAnthropic) Fail(message string) {
+	if c.finished {
+		return
+	}
+	c.finished = true
+	if !c.started {
+		return
+	}
+	c.writeData(map[string]any{"error": map[string]any{
+		"message": message,
+		"type":    "api_error",
+		"code":    nil,
+	}})
 }

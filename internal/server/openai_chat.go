@@ -11,13 +11,6 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
-// flusherFor returns a Flusher for w; middleware's statusRecorder implements
-// Flush so SSE handlers can flush through it.
-func flusherFor(w http.ResponseWriter) http.Flusher {
-	flusher, _ := w.(http.Flusher)
-	return flusher
-}
-
 // openAIEnvelope is the minimal request envelope shared by both OpenAI
 // endpoints; everything else in the body is forwarded untouched.
 type openAIEnvelope struct {
@@ -108,7 +101,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		clientModel: envelope.Model,
 		streaming:   envelope.Stream,
 	}
-	wire, servable := resolveWire(env.kind, rt.backend)
+	wire, servable := resolveWire(env.kind, rt.backend, rt.model)
 	if !servable {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("backend %s does not support the Chat Completions API for model %q",

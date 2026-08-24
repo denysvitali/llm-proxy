@@ -14,8 +14,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-
-	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 // Stats records per-backend, per-model traffic so the proxy can answer the
@@ -149,15 +147,6 @@ func (t *tracker) done() {
 			t.st.through.WithLabelValues(t.labels[0], t.labels[1]).Observe(float64(t.rep.output) / window)
 		}
 	}
-}
-
-// wrapUpstreamBody funnels resp.Body through a stats sniffer, deciding SSE
-// parsing mode from the request's streaming intent or the upstream Content-Type.
-func wrapUpstreamBody(tr *tracker, resp *backend.Response, streaming bool) *sniffer {
-	sse := streaming || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
-	sn := newSniffer(resp.Body, tr, sse)
-	resp.Body = sn
-	return sn
 }
 
 // recordInboundToolErrors attributes errored tool results carried by an

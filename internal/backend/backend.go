@@ -60,3 +60,15 @@ type Backend interface {
 	// Request into their native wire format themselves.
 	Send(ctx context.Context, req *Request) (*Response, error)
 }
+
+// ModelWireOverrider is an optional Backend refinement for providers whose
+// native wire support varies by model. When implemented, the server consults
+// SupportsModel instead of Supports to pick a wire format, so a backend can
+// keep native passthrough for some models while forcing translation for
+// others (e.g. an endpoint that serves one API shape reliably only for part
+// of its catalog).
+type ModelWireOverrider interface {
+	// SupportsModel reports whether the backend accepts the given inbound API
+	// shape natively for this specific model.
+	SupportsModel(kind Kind, model string) bool
+}

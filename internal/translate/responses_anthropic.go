@@ -2,6 +2,7 @@ package translate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -45,6 +46,10 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 	for i, item := range input {
 		switch item.Type {
 		case "message":
+			if isPromptRole(item.Role) {
+				converted.System = appendPrompt(converted.System, itemText(item))
+				continue
+			}
 			msg, err := anthropicMessageFromItem(item)
 			if err != nil {
 				return nil, fmt.Errorf("input item %d: %w", i, err)
@@ -101,7 +106,9 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 // Anthropic message; it returns nil for items that carry no content.
 func anthropicMessageFromItem(item responsesInputItem) (*AnthropicMessage, error) {
 	role := item.Role
-	if role == "" {
+	if role != "assistant" {
+		// Anthropic only knows "user" and "assistant"; prompt roles are
+		// folded into the system prompt before reaching here.
 		role = "user"
 	}
 	if text, ok := plainString(item.Content); ok {
@@ -227,7 +234,10 @@ func NewResponsesStreamFromAnthropic(writer io.Writer, flush func(), model strin
 	}
 }
 
-// Consume reads the upstream SSE stream to completion.
+// Consume reads the upstream SSE stream to completion. It returns an error
+// when the upstream breaks mid-stream or ends without its message_stop, so
+// the caller can end the stream with an explicit failure instead of one that
+// hides the truncation.
 func (s *ResponsesStreamFromAnthropic) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		var event anthropicEvent
@@ -236,8 +246,16 @@ func (s *ResponsesStreamFromAnthropic) Consume(body io.Reader) error {
 		}
 		return s.consumeEvent(event), nil
 	})
-	s.Finish()
-	return err
+	if err != nil {
+		return err
+	}
+	if s.stream.finished {
+		return nil
+	}
+	if s.stream.started {
+		return errors.New("upstream stream ended before the completion marker")
+	}
+	return errors.New("upstream stream ended without emitting any events")
 }
 
 func (s *ResponsesStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
@@ -346,4 +364,16 @@ func (s *ResponsesStreamFromAnthropic) emitFailed(errType, message string) {
 // Finish closes any open item and emits response.completed.
 func (s *ResponsesStreamFromAnthropic) Finish() {
 	s.stream.Finish()
+}
+
+// Fail closes any open item and emits response.failed instead of
+// response.completed, so a mid-stream break reaches the client as a real
+// failure it can retry rather than a truncated response that looks done.
+func (s *ResponsesStreamFromAnthropic) Fail(message string) {
+	if s.stream.finished {
+		return
+	}
+	s.stream.finished = true
+	s.stream.closeItem()
+	s.emitFailed("api_error", message)
 }

@@ -2,6 +2,7 @@ package translate
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -205,5 +206,42 @@ func TestResponsesStreamFromAnthropic(t *testing.T) {
 	}
 	if strings.Join(kinds, ",") != "reasoning,message,function_call" {
 		t.Errorf("collected output kinds = %v", kinds)
+	}
+}
+
+// Anthropic knows only "user" and "assistant", so Codex's "developer" item has
+// to arrive as part of the system prompt.
+func TestResponsesToAnthropicFoldsPromptRolesIntoSystem(t *testing.T) {
+	in := []byte(`{
+		"model": "ignored",
+		"instructions": "be terse",
+		"input": [
+			{"type":"message","role":"developer","content":[
+				{"type":"input_text","text":"<skills>a</skills>"},
+				{"type":"input_text","text":"<permissions>b</permissions>"}
+			]},
+			{"type":"message","role":"user","content":"hello"}
+		]
+	}`)
+	out, err := ResponsesToAnthropic(in, "claude-mock")
+	if err != nil {
+		t.Fatalf("ResponsesToAnthropic: %v", err)
+	}
+	var got anthropicRequest
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode translated request: %v", err)
+	}
+
+	want := "be terse\n\n<skills>a</skills>\n\n<permissions>b</permissions>"
+	if got.System != want {
+		t.Errorf("system = %q, want %q", got.System, want)
+	}
+	if len(got.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(got.Messages))
+	}
+	for _, message := range got.Messages {
+		if message.Role != "user" && message.Role != "assistant" {
+			t.Errorf("message carries role %q, which Anthropic rejects", message.Role)
+		}
 	}
 }

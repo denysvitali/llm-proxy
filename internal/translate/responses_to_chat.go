@@ -44,16 +44,15 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 		converted.StreamOptionsUsage = &streamOptions{IncludeUsage: true}
 	}
 
-	if req.Instructions != "" {
-		converted.Messages = append(converted.Messages, openAIMessage{
-			Role:    "system",
-			Content: req.Instructions,
-		})
-	}
+	systemPrompt := req.Instructions
 
 	for i, item := range input {
 		switch item.Type {
 		case "message":
+			if isPromptRole(item.Role) {
+				systemPrompt = appendPrompt(systemPrompt, itemText(item))
+				continue
+			}
 			msg, err := chatMessageFromItem(item)
 			if err != nil {
 				return nil, fmt.Errorf("input item %d: %w", i, err)
@@ -86,6 +85,12 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 			return nil, fmt.Errorf("input item %d: unsupported type %q", i, item.Type)
 		}
 	}
+	if systemPrompt != "" {
+		converted.Messages = append([]openAIMessage{{
+			Role:    "system",
+			Content: systemPrompt,
+		}}, converted.Messages...)
+	}
 	if len(converted.Messages) == 0 {
 		return nil, fmt.Errorf("request contains no translatable input")
 	}
@@ -115,7 +120,9 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 // message; it returns nil for items that carry no content.
 func chatMessageFromItem(item responsesInputItem) (*openAIMessage, error) {
 	role := item.Role
-	if role == "" {
+	if role != "assistant" && role != "tool" {
+		// Everything the caller did not mark as coming from the model or a
+		// tool travels as user content; prompt roles never reach here.
 		role = "user"
 	}
 	if text, ok := plainString(item.Content); ok {

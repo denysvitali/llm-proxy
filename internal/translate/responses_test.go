@@ -670,9 +670,11 @@ data: {"type":"response.completed","response":{"id":"resp_t1","status":"complete
 	})
 }
 
-// TestResponsesStreamWriterFinishWithoutCompleted feeds a stream that ends
-// without response.completed; Finish must still close the message.
-func TestResponsesStreamWriterFinishWithoutCompleted(t *testing.T) {
+// TestResponsesStreamWriterErrorWithoutCompleted feeds a stream that ends
+// without response.completed: Consume must report the truncation instead of
+// letting the caller close the message as a completed turn, and Fail must
+// then surface an explicit error event.
+func TestResponsesStreamWriterErrorWithoutCompleted(t *testing.T) {
 	stream := `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","role":"assistant"}}
 
 data: {"type":"response.output_text.delta","output_index":0,"delta":"cut short"}
@@ -680,22 +682,23 @@ data: {"type":"response.output_text.delta","output_index":0,"delta":"cut short"}
 `
 	var buffer bytes.Buffer
 	writer := NewResponsesStreamWriter(&buffer, nil, "m", false)
-	if err := writer.Consume(strings.NewReader(stream)); err != nil {
-		t.Fatalf("Consume: %v", err)
+	if err := writer.Consume(strings.NewReader(stream)); err == nil {
+		t.Fatal("Consume of a stream without response.completed must fail")
 	}
-	writer.Finish()
+	writer.Fail("the upstream stream was interrupted mid-response")
 
 	events := parseSSE(t, buffer.String())
-	if last := events[len(events)-1].Name; last != "message_stop" {
-		t.Fatalf("last event = %q, want message_stop", last)
+	if last := events[len(events)-1].Name; last != "error" {
+		t.Fatalf("last event = %q, want error", last)
 	}
-	messageDeltas := eventsNamed(events, "message_delta")
-	if len(messageDeltas) != 1 {
-		t.Fatalf("got %d message_delta events", len(messageDeltas))
+	for _, event := range events {
+		if event.Name == "message_stop" || event.Name == "message_delta" {
+			t.Fatalf("broken stream must not be dressed up as completed: got %s", event.Name)
+		}
 	}
-	delta := jmap(t, messageDeltas[0].Data["delta"], "delta")
-	if got := jstr(t, delta["stop_reason"]); got != "end_turn" {
-		t.Fatalf("stop_reason = %q, want default end_turn", got)
+	errBody := jmap(t, events[len(events)-1].Data["error"], "error")
+	if jstr(t, errBody["type"]) != "api_error" || jstr(t, errBody["message"]) == "" {
+		t.Fatalf("error payload = %v", events[len(events)-1].Data)
 	}
 }
 
@@ -926,21 +929,22 @@ data: {"type":"response.completed","response":{"id":"resp_cs","status":"complete
 	}
 }
 
-// TestChatStreamFromResponsesFinishWithoutCompleted ends the stream early;
-// the writer must still terminate the client stream.
-func TestChatStreamFromResponsesFinishWithoutCompleted(t *testing.T) {
+// TestChatStreamFromResponsesErrorWithoutCompleted ends the stream early:
+// Consume must report the truncation instead of terminating the client
+// stream as a completed turn, and Fail must then emit an error chunk.
+func TestChatStreamFromResponsesErrorWithoutCompleted(t *testing.T) {
 	stream := "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"partial\"}\n\n"
 	var buffer bytes.Buffer
 	writer := ChatStreamFromResponses(&buffer, nil, "chat-model")
-	if err := writer.Consume(strings.NewReader(stream)); err != nil {
-		t.Fatalf("Consume: %v", err)
+	if err := writer.Consume(strings.NewReader(stream)); err == nil {
+		t.Fatal("Consume of a truncated stream must fail")
 	}
-	writer.Finish()
+	writer.Fail("the upstream stream was interrupted mid-response")
 	raw := buffer.String()
-	if !strings.Contains(raw, `"finish_reason":"stop"`) {
-		t.Fatalf("missing finish chunk: %q", raw)
+	if strings.Contains(raw, `"finish_reason":"`) || strings.HasSuffix(raw, "data: [DONE]\n\n") {
+		t.Fatalf("broken stream must not get a normal termination: %q", raw)
 	}
-	if !strings.HasSuffix(raw, "data: [DONE]\n\n") {
-		t.Fatal("missing [DONE]")
+	if !strings.Contains(raw, `"error"`) {
+		t.Fatalf("missing error chunk: %q", raw)
 	}
 }

@@ -247,3 +247,65 @@ func TestResponsesStreamFromChatToolCall(t *testing.T) {
 		}
 	}
 }
+
+// Codex opens every turn with a "developer" item carrying its skills and
+// permissions preamble. That role only exists in the OpenAI APIs, so it has to
+// reach a chat-completions backend as part of the system prompt rather than as
+// a message role the upstream will reject.
+func TestResponsesToChatFoldsPromptRolesIntoSystem(t *testing.T) {
+	in := []byte(`{
+		"model": "ignored",
+		"instructions": "be terse",
+		"input": [
+			{"type":"message","role":"developer","content":[
+				{"type":"input_text","text":"<skills>a</skills>"},
+				{"type":"input_text","text":"<permissions>b</permissions>"}
+			]},
+			{"type":"message","role":"system","content":"and polite"},
+			{"type":"message","role":"user","content":"hello"}
+		]
+	}`)
+	out, err := ResponsesToChat(in, "stealth-mock")
+	if err != nil {
+		t.Fatalf("ResponsesToChat: %v", err)
+	}
+	var got openAIRequest
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode translated request: %v", err)
+	}
+
+	if len(got.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2 (system + user)", len(got.Messages))
+	}
+	want := "be terse\n\n<skills>a</skills>\n\n<permissions>b</permissions>\n\nand polite"
+	if got.Messages[0].Role != "system" || got.Messages[0].Content != want {
+		t.Errorf("system message = %+v, want %q", got.Messages[0], want)
+	}
+	if got.Messages[1].Role != "user" || got.Messages[1].Content != "hello" {
+		t.Errorf("user message = %+v", got.Messages[1])
+	}
+	for _, message := range got.Messages {
+		switch message.Role {
+		case "system", "user", "assistant", "tool":
+		default:
+			t.Errorf("message carries role %q, which chat-completions upstreams reject", message.Role)
+		}
+	}
+}
+
+// A developer item on its own still produces a usable request: its text
+// becomes the system prompt instead of vanishing.
+func TestResponsesToChatPromptOnlyInputKeepsSystem(t *testing.T) {
+	in := []byte(`{"model":"ignored","input":[{"type":"message","role":"developer","content":"rules"}]}`)
+	out, err := ResponsesToChat(in, "stealth-mock")
+	if err != nil {
+		t.Fatalf("ResponsesToChat: %v", err)
+	}
+	var got openAIRequest
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode translated request: %v", err)
+	}
+	if len(got.Messages) != 1 || got.Messages[0].Role != "system" || got.Messages[0].Content != "rules" {
+		t.Fatalf("messages = %+v, want a single system message", got.Messages)
+	}
+}

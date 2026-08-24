@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -153,10 +155,16 @@ type resolvedWire struct {
 
 // resolveWire picks the first wire format the backend supports under the
 // inbound API's preference order. ok=false means the backend serves neither
-// this API nor anything translatable.
-func resolveWire(in backend.Kind, b backend.Backend) (resolvedWire, bool) {
+// this API nor anything translatable. When the backend implements
+// ModelWireOverrider, native support is decided per model so a provider can
+// force translation for models whose native endpoint is unreliable.
+func resolveWire(in backend.Kind, b backend.Backend, model string) (resolvedWire, bool) {
+	supports := b.Supports
+	if mo, ok := b.(backend.ModelWireOverrider); ok {
+		supports = func(kind backend.Kind) bool { return mo.SupportsModel(kind, model) }
+	}
 	for _, want := range wirePreference[in] {
-		if !b.Supports(want) {
+		if !supports(want) {
 			continue
 		}
 		if want == in {
@@ -168,32 +176,103 @@ func resolveWire(in backend.Kind, b backend.Backend) (resolvedWire, bool) {
 }
 
 // clientDialect holds the inbound-API-specific answers: how errors are
-// phrased when no upstream response exists, and how a non-2xx upstream
-// response is passed on.
+// phrased when no upstream response exists, how a non-2xx upstream response
+// is passed on, and how a mid-stream break is surfaced as the protocol's
+// in-band failure once content has already been forwarded.
 type clientDialect struct {
-	writeError func(w http.ResponseWriter, status int, errType, message string)
-	relayError func(w http.ResponseWriter, resp *backend.Response)
+	writeError    func(w http.ResponseWriter, status int, errType, message string)
+	relayError    func(w http.ResponseWriter, resp *backend.Response)
+	surfaceStream func(w http.ResponseWriter, message string)
 }
 
 func anthropicDialect(relay func(w http.ResponseWriter, resp *backend.Response)) clientDialect {
 	return clientDialect{
-		writeError: writeAnthropicError,
-		relayError: relay,
+		writeError:    writeAnthropicError,
+		relayError:    relay,
+		surfaceStream: emitAnthropicStreamFailure,
 	}
 }
 
+// openAIDialect serves chat-completions clients; openAIResponsesDialect
+// serves Responses clients. They share error shapes but differ in the
+// in-band stream-failure event their SDKs understand.
 func openAIDialect() clientDialect {
 	return clientDialect{
-		writeError: writeOpenAIError,
-		relayError: relayOpenAIUpstreamError,
+		writeError:    writeOpenAIError,
+		relayError:    relayOpenAIUpstreamError,
+		surfaceStream: emitChatStreamFailure,
 	}
 }
 
-// exchange dispatches one prepared request: tracks stats, sends upstream on
-// the chosen wire format (native requests pass through with only the model
-// rewritten), sniffs the response for usage stats, and relays success bodies
-// to the client — verbatim when native, translated otherwise, streaming or
-// buffered as the client asked.
+func openAIResponsesDialect() clientDialect {
+	return clientDialect{
+		writeError:    writeOpenAIError,
+		relayError:    relayOpenAIUpstreamError,
+		surfaceStream: emitResponsesStreamFailure,
+	}
+}
+
+// emitAnthropicStreamFailure ends an already-started Anthropic SSE stream
+// with the protocol's error event, so the client sees a real failure it can
+// replay instead of a truncation that looks finished.
+func emitAnthropicStreamFailure(w http.ResponseWriter, message string) {
+	payload, err := json.Marshal(map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": "api_error", "message": message},
+	})
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", payload)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// emitChatStreamFailure ends an already-started chat-completions stream with
+// the error-chunk shape OpenAI clients understand.
+func emitChatStreamFailure(w http.ResponseWriter, message string) {
+	payload, err := json.Marshal(map[string]any{
+		"error": map[string]any{"message": message, "type": "api_error"},
+	})
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// emitResponsesStreamFailure ends an already-started Responses stream with a
+// response.failed event carrying the failure reason.
+func emitResponsesStreamFailure(w http.ResponseWriter, message string) {
+	payload, err := json.Marshal(map[string]any{
+		"type": "response.failed",
+		"response": map[string]any{
+			"id":         "resp_llm-proxy",
+			"object":     "response",
+			"created_at": time.Now().Unix(),
+			"status":     "failed",
+			"error":      map[string]any{"code": "api_error", "message": message},
+		},
+	})
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: response.failed\ndata: %s\n\n", payload)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// exchange dispatches one prepared request: sends upstream on the chosen
+// wire format with transient-failure retries (native requests pass through
+// with only the model rewritten), sniffs every upstream body for usage
+// stats, and relays success bodies to the client — verbatim when native,
+// translated otherwise, streaming or buffered as the client asked. Broken
+// upstream bodies retry while nothing has reached the client; once content
+// has flowed they surface as the protocol's in-band failure.
 func (s *Server) exchange(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -212,13 +291,37 @@ func (s *Server) exchange(
 	if !wire.native && wire.path != nil {
 		wireFormat = wire.path.kind
 	}
-	resp, err := rt.backend.Send(r.Context(), &backend.Request{
+	req := &backend.Request{
 		Kind:      wireFormat,
 		Model:     rt.model,
 		RawBody:   payload,
 		Header:    header,
 		Streaming: env.streaming,
-	})
+	}
+	// Every attempt's body is sniffed against the same tracker: usage fields
+	// fold by high-water mark, so a recovered retry keeps its stats and a
+	// discarded partial one cannot inflate them. All sniffers close when
+	// exchange returns.
+	var sniffers []*sniffer
+	fetch := func() (*backend.Response, error) {
+		resp, err := rt.backend.Send(r.Context(), req)
+		if err != nil {
+			return nil, err
+		}
+		sse := env.streaming || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+		sn := newSniffer(resp.Body, tr, sse)
+		resp.Body = sn
+		sniffers = append(sniffers, sn)
+		return resp, nil
+	}
+	defer func() {
+		for _, sn := range sniffers {
+			sn.Finish()
+			_ = sn.Close()
+		}
+	}()
+
+	resp, err := s.sendWithRetry(r.Context(), log, rt, fetch)
 	if err != nil {
 		log.WithError(err).Warn("backend send failed")
 		dialect.writeError(w, http.StatusBadGateway, "api_error", "backend request failed")
@@ -226,87 +329,35 @@ func (s *Server) exchange(
 	}
 	tr.setUpstreamStatus(resp.Status)
 
-	sn := wrapUpstreamBody(tr, resp, env.streaming)
-	defer func() { sn.Finish(); _ = sn.Close() }()
-
 	if resp.Status < 200 || resp.Status >= 300 {
 		dialect.relayError(w, resp)
 		return
 	}
 
-	if wire.native {
-		s.relayPassthroughBody(w, resp, env.streaming)
-		return
+	giveUp := func(w http.ResponseWriter, message string) {
+		dialect.writeError(w, http.StatusBadGateway, "api_error", message)
 	}
 
-	if env.streaming {
-		responseHeader := w.Header()
-		responseHeader.Set("Content-Type", "text/event-stream")
-		responseHeader.Set("Cache-Control", "no-cache")
-		responseHeader.Set("X-Accel-Buffering", "no")
-		w.WriteHeader(http.StatusOK)
-
-		var flush func()
-		if flusher, ok := w.(http.Flusher); ok {
-			flush = flusher.Flush
-		}
-		writer := wire.path.stream(env, w, flush)
-		if err := writer.Consume(resp.Body); err != nil {
-			log.WithError(err).Warn("consuming upstream stream failed")
-			writer.Finish()
-		}
-		return
-	}
-
-	data, err := readAll(resp.Body, maxTranslatedResponseBody)
-	if err != nil {
-		log.WithError(err).Warn("reading upstream response body failed")
-		dialect.writeError(w, http.StatusBadGateway, "api_error", "upstream response read failed")
-		return
-	}
-	out, err := wire.path.decode(env, data)
-	if err != nil {
-		log.WithError(err).Warn("translating upstream response failed")
-		dialect.writeError(w, http.StatusBadGateway, "api_error", "upstream returned an unreadable response")
-		return
-	}
-	writeJSON(w, http.StatusOK, json.RawMessage(out))
-}
-
-// relayPassthroughBody copies a successful upstream response to the client
-// verbatim, preserving Content-Type (defaulting by streaming mode) and
-// flushing after every read so SSE events arrive as they are produced.
-func (s *Server) relayPassthroughBody(w http.ResponseWriter, resp *backend.Response, streaming bool) {
-	copyUpstreamRequestID(w.Header(), resp.Header)
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		if streaming {
-			contentType = "text/event-stream"
-		} else {
-			contentType = "application/json"
-		}
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(resp.Status)
-
-	flusher := flusherFor(w)
-	buffer := make([]byte, passthroughCopyBufferSize)
-	for {
-		n, readErr := resp.Body.Read(buffer)
-		if n > 0 {
-			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
-				s.log.WithError(writeErr).Debug("writing upstream bytes to client failed")
-				return
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				s.log.WithError(readErr).Debug("copying upstream body to client failed")
-			}
+	switch {
+	case wire.native && env.streaming:
+		s.relayNativeStreaming(r.Context(), w, log, resp, fetch, streamDoneChecker(wireFormat), dialect.surfaceStream, giveUp)
+	case wire.native:
+		s.relayNativeBuffered(r.Context(), w, log, resp, fetch, giveUp)
+	case env.streaming:
+		s.relayTranslatedStreaming(r.Context(), w, log, resp, fetch, env, wire.path.stream, giveUp)
+	default:
+		data, err := s.fetchResponseBody(r.Context(), resp, fetch, maxTranslatedResponseBody)
+		if err != nil {
+			log.WithError(err).Warn("reading upstream response body failed")
+			giveUp(w, fmt.Sprintf("upstream response could not be read: %v", err))
 			return
 		}
+		out, err := wire.path.decode(env, data)
+		if err != nil {
+			log.WithError(err).Warn("translating upstream response failed")
+			giveUp(w, "upstream returned an unreadable response")
+			return
+		}
+		writeJSON(w, http.StatusOK, json.RawMessage(out))
 	}
 }

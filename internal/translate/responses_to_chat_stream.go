@@ -2,6 +2,7 @@ package translate
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 )
@@ -219,6 +220,27 @@ func (s *responsesItemStream) Finish() {
 	})
 }
 
+// Fail closes any open item and emits response.failed instead of
+// response.completed, so a mid-stream break reaches the client as a real
+// failure it can retry rather than a truncated response that looks done.
+func (s *responsesItemStream) Fail(message string) {
+	if s.finished {
+		return
+	}
+	s.finished = true
+	s.ensureCreated()
+	s.closeItem()
+	s.emit("response.failed", map[string]any{
+		"type": "response.failed",
+		"response": map[string]any{
+			"id": s.id, "model": s.model, "status": "failed",
+			"output": s.collectedOutput(), "usage": s.usagePayload(),
+			"object": "response", "created_at": nowUnix(),
+			"error": map[string]any{"code": "api_error", "message": message},
+		},
+	})
+}
+
 // collectedOutput returns the finished items for the terminal
 // response.completed payload.
 func (s *responsesItemStream) collectedOutput() []map[string]any {
@@ -268,9 +290,16 @@ func NewResponsesStreamFromChat(writer io.Writer, flush func(), model string) *R
 	}}
 }
 
-// Consume reads the upstream chat-completions SSE stream to completion.
+// Consume reads the upstream chat-completions SSE stream to completion. It
+// returns an error when the upstream breaks mid-stream or ends before its
+// completion marker, leaving the response unfinished so the caller can end
+// it with an explicit failure instead of one that hides the truncation.
 func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
+		if string(payload) == "[DONE]" {
+			s.Finish()
+			return true, nil
+		}
 		var chunk chatChunk
 		if err := json.Unmarshal(payload, &chunk); err != nil {
 			return false, nil
@@ -281,11 +310,30 @@ func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 		if chunk.Model != "" {
 			s.stream.model = chunk.Model
 		}
+		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+			message := "upstream stream failed"
+			var decoded struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(chunk.Error, &decoded) == nil && decoded.Message != "" {
+				message = decoded.Message
+			}
+			s.stream.Fail(message)
+			return true, nil
+		}
 		s.consumeChunk(chunk)
 		return s.stream.finished, nil
 	})
-	s.Finish()
-	return err
+	if err != nil {
+		return err
+	}
+	if s.stream.finished {
+		return nil
+	}
+	if s.stream.started {
+		return errors.New("upstream stream ended before the completion marker")
+	}
+	return errors.New("upstream stream ended without emitting any events")
 }
 
 func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) {
@@ -324,4 +372,9 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) {
 // Finish closes any open item and emits response.completed.
 func (s *ResponsesStreamFromChatWriter) Finish() {
 	s.stream.Finish()
+}
+
+// Fail closes any open item and emits response.failed.
+func (s *ResponsesStreamFromChatWriter) Fail(message string) {
+	s.stream.Fail(message)
 }

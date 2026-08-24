@@ -59,7 +59,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		clientModel: envelope.Model,
 		streaming:   envelope.Stream,
 	}
-	wire, servable := resolveWire(env.kind, rt.backend)
+	wire, servable := resolveWire(env.kind, rt.backend, rt.model)
 	if !servable {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "no translation path for backend")
 		return

@@ -17,6 +17,8 @@ type Metrics struct {
 	requestDuration *prometheus.HistogramVec
 	authSuccesses   *prometheus.CounterVec
 	authFailures    prometheus.Counter
+	retryAttempts   *prometheus.CounterVec
+	retryOutcomes   *prometheus.CounterVec
 	reg             *prometheus.Registry
 }
 
@@ -39,10 +41,32 @@ func newMetrics() *Metrics {
 			Name: "llm_proxy_auth_failure_total",
 			Help: "Rejected API-key authentications.",
 		}),
+		retryAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "llm_proxy_upstream_retry_attempts_total",
+			Help: "Extra upstream attempts made after transient failures.",
+		}, []string{"phase"}),
+		retryOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "llm_proxy_upstream_retry_outcomes_total",
+			Help: "How transient upstream failures ended.",
+		}, []string{"phase", "outcome"}),
 		reg: prometheus.NewRegistry(),
 	}
-	m.reg.MustRegister(m.requests, m.requestDuration, m.authSuccesses, m.authFailures)
+	m.reg.MustRegister(m.requests, m.requestDuration, m.authSuccesses, m.authFailures, m.retryAttempts, m.retryOutcomes)
 	return m
+}
+
+// noteRetryAttempt records one extra upstream attempt after a transient
+// failure; phase is "connect" or "body".
+func (m *Metrics) noteRetryAttempt(phase string) {
+	m.retryAttempts.WithLabelValues(phase).Inc()
+}
+
+// noteRetryOutcome records how a transient upstream failure ended:
+// "recovered" (a retry succeeded), "exhausted" (retries ran out and the
+// client got an error) or "surfaced" (content had already been forwarded,
+// so the break was reported as an in-stream failure instead of replayed).
+func (m *Metrics) noteRetryOutcome(phase, outcome string) {
+	m.retryOutcomes.WithLabelValues(phase, outcome).Inc()
 }
 
 func (m *Metrics) observe(method, path string, status int, d time.Duration) {

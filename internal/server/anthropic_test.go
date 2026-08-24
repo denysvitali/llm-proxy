@@ -188,7 +188,11 @@ func TestMessagesUnknownModelNoDefault(t *testing.T) {
 }
 
 func TestMessagesPassthroughNative(t *testing.T) {
-	const upstreamSSE = "event: ping\n\n"
+	// A complete stream: passthrough only relays verbatim once the upstream
+	// stream terminates properly; an unterminated one is a retry case.
+	const upstreamSSE = "event: ping\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
 	fb := &msgFakeBackend{
 		supported:   map[backend.Kind]bool{backend.KindAnthropic: true},
 		status:      http.StatusOK,

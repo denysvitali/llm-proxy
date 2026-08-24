@@ -52,6 +52,39 @@ func TestSupports(t *testing.T) {
 	}
 }
 
+func TestSupportsModel(t *testing.T) {
+	tests := []struct {
+		kind  backend.Kind
+		model string
+		want  bool
+	}{
+		// Zen's Anthropic /messages endpoint only serves Claude models;
+		// everything else 500s there and must be translated to Chat.
+		{backend.KindAnthropic, "claude-sonnet-5", true},
+		{backend.KindAnthropic, "claude-opus-4-8", true},
+		{backend.KindAnthropic, "opencode/claude-haiku-4-5", true},
+		{backend.KindAnthropic, "x-preview-f-free", false},
+		{backend.KindAnthropic, "opencode/x-preview-f-free", false},
+		{backend.KindAnthropic, "gpt-5.4-nano", false},
+		{backend.KindAnthropic, "deepseek-v4-flash-free", false},
+		{backend.KindAnthropic, "big-pickle", false},
+		// Chat Completions is served for every model.
+		{backend.KindOpenAIChat, "claude-sonnet-5", true},
+		{backend.KindOpenAIChat, "x-preview-f-free", true},
+		{backend.KindOpenAIChat, "gpt-5.4-nano", true},
+		// Responses is never native.
+		{backend.KindOpenAIResponses, "gpt-5.4-nano", false},
+	}
+	for _, tt := range tests {
+		if got := (&Client{}).SupportsModel(tt.kind, tt.model); got != tt.want {
+			t.Errorf("SupportsModel(%q, %q) = %v, want %v", tt.kind, tt.model, got, tt.want)
+		}
+	}
+}
+
+// Client must satisfy the optional per-model wire override.
+var _ backend.ModelWireOverrider = (*Client)(nil)
+
 // recordedRequest captures what the test server received.
 type recordedRequest struct {
 	Method string

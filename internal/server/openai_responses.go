@@ -43,7 +43,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		clientModel: envelope.Model,
 		streaming:   envelope.Stream,
 	}
-	wire, servable := resolveWire(env.kind, rt.backend)
+	wire, servable := resolveWire(env.kind, rt.backend, rt.model)
 	if !servable {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("backend %s does not support the Responses API for model %q",
@@ -69,5 +69,5 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		}
 		payload = translated
 	}
-	s.exchange(w, r, log, rt, openAIDialect(), wire, payload, r.Header.Clone(), env)
+	s.exchange(w, r, log, rt, openAIResponsesDialect(), wire, payload, r.Header.Clone(), env)
 }

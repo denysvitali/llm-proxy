@@ -77,6 +77,31 @@ func (c *Client) Supports(kind backend.Kind) bool {
 	}
 }
 
+// SupportsModel refines Supports per model. Zen's Anthropic /messages endpoint
+// only serves its Anthropic-native (Claude) models; for every other model in
+// its catalog (OpenAI-native and community models such as x-preview-f-free)
+// /messages returns HTTP 500, while /chat/completions works. Reporting no
+// native Anthropic support for those models makes the server translate
+// Anthropic requests onto Chat Completions instead of forwarding them to the
+// broken endpoint. Chat Completions is served for every model.
+func (c *Client) SupportsModel(kind backend.Kind, model string) bool {
+	if kind == backend.KindAnthropic && !isAnthropicNativeModel(model) {
+		return false
+	}
+	return c.Supports(kind)
+}
+
+// isAnthropicNativeModel reports whether a Zen model id is a Claude model,
+// which are the only models Zen serves over the Anthropic /messages endpoint.
+// The id may carry an "opencode/" backend prefix.
+func isAnthropicNativeModel(model string) bool {
+	m := model
+	if i := strings.IndexByte(m, '/'); i >= 0 {
+		m = m[i+1:]
+	}
+	return strings.HasPrefix(m, "claude-")
+}
+
 // Do performs a request against the Zen API, attaching the bearer token when
 // a key is configured. A nil body means no request body is sent.
 func (c *Client) Do(ctx context.Context, method, path string, body []byte, accept string) (*http.Response, error) {

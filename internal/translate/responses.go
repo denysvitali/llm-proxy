@@ -54,6 +54,57 @@ func (r *responsesRequest) inputItems() ([]responsesInputItem, error) {
 	return items, nil
 }
 
+// isPromptRole reports whether a Responses message item belongs in the system
+// prompt rather than the conversation. Codex sends its skills and permissions
+// preamble as a "developer" item, a role only the Responses and OpenAI
+// chat-completions APIs know: relaying it verbatim makes stricter upstreams
+// reject the whole request ("Incorrect role information"), so those items are
+// folded into the system prompt instead.
+func isPromptRole(role string) bool {
+	return role == "system" || role == "developer"
+}
+
+// itemText flattens a message item's content down to its text, which is all a
+// system prompt can carry. Separate content parts are joined with a blank line
+// because each one is a self-contained block.
+func itemText(item responsesInputItem) string {
+	if text, ok := plainString(item.Content); ok {
+		return strings.TrimSpace(text)
+	}
+	if len(item.Content) == 0 {
+		return ""
+	}
+	var parts []responsesInputContent
+	if err := json.Unmarshal(item.Content, &parts); err != nil {
+		return ""
+	}
+	var builder strings.Builder
+	for _, part := range parts {
+		switch part.Type {
+		case "input_text", "output_text":
+			if part.Text == "" {
+				continue
+			}
+			if builder.Len() > 0 {
+				builder.WriteString("\n\n")
+			}
+			builder.WriteString(part.Text)
+		}
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+// appendPrompt adds a section to a system prompt, separated by a blank line.
+func appendPrompt(prompt, section string) string {
+	if section == "" {
+		return prompt
+	}
+	if prompt == "" {
+		return section
+	}
+	return prompt + "\n\n" + section
+}
+
 type responsesReasoning struct {
 	Effort  string `json:"effort,omitempty"`
 	Summary string `json:"summary,omitempty"`

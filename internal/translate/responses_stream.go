@@ -3,6 +3,7 @@ package translate
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -86,8 +87,16 @@ func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 			return nil
 		}
 	}
-	s.Finish()
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		// The upstream broke mid-stream; leave the response unfinished so the
+		// caller can end it with an explicit failure instead of a
+		// "completed" envelope that hides the truncation.
+		return err
+	}
+	if s.started {
+		return errors.New("upstream stream ended without completing the response")
+	}
+	return errors.New("upstream ended the stream without emitting any events")
 }
 
 // consumeEvent handles one upstream event and reports whether the stream is
@@ -268,6 +277,20 @@ func (s *ResponsesStreamWriter) ensureStarted(id, model string) {
 	})
 }
 
+// closeOpenBlocks closes every still-open content block in emission order.
+func (s *ResponsesStreamWriter) closeOpenBlocks() {
+	open := make([]*responsesOutBlock, 0, len(s.blocks))
+	for _, block := range s.blocks {
+		if block.open {
+			open = append(open, block)
+		}
+	}
+	sort.Slice(open, func(i, j int) bool { return open[i].index < open[j].index })
+	for _, block := range open {
+		s.closeBlock(block)
+	}
+}
+
 // Finish closes any dangling content block and ends the message. It is safe
 // to call more than once, and is a no-op when nothing was ever emitted.
 func (s *ResponsesStreamWriter) Finish() {
@@ -279,16 +302,7 @@ func (s *ResponsesStreamWriter) Finish() {
 		return
 	}
 
-	open := make([]*responsesOutBlock, 0, len(s.blocks))
-	for _, block := range s.blocks {
-		if block.open {
-			open = append(open, block)
-		}
-	}
-	sort.Slice(open, func(i, j int) bool { return open[i].index < open[j].index })
-	for _, block := range open {
-		s.closeBlock(block)
-	}
+	s.closeOpenBlocks()
 
 	reason := s.stopReason
 	if reason == "" {
@@ -300,6 +314,21 @@ func (s *ResponsesStreamWriter) Finish() {
 		"usage": s.usage,
 	})
 	s.emit("message_stop", map[string]any{"type": "message_stop"})
+}
+
+// Fail aborts the stream with an explicit Anthropic error event instead of a
+// normal completion, so a mid-stream break reaches the client as a real
+// failure it can retry rather than a truncated answer that looks finished.
+func (s *ResponsesStreamWriter) Fail(message string) {
+	if s.finished {
+		return
+	}
+	s.finished = true
+	if !s.started {
+		return
+	}
+	s.closeOpenBlocks()
+	s.emitError("api_error", message)
 }
 
 func (s *ResponsesStreamWriter) emit(event string, payload any) {
@@ -325,6 +354,7 @@ type chatChunk struct {
 	Model   string            `json:"model"`
 	Choices []chatChunkChoice `json:"choices"`
 	Usage   *chatUsageOut     `json:"usage,omitempty"`
+	Error   json.RawMessage   `json:"error,omitempty"`
 }
 
 type chatChunkChoice struct {
@@ -402,8 +432,16 @@ func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 			return nil
 		}
 	}
-	c.Finish()
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		// The upstream broke mid-stream; leave the stream unfinished so the
+		// caller can end it with an explicit failure instead of a finished
+		// turn that hides the truncation.
+		return err
+	}
+	if c.started {
+		return errors.New("upstream stream ended before the completion marker")
+	}
+	return errors.New("upstream ended the stream without emitting any events")
 }
 
 func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
@@ -564,6 +602,24 @@ func (c *ChatResponsesStreamWriter) Finish() {
 	}
 	c.writeData(chunk)
 	c.writeString("data: [DONE]\n\n")
+}
+
+// Fail aborts the stream with an error chunk instead of the terminating
+// finish_reason chunk and [DONE], so a mid-stream break reaches the client
+// as a real failure rather than a completed turn.
+func (c *ChatResponsesStreamWriter) Fail(message string) {
+	if c.finished {
+		return
+	}
+	c.finished = true
+	if !c.started {
+		return
+	}
+	c.writeData(map[string]any{"error": map[string]any{
+		"message": message,
+		"type":    "api_error",
+		"code":    nil,
+	}})
 }
 
 func (c *ChatResponsesStreamWriter) writeString(text string) {

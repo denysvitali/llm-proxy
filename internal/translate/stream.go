@@ -3,6 +3,7 @@ package translate
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -47,7 +48,10 @@ func NewStreamWriter(writer io.Writer, flush func(), model string, includeThinki
 }
 
 // Consume reads the upstream SSE stream to completion, emitting Anthropic
-// events as it goes.
+// events as it goes. It returns an error when the upstream breaks mid-stream
+// or ends without its completion marker, leaving the message unfinished so
+// the caller can end it with an explicit failure instead of a completion
+// that hides the truncation.
 func (s *StreamWriter) Consume(body io.Reader) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
@@ -74,8 +78,17 @@ func (s *StreamWriter) Consume(body io.Reader) error {
 		}
 		s.consumeChunk(chunk)
 	}
-	s.Finish()
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		// The upstream broke mid-stream; leave the message unfinished so the
+		// caller can end it with an explicit error instead of a completion.
+		return err
+	}
+	if s.started {
+		// The upstream hung up without [DONE]. Ending the message here would
+		// dress a truncated answer up as a completed turn.
+		return errors.New("upstream stream ended before the completion marker")
+	}
+	return errors.New("upstream stream ended without emitting any events")
 }
 
 func (s *StreamWriter) consumeChunk(chunk openAIChunk) {
@@ -206,6 +219,22 @@ func (s *StreamWriter) Finish() {
 	})
 	s.emit("message_stop", map[string]any{"type": "message_stop"})
 	s.started = false
+}
+
+// Fail ends the stream with an explicit Anthropic error event instead of a
+// normal completion. The client sees a real failure it can retry rather than
+// a truncated answer that looks finished. It is a no-op when nothing was
+// ever emitted.
+func (s *StreamWriter) Fail(message string) {
+	if !s.started {
+		return
+	}
+	s.started = false
+	s.closeBlock()
+	s.emit("error", map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": "api_error", "message": message},
+	})
 }
 
 func (s *StreamWriter) emit(event string, payload any) {

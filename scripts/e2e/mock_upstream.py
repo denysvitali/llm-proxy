@@ -60,13 +60,32 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/v1/chat/completions"):
             model = req.get("model", "stealth-mock")
             if not stream:
+                # Requests that declare tools get a tool_calls reply so the
+                # proxy's tool-call stats have something to count.
+                wants_tool = bool(req.get("tools"))
+                if wants_tool:
+                    message = {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_mock_1", "type": "function",
+                            "function": {"name": (req.get("tools") or [{}])[0].get("function", {}).get("name", "get_weather"),
+                                         "arguments": "{\"city\":\"Rome\"}"},
+                        }],
+                    }
+                    finish = "tool_calls"
+                else:
+                    message = {"role": "assistant", "content": "E2E_OK"}
+                    finish = "stop"
                 body = json.dumps({
                     "id": "chatcmpl-mock", "object": "chat.completion",
                     "created": 1700000000, "model": model,
-                    "choices": [{"index": 0,
-                                 "message": {"role": "assistant", "content": "E2E_OK"},
-                                 "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+                    "choices": [{"index": 0, "message": message,
+                                 "finish_reason": finish}],
+                    "usage": {
+                        "prompt_tokens": 120, "completion_tokens": 42, "total_tokens": 162,
+                        "prompt_tokens_details": {"cached_tokens": 96},
+                    },
                 }).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
