@@ -40,3 +40,32 @@ a,
 .mantine-UnstyledButton-root {
   -webkit-tap-highlight-color: transparent;
 }
+
+/* Interactive cards lift on hover (pointer devices only). */
+@media (hover: hover) {
+  .mantine-Card-root[style*='cursor: pointer'] {
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .mantine-Card-root[style*='cursor: pointer']:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--mantine-shadow-md);
+  }
+}
+
+/* Respect notched-phone safe areas on the bottom tab bar. */
+.mantine-AppShell-footer {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Setup snippet block: readable on both schemes. */
+.snippet-block {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  font-family: var(--mantine-font-family-monospace);
+  background: light-dark(var(--mantine-color-gray-9), var(--mantine-color-dark-8));
+  color: #e8eaed;
+  border-radius: 0 0 var(--mantine-radius-lg) var(--mantine-radius-lg);
+}

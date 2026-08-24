@@ -18,6 +18,7 @@ import {
   IconShieldCheck,
   IconTool,
 } from '@tabler/icons-react'
+import { BarChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { fetchOverview, fetchStats } from '../api'
@@ -54,6 +55,15 @@ export default function OverviewPage() {
     )
     medianTps = sorted[Math.floor(sorted.length / 2)].throughput_tps.p50
   }
+
+  const labelMax = isMobile ? 15 : 22
+  const topModels = [...models]
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 8)
+    .map((m) => ({
+      model: m.model.length > labelMax ? `${m.model.slice(0, labelMax - 1)}…` : m.model,
+      requests: m.requests,
+    }))
 
   return (
     <Fade fetching={statsQ.isFetching || ovQ.isFetching}>
@@ -122,14 +132,20 @@ export default function OverviewPage() {
                 <Title order={5} mb="sm">
                   Requests by model
                 </Title>
-                <Stack gap="xs">
-                  {[...models]
-                    .sort((a, b) => b.requests - a.requests)
-                    .slice(0, 8)
-                    .map((m) => (
-                      <MagnitudeRow key={`${m.backend}/${m.model}`} stat={m} max={totalRequests} color={pal.magnitude} />
-                    ))}
-                </Stack>
+                <BarChart
+                  h={Math.max(topModels.length * 40 + 16, 120)}
+                  data={topModels}
+                  dataKey="model"
+                  orientation="vertical"
+                  series={[{ name: 'requests', color: pal.magnitude }]}
+                  withBarValueLabel
+                  valueFormatter={fmtInt}
+                  gridAxis="none"
+                  withXAxis={false}
+                  barProps={{ radius: [0, 4, 4, 0], barSize: 18 }}
+                  yAxisProps={{ width: isMobile ? 122 : 176, tickLine: false }}
+                  tooltipAnimationDuration={150}
+                />
               </Card>
 
               <Card withBorder radius="lg" p="md">
@@ -201,50 +217,6 @@ export default function OverviewPage() {
         )}
       </Stack>
     </Fade>
-  )
-}
-
-// Single-hue magnitude row: model label, bar anchored to a common baseline,
-// exact count printed beside it.
-function MagnitudeRow({
-  stat,
-  max,
-  color,
-}: {
-  stat: ModelStat
-  max: number
-  color: string
-}) {
-  const w = stat.requests > 0 && max > 0 ? Math.max((stat.requests / max) * 100, 1.5) : 0
-  return (
-    <Box style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <Text size="sm" truncate style={{ width: 'clamp(90px, 34%, 200px)', flexShrink: 0 }}>
-        {stat.model}
-      </Text>
-      <Box
-        style={{
-          flex: 1,
-          height: 18,
-          background: 'var(--mantine-color-default-border)',
-          borderRadius: 4,
-        }}
-        title={`${stat.backend}/${stat.model}: ${stat.requests} requests`}
-      >
-        {w > 0 && (
-          <div
-            style={{
-              width: `${w}%`,
-              height: '100%',
-              background: color,
-              borderRadius: '0 4px 4px 0',
-            }}
-          />
-        )}
-      </Box>
-      <Text size="sm" ta="right" w={64} style={{ fontVariantNumeric: 'tabular-nums' }}>
-        {fmtInt(stat.requests)}
-      </Text>
-    </Box>
   )
 }
 

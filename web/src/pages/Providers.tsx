@@ -6,6 +6,7 @@ import {
   Divider,
   Group,
   Loader,
+  RingProgress,
   SimpleGrid,
   Stack,
   Text,
@@ -79,24 +80,44 @@ function ProviderCard({
   const shownModels = b.models?.slice(0, 5) ?? []
   const extra = (b.models?.length ?? 0) - shownModels.length
 
+  // Ring color mirrors UptimeBadge thresholds; the badge next to it carries
+  // the icon+label so state is never color-alone.
+  const ringColor = !requests ? 'gray' : uptime >= 0.99 ? 'teal' : uptime >= 0.9 ? 'yellow' : 'red'
+
   return (
     <Card withBorder radius="lg" p="lg">
-      <Group justify="space-between" wrap="nowrap" mb="xs">
-        <Group gap="xs">
-          <Title order={5} mb={0}>
-            {b.name}
-          </Title>
-          <Badge size="sm" variant="light" color={b.enabled ? 'teal' : 'gray'}>
-            {b.enabled ? 'enabled' : 'disabled'}
-          </Badge>
-        </Group>
-        <UptimeBadge uptime={uptime} requests={requests} />
+      <Group justify="space-between" wrap="nowrap" align="flex-start" mb="xs">
+        <Box style={{ minWidth: 0 }}>
+          <Group gap="xs" mb={4}>
+            <Title order={5} mb={0}>
+              {b.name}
+            </Title>
+            <Badge size="sm" variant="light" color={b.enabled ? 'teal' : 'gray'}>
+              {b.enabled ? 'enabled' : 'disabled'}
+            </Badge>
+          </Group>
+          <Text size="sm" c="dimmed">
+            <Code>{b.host}</Code> · API key {b.hasKey ? 'set' : 'missing'} · catalog{' '}
+            {b.catalogOK ? 'ok' : 'unavailable'}
+          </Text>
+          <Box mt={8}>
+            <UptimeBadge uptime={uptime} requests={requests} />
+          </Box>
+        </Box>
+        <RingProgress
+          size={84}
+          thickness={7}
+          roundCaps
+          sections={[{ value: requests ? uptime * 100 : 0, color: ringColor }]}
+          label={
+            <Text ta="center" size="xs" fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {requests ? fmtPct(uptime, 0) : '—'}
+            </Text>
+          }
+          aria-label={`uptime ${fmtPct(uptime)}`}
+          style={{ flexShrink: 0 }}
+        />
       </Group>
-
-      <Text size="sm" c="dimmed">
-        <Code>{b.host}</Code> · API key {b.hasKey ? 'set' : 'missing'} · catalog{' '}
-        {b.catalogOK ? 'ok' : 'unavailable'}
-      </Text>
 
       {(segments.length > 0 && requests > 0) && (
         <>

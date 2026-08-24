@@ -1,17 +1,18 @@
 import {
   Alert,
+  Button,
+  Card,
   Code,
   CopyButton,
   Group,
   List,
   Loader,
   Stack,
+  Tabs,
   Text,
   Title,
-  Tooltip,
-  UnstyledButton,
 } from '@mantine/core'
-import { IconCheck, IconCopy } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconInfoCircle, IconTerminal2 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchOverview } from '../api'
 import { Fade } from '../App'
@@ -28,7 +29,10 @@ export default function SetupPage() {
         </Group>
       ) : (
         <Stack gap="lg" maw={820}>
-          <Title order={4}>Setup</Title>
+          <div>
+            <Title order={4} mb={2}>Setup</Title>
+            <Text size="xs" c="dimmed">Point a coding agent at this proxy</Text>
+          </div>
           <List spacing="xs">
             <List.Item>
               Proxy listens on <Code>{ov.listen}</Code>, authentication{' '}
@@ -42,56 +46,64 @@ export default function SetupPage() {
           </List>
 
           {ov.authEnabled && (
-            <Alert color="blue" title="Authentication is enabled">
+            <Alert
+              color="blue"
+              variant="light"
+              icon={<IconInfoCircle size={16} />}
+              title="Authentication is enabled"
+            >
               Replace the placeholder token in each snippet with one of your proxy
               API keys.
             </Alert>
           )}
 
-          <SnippetCard title="Claude Code" snippet={ov.claudeSnippet} />
-          <SnippetCard title="Codex CLI" snippet={ov.codexSnippet} />
+          <Card withBorder radius="lg" p={0}>
+            <Tabs defaultValue="claude" keepMounted={false}>
+              <Tabs.List px="md" pt={6}>
+                <Tabs.Tab value="claude" leftSection={<IconTerminal2 size={14} />}>
+                  Claude Code
+                </Tabs.Tab>
+                <Tabs.Tab value="codex" leftSection={<IconTerminal2 size={14} />}>
+                  Codex CLI
+                </Tabs.Tab>
+              </Tabs.List>
+              <Tabs.Panel value="claude">
+                <Snippet title="Claude Code" snippet={ov.claudeSnippet} />
+              </Tabs.Panel>
+              <Tabs.Panel value="codex">
+                <Snippet title="Codex CLI" snippet={ov.codexSnippet} />
+              </Tabs.Panel>
+            </Tabs>
+          </Card>
         </Stack>
       )}
     </Fade>
   )
 }
 
-function SnippetCard({ title, snippet }: { title: string; snippet: string }) {
+function Snippet({ title, snippet }: { title: string; snippet: string }) {
   return (
     <div>
-      <Group justify="space-between" mb={4}>
-        <Title order={5} mb={0}>
-          {title}
-        </Title>
+      <Group justify="space-between" px="md" py="xs">
+        <Text size="xs" c="dimmed">
+          Point your client at the proxy:
+        </Text>
         <CopyButton value={snippet}>
           {({ copied, copy }) => (
-            <Tooltip label={copied ? 'Copied' : 'Copy'}>
-              <UnstyledButton onClick={copy} aria-label={`Copy ${title} snippet`}>
-                {copied ? (
-                  <IconCheck size={15} color="#0ca30c" />
-                ) : (
-                  <IconCopy size={15} opacity={0.6} />
-                )}
-              </UnstyledButton>
-            </Tooltip>
+            <Button
+              size="compact-xs"
+              variant={copied ? 'light' : 'default'}
+              color={copied ? 'teal' : undefined}
+              leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+              onClick={copy}
+              aria-label={`Copy ${title} snippet`}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </Button>
           )}
         </CopyButton>
       </Group>
-      <Text size="xs" c="dimmed" mb={2}>
-        Point your client at the proxy:
-      </Text>
-      <pre
-        style={{
-          margin: 0,
-          padding: '14px 16px',
-          borderRadius: 8,
-          overflowX: 'auto',
-          fontSize: '0.82rem',
-          lineHeight: 1.5,
-          background: 'var(--mantine-color-dark-7)',
-          color: '#e8eaed',
-        }}
-      >
+      <pre className="snippet-block">
         <code>{snippet}</code>
       </pre>
     </div>

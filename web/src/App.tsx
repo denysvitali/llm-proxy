@@ -83,7 +83,17 @@ function HeaderBrand() {
           λ
         </Text>
       </Box>
-      <Title order={4} mb={0} style={{ letterSpacing: '-0.01em' }}>
+      <Title
+        order={4}
+        mb={0}
+        style={{
+          letterSpacing: '-0.01em',
+          background:
+            'linear-gradient(90deg, var(--mantine-color-text), var(--mantine-color-brand-6))',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+        }}
+      >
         llm-proxy
       </Title>
         {ov?.version && (
