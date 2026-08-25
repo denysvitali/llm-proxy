@@ -179,6 +179,12 @@ type responsesErrorBody struct {
 	Code    string `json:"code,omitempty"`
 }
 
+// asUpstreamError views a Responses error body through the shared upstream
+// error type; the Responses API puts the error at the top level.
+func (e *responsesErrorBody) asUpstreamError() error {
+	return checkUpstreamError(&upstreamErrorObj{Message: e.Message, Type: e.Type})
+}
+
 // ToResponses renders an Anthropic Messages request as an OpenAI Responses
 // API request: system prompts become "instructions", conversation history
 // becomes the "input" item array, and tools are flattened to the Responses
@@ -356,6 +362,9 @@ func FromResponses(body []byte, model string, includeThinking bool) ([]byte, err
 	var response responsesResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
+	}
+	if response.Error != nil {
+		return nil, response.Error.asUpstreamError()
 	}
 
 	out := AnthropicMessageOut{
@@ -701,6 +710,9 @@ func ChatFromResponses(body []byte, model string) ([]byte, error) {
 	var response responsesResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
+	}
+	if response.Error != nil {
+		return nil, response.Error.asUpstreamError()
 	}
 
 	var content strings.Builder

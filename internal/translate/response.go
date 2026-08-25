@@ -11,8 +11,9 @@ import (
 const thinkingSignature = "llm-proxy"
 
 type openAIResponse struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
+	ID      string            `json:"id"`
+	Model   string            `json:"model"`
+	Error   *upstreamErrorObj `json:"error"`
 	Choices []struct {
 		FinishReason string           `json:"finish_reason"`
 		Message      openAIMessageOut `json:"message"`
@@ -58,6 +59,9 @@ type AnthropicUsage struct {
 func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error) {
 	var response openAIResponse
 	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+	if err := checkUpstreamError(response.Error); err != nil {
 		return nil, err
 	}
 

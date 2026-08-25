@@ -264,11 +264,12 @@ func mustMarshal(v any) json.RawMessage {
 // Response direction: Anthropic -> chat completions.
 
 type anthropicResponseIn struct {
-	ID         string           `json:"id"`
-	Model      string           `json:"model"`
-	Content    []anthropicBlock `json:"content"`
-	StopReason string           `json:"stop_reason"`
-	Usage      AnthropicUsage   `json:"usage"`
+	ID         string            `json:"id"`
+	Model      string            `json:"model"`
+	Content    []anthropicBlock  `json:"content"`
+	StopReason string            `json:"stop_reason"`
+	Usage      AnthropicUsage    `json:"usage"`
+	Error      *upstreamErrorObj `json:"error"`
 }
 
 // ChatFromAnthropic converts a non-streaming Anthropic Messages response into
@@ -276,6 +277,9 @@ type anthropicResponseIn struct {
 func ChatFromAnthropic(body []byte, model string) ([]byte, error) {
 	var response anthropicResponseIn
 	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+	if err := checkUpstreamError(response.Error); err != nil {
 		return nil, err
 	}
 

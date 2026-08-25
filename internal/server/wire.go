@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -354,6 +355,13 @@ func (s *Server) exchange(
 		}
 		out, err := wire.path.decode(env, data)
 		if err != nil {
+			var upstreamErr *translate.UpstreamError
+			if errors.As(err, &upstreamErr) {
+				log.WithError(err).Warn("upstream answered success with an error body")
+				dialect.writeError(w, http.StatusBadGateway, "api_error",
+					fmt.Sprintf("upstream returned an error: %v", upstreamErr))
+				return
+			}
 			log.WithError(err).Warn("translating upstream response failed")
 			giveUp(w, "upstream returned an unreadable response")
 			return

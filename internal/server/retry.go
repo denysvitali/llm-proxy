@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 // Upstream failure handling, shared by every endpoint through exchange().
@@ -338,6 +340,10 @@ func (s *Server) relayNativeStreaming(
 
 // relayNativeBuffered buffers a successful native response and relays it
 // verbatim once complete, so a mid-transfer break can be retried invisibly.
+// A 200 whose JSON body carries a top-level "error" object is not a success —
+// fronting gateways (Cloudflare in front of OpenCode Zen among them) serve
+// quota and overload errors that way — so it is answered as an upstream
+// failure instead of being passed off as a completed turn.
 func (s *Server) relayNativeBuffered(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -354,6 +360,11 @@ func (s *Server) relayNativeBuffered(
 		giveUp(w, message)
 		return
 	}
+	if upstreamErr := errorShapedBody(data); upstreamErr != nil {
+		log.WithError(upstreamErr).Warn("upstream answered HTTP 200 with an error body")
+		giveUp(w, fmt.Sprintf("upstream returned an error: %v", upstreamErr))
+		return
+	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/json"
@@ -361,6 +372,24 @@ func (s *Server) relayNativeBuffered(
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(resp.Status)
 	_, _ = w.Write(data)
+}
+
+// errorShapedBody reports whether a buffered 200 body is a JSON object with a
+// non-null top-level "error" key, returning it as the upstream's own failure.
+// The check is deliberately narrow: any other shape — including bodies that
+// merely fail to parse — relays verbatim, since only an explicit error object
+// is proof enough to override the upstream's status line.
+func errorShapedBody(data []byte) error {
+	var probe struct {
+		Error *translate.UpstreamError `json:"error"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil // not JSON; not our call to reject
+	}
+	if probe.Error == nil || (probe.Error.Message == "" && probe.Error.Type == "") {
+		return nil
+	}
+	return probe.Error
 }
 
 // relayTranslatedStreaming converts an upstream SSE stream into the client's
