@@ -376,6 +376,30 @@ func TestResponsesEndpointSurfacesBreakAfterContent(t *testing.T) {
 	}
 }
 
+// TestResponsesAcceptsLargeTerminalEvent covers Grok's native Responses
+// stream, whose response.completed data includes the full response and may be
+// far larger than the rolling completion window. Grok closes after that event
+// without a separate [DONE] sentinel.
+func TestResponsesAcceptsLargeTerminalEvent(t *testing.T) {
+	terminal := "event: response.completed\n" +
+		`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"` +
+		strings.Repeat("x", retryCompletionWindow*2) +
+		`"}]}]}}` + "\n\n"
+	upstream := newScripted(backend.KindOpenAIResponses,
+		step{resp: sseResponse("text/event-stream", terminal)},
+	)
+	s := newMsgServerWith(t, upstream)
+
+	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+	body := rec.Body.String()
+	if !strings.Contains(body, "response.completed") {
+		t.Fatalf("terminal event missing:\n%s", body)
+	}
+	if strings.Contains(body, "response.failed") {
+		t.Fatalf("successful large terminal event was marked failed:\n%s", body)
+	}
+}
+
 // TestResponsesRetriesTranslatedNetworkError covers providers such as
 // OpenCode Zen's x-preview-f-free, which encode an upstream failure as a 200
 // chat stream with finish_reason=network_error. That must be retried while no

@@ -235,11 +235,16 @@ func pipeSSE(w io.Writer, flush func(), body io.Reader, done func([]byte) bool) 
 			}
 			relayed += int64(read)
 			window = append(window, buffer[:read]...)
-			if len(window) > retryCompletionWindow {
-				window = window[len(window)-retryCompletionWindow:]
-			}
+			// Inspect the newly extended window before trimming it. A terminal
+			// Responses event can be much larger than retryCompletionWindow (its
+			// data payload contains the complete response), with the marker near
+			// the beginning. Trimming first would discard that marker and turn a
+			// successful stream into a spurious mid-stream failure.
 			if done != nil && !complete && done(window) {
 				complete = true
+			}
+			if len(window) > retryCompletionWindow {
+				window = window[len(window)-retryCompletionWindow:]
 			}
 		}
 		if readErr != nil {
