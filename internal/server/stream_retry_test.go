@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/config"
@@ -141,6 +142,13 @@ const brokenResponsesSSE = "event: response.created\n" +
 	`data: {"type":"response.created","response":{"id":"resp_1","model":"m"}}` + "\n\n" +
 	"event: response.output_text.delta\n" +
 	`data: {"type":"response.output_text.delta","output_index":0,"delta":"partial"}` + "\n\n"
+
+const fullResponsesSSE = "event: response.created\n" +
+	`data: {"type":"response.created","response":{"id":"resp_1","model":"m"}}` + "\n\n" +
+	"event: response.output_text.delta\n" +
+	`data: {"type":"response.output_text.delta","output_index":0,"delta":"hi"}` + "\n\n" +
+	"event: response.completed\n" +
+	`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}` + "\n\n"
 
 // TestMessagesRetriesCleanEmptyStream covers the failure opencode shipped for
 // a while: an upstream 200 whose body ends before any event. The proxy
@@ -321,6 +329,67 @@ func TestMessagesRetriesConnectPhase(t *testing.T) {
 	}
 	if recovered() < 1 {
 		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+	}
+}
+
+// TestResponsesRetriesUnprocessableEntity covers providers that use 422 as a
+// transient overload signal. Codex otherwise treats that status as fatal even
+// though no response bytes have been forwarded yet.
+func TestResponsesRetriesUnprocessableEntity(t *testing.T) {
+	upstream := newScripted(backend.KindOpenAIResponses,
+		step{resp: &backend.Response{
+			Status: http.StatusUnprocessableEntity,
+			Header: http.Header{},
+			Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"temporarily unavailable"}}`)),
+		}},
+		step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+	)
+	s := newMsgServerWith(t, upstream)
+
+	recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
+
+	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if upstream.callCount() != 2 {
+		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "response.completed") {
+		t.Fatalf("retried Responses stream incomplete:\n%s", body)
+	}
+	if strings.Contains(body, "422") || strings.Contains(body, "temporarily unavailable") {
+		t.Fatalf("pre-output 422 should remain invisible to the client:\n%s", body)
+	}
+	if recovered() < 1 {
+		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+	}
+}
+
+// TestResponsesRetriesTooManyRequestsHonorsRetryAfter ensures provider rate-
+// limit guidance is respected without allowing an unbounded client wait.
+func TestResponsesRetriesTooManyRequestsHonorsRetryAfter(t *testing.T) {
+	before := time.Now()
+	upstream := newScripted(backend.KindOpenAIResponses,
+		step{resp: &backend.Response{
+			Status: http.StatusTooManyRequests,
+			Header: http.Header{"Retry-After": []string{"1"}},
+			Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+		}},
+		step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+	)
+	s := newMsgServerWith(t, upstream)
+
+	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if elapsed := time.Since(before); elapsed < time.Second {
+		t.Fatalf("retry after = %s, want at least the requested second", elapsed)
+	}
+	if upstream.callCount() != 2 {
+		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
 	}
 }
 

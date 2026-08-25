@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -47,6 +49,9 @@ const (
 	// retryCompletionWindow is how much of the streamed tail is kept in the
 	// rolling window checked for a stream's completion marker.
 	retryCompletionWindow = 128
+	// maxRetryAfter caps provider-supplied delays so a bad or extreme
+	// Retry-After cannot stall requests indefinitely.
+	maxRetryAfter = 30 * time.Second
 )
 
 // Retry metric phases and outcomes.
@@ -91,11 +96,28 @@ func retryableUpstream(resp *backend.Response, err error) bool {
 		return true
 	}
 	switch resp.Status {
-	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusTooManyRequests, http.StatusUnprocessableEntity, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false
 	}
+}
+
+// retryAfter returns the delay requested by an upstream Retry-After header.
+// Relative second values are supported, capped at maxRetryAfter; date-valued
+// or malformed headers fall back to the normal exponential backoff.
+func retryAfter(header http.Header) (time.Duration, bool) {
+	value := strings.TrimSpace(header.Get("Retry-After"))
+	if value == "" {
+		return 0, false
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 0 {
+		return 0, false
+	}
+	delay := time.Duration(seconds) * time.Second
+	return min(delay, maxRetryAfter), true
 }
 
 // sendWithRetry runs the connection phase: up to connectRetries extra
@@ -121,7 +143,21 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 		attempts++
 		s.metrics.noteRetryAttempt(retryPhaseConnect)
 		log.WithError(err).WithField("attempt", attempts+1).Warn("upstream unavailable; retrying")
-		if !retryPause(ctx, attempt) {
+		paused := true
+		if resp != nil {
+			if delay, ok := retryAfter(resp.Header); ok && delay > retryBaseDelay<<attempt {
+				select {
+				case <-ctx.Done():
+					paused = false
+				case <-time.After(delay):
+				}
+			} else {
+				paused = retryPause(ctx, attempt)
+			}
+		} else {
+			paused = retryPause(ctx, attempt)
+		}
+		if !paused {
 			return nil, ctx.Err()
 		}
 	}
