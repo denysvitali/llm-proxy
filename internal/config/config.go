@@ -121,6 +121,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("server.listen must not be empty")
 	}
 	seen := map[string]bool{}
+	// Keep pre-account-session Grok configs loadable during migration. The
+	// Grok backend ignores these legacy fields and uses its TokenSource.
 	for _, b := range c.Backends {
 		if !backend.Has(b.Type) {
 			return fmt.Errorf("backends: unknown type %q (registered: %v)", b.Type, backend.Names())
@@ -129,9 +131,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("backends: duplicate type %q", b.Type)
 		}
 		seen[b.Type] = true
-		if strings.EqualFold(b.Type, "grok") && (b.APIKeyEnv != "" || b.APIKey != "") {
-			return fmt.Errorf("backends.grok does not support API keys; sign in from the dashboard")
-		}
 	}
 	for name, r := range c.Routes {
 		if !backend.Has(r.Backend) {

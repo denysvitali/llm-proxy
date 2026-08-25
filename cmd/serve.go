@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -87,6 +88,11 @@ func runServe(cfg *config.Config) error {
 	log.SetLevel(level)
 	if cfg.LogFormat == "json" {
 		log.SetFormatter(&logrus.JSONFormatter{})
+	}
+	for _, bc := range cfg.Backends {
+		if strings.EqualFold(bc.Type, "grok") && (bc.APIKeyEnv != "" || bc.APIKey != "") {
+			log.WithField("backend", "grok").Warn("legacy Grok API-key configuration is ignored; sign in from the dashboard")
+		}
 	}
 
 	var store *auth.Store
