@@ -6,6 +6,7 @@ package grok
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,7 +68,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if token == "" {
 		return nil, fmt.Errorf("grok account returned an empty access token")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/responses", bytes.NewReader(req.RawBody))
+	body, err := flattenNamespaceTools(req.RawBody)
+	if err != nil {
+		return nil, fmt.Errorf("normalize Grok request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/responses", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +91,51 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, fmt.Errorf("request to Grok failed: %w", err)
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
+// flattenNamespaceTools adapts Codex's Responses extension for grouped tools
+// to the flat function-tool list accepted by Grok. Function calls still use
+// the nested tool's original name, which is how Codex dispatches the result.
+// Requests without namespaces remain byte-for-byte unchanged.
+func flattenNamespaceTools(body []byte) ([]byte, error) {
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	var tools []json.RawMessage
+	if len(request["tools"]) == 0 {
+		return body, nil
+	}
+	if err := json.Unmarshal(request["tools"], &tools); err != nil {
+		return nil, fmt.Errorf("decode tools: %w", err)
+	}
+
+	changed := false
+	flattened := make([]json.RawMessage, 0, len(tools))
+	for _, raw := range tools {
+		var header struct {
+			Type  string            `json:"type"`
+			Tools []json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return nil, fmt.Errorf("decode tool: %w", err)
+		}
+		if header.Type != "namespace" {
+			flattened = append(flattened, raw)
+			continue
+		}
+		changed = true
+		flattened = append(flattened, header.Tools...)
+	}
+	if !changed {
+		return body, nil
+	}
+	encodedTools, err := json.Marshal(flattened)
+	if err != nil {
+		return nil, err
+	}
+	request["tools"] = encodedTools
+	return json.Marshal(request)
 }
 
 // Models: the subscription endpoint has no public model catalog, so a static

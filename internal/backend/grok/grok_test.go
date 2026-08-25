@@ -3,6 +3,7 @@ package grok
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -121,6 +122,47 @@ func TestSendHeadersAndBody(t *testing.T) {
 				t.Errorf("response body = %q, want %q", body, `{"ok":true}`)
 			}
 		})
+	}
+}
+
+func TestFlattenNamespaceTools(t *testing.T) {
+	input := []byte(`{"model":"grok-4.6","tools":[{"type":"function","name":"plain","parameters":{}},{"type":"namespace","name":"agents","tools":[{"type":"function","name":"spawn_agent","description":"spawn","parameters":{"type":"object"}},{"type":"function","name":"wait_agent","parameters":{}}]}],"stream":true}`)
+	got, err := flattenNamespaceTools(input)
+	if err != nil {
+		t.Fatalf("flattenNamespaceTools: %v", err)
+	}
+	var request struct {
+		Tools []struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		} `json:"tools"`
+		Stream bool `json:"stream"`
+	}
+	if err := json.Unmarshal(got, &request); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if !request.Stream {
+		t.Error("unrelated request fields were lost")
+	}
+	want := []string{"plain", "spawn_agent", "wait_agent"}
+	if len(request.Tools) != len(want) {
+		t.Fatalf("tools = %+v, want names %v", request.Tools, want)
+	}
+	for i, tool := range request.Tools {
+		if tool.Type != "function" || tool.Name != want[i] {
+			t.Errorf("tool[%d] = %+v, want function %q", i, tool, want[i])
+		}
+	}
+}
+
+func TestFlattenNamespaceToolsLeavesOrdinaryRequestUnchanged(t *testing.T) {
+	input := []byte(`{ "model": "grok-4.6", "tools": [{"type":"function","name":"shell"}] }`)
+	got, err := flattenNamespaceTools(input)
+	if err != nil {
+		t.Fatalf("flattenNamespaceTools: %v", err)
+	}
+	if !bytes.Equal(got, input) {
+		t.Errorf("ordinary request changed: %q", got)
 	}
 }
 
