@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   Box,
   Card,
@@ -7,6 +8,7 @@ import {
   Drawer,
   Group,
   Loader,
+  Paper,
   ScrollArea,
   Select,
   SimpleGrid,
@@ -14,11 +16,12 @@ import {
   Table,
   Text,
   TextInput,
+  ThemeIcon,
   Title,
   UnstyledButton,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { IconArrowsSort, IconSearch } from '@tabler/icons-react'
+import { IconArrowsSort, IconInboxOff, IconSearch, IconSearchOff } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchStats } from '../api'
 import type { ModelStat } from '../api'
@@ -64,6 +67,17 @@ const sortOptions = [
   { value: 'model', label: 'Name' },
 ]
 
+// Token-kind segments in fixed categorical slot order; every chart on this
+// page (cards, drawer) draws the same kind in the same color.
+function mixSegments(m: ModelStat, colors: string[]): MixSegment[] {
+  return [
+    { name: 'input', color: colors[0], value: m.input_tokens },
+    { name: 'output', color: colors[1], value: m.output_tokens },
+    { name: 'cache read', color: colors[2], value: m.cache_read_tokens },
+    { name: 'cache write', color: colors[3], value: m.cache_write_tokens },
+  ]
+}
+
 function sortValue(m: ModelStat, key: SortKey): string | number {
   switch (key) {
     case 'model':
@@ -89,7 +103,8 @@ function sortValue(m: ModelStat, key: SortKey): string | number {
 
 export default function ModelsPage() {
   const q = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
-  const models = q.data?.models ?? []
+  // Memoized so the rows useMemo below sees a stable identity between fetches.
+  const models = useMemo(() => q.data?.models ?? [], [q.data])
   const pal = useChartPalette()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
 
@@ -166,18 +181,37 @@ export default function ModelsPage() {
             <Loader size="sm" />
           </Group>
         ) : rows.length === 0 ? (
-          <Text c="dimmed" py="xl" ta="center">
-            {models.length === 0 ? 'No model traffic recorded yet.' : 'No models match that filter.'}
-          </Text>
+          <EmptyState
+            icon={
+              models.length === 0 ? (
+                <IconInboxOff size={20} stroke={1.6} />
+              ) : (
+                <IconSearchOff size={20} stroke={1.6} />
+              )
+            }
+            title={models.length === 0 ? 'No model traffic yet' : 'No models match that filter'}
+            hint={
+              models.length === 0
+                ? 'Send a request through the proxy and per-model stats will land here.'
+                : 'Try a shorter fragment of the backend or model name.'
+            }
+          />
         ) : isMobile ? (
           <SimpleGrid cols={1} spacing="sm">
             {rows.map((m) => (
-              <ModelCard key={`${m.backend}/${m.model}`} stat={m} onClick={() => setSelected(m)} />
+              <ModelCard
+                key={`${m.backend}/${m.model}`}
+                stat={m}
+                colors={pal.series}
+                onClick={() => setSelected(m)}
+              />
             ))}
           </SimpleGrid>
         ) : (
           <ScrollArea>
-            <Table verticalSpacing="sm" horizontalSpacing="md" highlightOnHover>
+            {/* Striped + highlight-on-hover keeps wide rows scannable; the
+                  cursor signals the row opens the detail drawer. */}
+            <Table verticalSpacing="sm" horizontalSpacing="md" highlightOnHover striped>
               <Table.Thead>
                 <Table.Tr>
                   {columns.map((c) => (
@@ -202,7 +236,14 @@ export default function ModelsPage() {
                     style={{ cursor: 'pointer' }}
                   >
                     <Table.Td>
-                      <Code>{m.backend}</Code> <Code>{m.model}</Code>
+                      {/* Backend as a muted eyebrow above the model name —
+                            the model is what you scan for. */}
+                      <Box style={{ minWidth: 0 }}>
+                        <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>
+                          {m.backend}
+                        </Text>
+                        <Code>{m.model}</Code>
+                      </Box>
                     </Table.Td>
                     <Num td={fmtInt(m.requests)} />
                     <Table.Td>
@@ -231,11 +272,17 @@ export default function ModelsPage() {
         size={isMobile ? '100%' : 'lg'}
         title={
           selected && (
-            <Group gap="xs">
-              <Code>{selected.backend}</Code>
-              <Code>{selected.model}</Code>
-              <UptimeBadge uptime={selected.uptime} requests={selected.requests} />
-            </Group>
+            <Box style={{ minWidth: 0 }}>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>
+                {selected.backend}
+              </Text>
+              <Group gap="xs" wrap="nowrap">
+                <Text fw={700} truncate>
+                  {selected.model}
+                </Text>
+                <UptimeBadge uptime={selected.uptime} requests={selected.requests} />
+              </Group>
+            </Box>
           )
         }
       >
@@ -245,7 +292,17 @@ export default function ModelsPage() {
   )
 }
 
-function ModelCard({ stat: m, onClick }: { stat: ModelStat; onClick: () => void }) {
+function ModelCard({
+  stat: m,
+  colors,
+  onClick,
+}: {
+  stat: ModelStat
+  colors: string[]
+  onClick: () => void
+}) {
+  const tokTotal =
+    m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_tokens
   return (
     <Card withBorder radius="lg" p="md" onClick={onClick} style={{ cursor: 'pointer' }}>
       <Group justify="space-between" wrap="nowrap" gap="xs" mb={8}>
@@ -259,14 +316,23 @@ function ModelCard({ stat: m, onClick }: { stat: ModelStat; onClick: () => void 
         </Box>
         <UptimeBadge uptime={m.uptime} requests={m.requests} />
       </Group>
+      {/* Short labels: the drawer owns the verbose names; the card is a glance
+            surface. Latency pair kept adjacent (TTFT then E2E). */}
       <SimpleGrid cols={3} spacing="xs">
         <Metric label="Requests" value={fmtInt(m.requests)} />
-        <Metric label="TTFT p50" value={fmtSec(m.ttft_seconds.p50)} />
-        <Metric label="tok/s p50" value={fmtTps(m.throughput_tps.p50)} />
-        <Metric label="E2E p50" value={fmtSec(m.e2e_seconds.p50)} />
-        <Metric label="Cache hit" value={fmtPct(m.cache_rate)} />
+        <Metric label="TTFT" value={fmtSec(m.ttft_seconds.p50)} />
+        <Metric label="E2E" value={fmtSec(m.e2e_seconds.p50)} />
+        <Metric label="tok/s" value={fmtTps(m.throughput_tps.p50)} />
+        <Metric label="Cache" value={fmtPct(m.cache_rate)} />
         <Metric label="Tool err" value={fmtPct(m.tool_error_rate)} />
       </SimpleGrid>
+      {/* Slim token-mix strip: cache share is visible at a glance without
+            reading any number. Hidden until tokens exist to avoid noise. */}
+      {tokTotal > 0 && (
+        <Box mt={10}>
+          <TokenMixBar segments={mixSegments(m, colors)} height={8} />
+        </Box>
+      )}
     </Card>
   )
 }
@@ -292,78 +358,111 @@ function Num({ td, title }: { td: string | number; title?: string }) {
   )
 }
 
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Box>
+      <Text
+        size="xs"
+        tt="uppercase"
+        c="dimmed"
+        fw={600}
+        mb={6}
+        style={{ letterSpacing: '0.03em' }}
+      >
+        {title}
+      </Text>
+      {children}
+    </Box>
+  )
+}
+
+function StatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <Group justify="space-between" py={3} wrap="nowrap">
+      <Text size="sm" c="dimmed">
+        {label}
+      </Text>
+      <Text size="sm" fw={600} style={{ fontVariantNumeric: 'tabular-nums' }}>
+        {value}
+      </Text>
+    </Group>
+  )
+}
+
+function EmptyState({
+  icon,
+  title,
+  hint,
+}: {
+  icon: ReactNode
+  title: string
+  hint?: string
+}) {
+  return (
+    <Stack align="center" py="xl" gap={6}>
+      <ThemeIcon variant="light" color="gray" size="lg" radius="xl">
+        {icon}
+      </ThemeIcon>
+      <Text fw={600}>{title}</Text>
+      {hint && (
+        <Text size="sm" c="dimmed" ta="center" maw={340}>
+          {hint}
+        </Text>
+      )}
+    </Stack>
+  )
+}
+
 function ModelDetail({ stat, colors }: { stat: ModelStat; colors: string[] }) {
-  const segs: MixSegment[] = [
-    { name: 'input', color: colors[0], value: stat.input_tokens },
-    { name: 'output', color: colors[1], value: stat.output_tokens },
-    { name: 'cache read', color: colors[2], value: stat.cache_read_tokens },
-    { name: 'cache write', color: colors[3], value: stat.cache_write_tokens },
-  ]
+  const segs = mixSegments(stat, colors)
   const totalTok = segs.reduce((s, x) => s + x.value, 0)
+  // TTFT and E2E share one time scale so their bar lengths are directly
+  // comparable; throughput keeps its own scale (different unit).
+  const latMax = Math.max(stat.ttft_seconds.p99, stat.e2e_seconds.p99)
+
   return (
     <Stack gap="lg">
-      <Box>
-        <Text size="xs" tt="uppercase" c="dimmed" mb={6}>
+      <Section title="Latency">
+        <Text size="xs" fw={600} c="dimmed" mb={4}>
           Time to first token
         </Text>
-        <PercentileBars values={stat.ttft_seconds} unit="s" />
-      </Box>
-      <Divider />
-      <Box>
-        <Text size="xs" tt="uppercase" c="dimmed" mb={6}>
-          End-to-end latency
+        <PercentileBars values={stat.ttft_seconds} unit="s" max={latMax} />
+        <Text size="xs" fw={600} c="dimmed" mt="xs" mb={4}>
+          End-to-end
         </Text>
-        <PercentileBars values={stat.e2e_seconds} unit="s" />
-      </Box>
-      <Divider />
-      <Box>
-        <Text size="xs" tt="uppercase" c="dimmed" mb={6}>
-          Throughput (tokens/sec)
+        <PercentileBars values={stat.e2e_seconds} unit="s" max={latMax} />
+        <Text size="xs" c="dimmed" mt={6}>
+          Both share one time scale — bar lengths compare directly.
         </Text>
+      </Section>
+      <Divider />
+      <Section title="Throughput (tokens/sec)">
         <PercentileBars values={stat.throughput_tps} unit="tok/s" />
-      </Box>
+      </Section>
       <Divider />
-      <Box>
-        <Text size="xs" tt="uppercase" c="dimmed" mb={6}>
-          Tokens ({fmtInt(totalTok)} total · cache hit {fmtPct(stat.cache_rate)})
-        </Text>
+      <Section
+        title={`Tokens · ${fmtInt(totalTok)} total · cache hit ${fmtPct(stat.cache_rate)}`}
+      >
         <TokenMixBar segments={segs} height={20} />
-        <TokenLegend segments={segs} />
-      </Box>
+        <TokenLegend segments={segs} showPercent />
+      </Section>
       <Divider />
-      <Box>
-        <Text size="xs" tt="uppercase" c="dimmed" mb={6}>
-          Tool calls
-        </Text>
-        <Group gap="xl">
-          <Text size="sm">
-            calls <Text span fw={700}>{fmtInt(stat.tool_calls)}</Text>
-          </Text>
-          <Text size="sm">
-            errors <Text span fw={700}>{fmtInt(stat.tool_errors)}</Text>
-          </Text>
-          <Text size="sm">
-            error rate <Text span fw={700}>{fmtPct(stat.tool_error_rate)}</Text>
-          </Text>
-        </Group>
-      </Box>
-      <Divider />
-      <Box>
-        <Text size="xs" tt="uppercase" c="dimmed" mb={6}>
-          Requests
-        </Text>
-        <Group gap="xl">
-          <Text size="sm">
-            total <Text span fw={700}>{fmtInt(stat.requests)}</Text>
-          </Text>
-          <Text size="sm">
-            succeeded <Text span fw={700}>{fmtInt(stat.successes)}</Text>
-          </Text>
-          <Text size="sm">
-            failed <Text span fw={700}>{fmtInt(stat.requests - stat.successes)}</Text>
-          </Text>
-        </Group>
-      </Box>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+        <Paper withBorder radius="md" p="sm">
+          <Section title="Requests">
+            <StatRow label="Total" value={fmtInt(stat.requests)} />
+            <StatRow label="Succeeded" value={fmtInt(stat.successes)} />
+            <StatRow label="Failed" value={fmtInt(stat.requests - stat.successes)} />
+          </Section>
+        </Paper>
+        <Paper withBorder radius="md" p="sm">
+          <Section title="Tool calls">
+            <StatRow label="Calls" value={fmtInt(stat.tool_calls)} />
+            <StatRow label="Errors" value={fmtInt(stat.tool_errors)} />
+            <StatRow label="Error rate" value={fmtPct(stat.tool_error_rate)} />
+          </Section>
+        </Paper>
+      </SimpleGrid>
     </Stack>
   )
 }

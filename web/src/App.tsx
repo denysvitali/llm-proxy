@@ -1,18 +1,18 @@
 import {
-  ActionIcon,
   AppShell,
   Badge,
   Box,
   Container,
   Group,
+  SegmentedControl,
   Text,
   Title,
   Tooltip,
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core'
-import { useColorScheme, useMediaQuery } from '@mantine/hooks'
-import { IconMoonStars, IconSun } from '@tabler/icons-react'
+import { useMediaQuery } from '@mantine/hooks'
+import { IconDeviceDesktop, IconMoonStars, IconSun } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { fetchOverview } from './api'
@@ -174,19 +174,33 @@ function BottomNav() {
 }
 
 function ColorSchemeToggle() {
-  const { setColorScheme } = useMantineColorScheme()
-  const scheme = useColorScheme('light')
-  const dark = scheme === 'dark'
+  const { colorScheme, setColorScheme } = useMantineColorScheme()
+
   return (
-    <Tooltip label={dark ? 'Light mode' : 'Dark mode'}>
-      <ActionIcon
-        variant="default"
-        size="lg"
-        aria-label="Toggle color scheme"
-        onClick={() => setColorScheme(dark ? 'light' : 'dark')}
-      >
-        {dark ? <IconSun size={16} /> : <IconMoonStars size={16} />}
-      </ActionIcon>
+    <Tooltip label="Choose light, system, or dark appearance">
+      <SegmentedControl
+        size="xs"
+        radius="sm"
+        aria-label="Color scheme"
+        value={colorScheme}
+        onChange={(value) => setColorScheme(value as 'light' | 'auto' | 'dark')}
+        data={[
+          {
+            value: 'light',
+            label: <IconSun size={14} stroke={1.8} aria-label="Light mode" />,
+          },
+          {
+            value: 'auto',
+            label: (
+              <IconDeviceDesktop size={14} stroke={1.8} aria-label="System appearance" />
+            ),
+          },
+          {
+            value: 'dark',
+            label: <IconMoonStars size={14} stroke={1.8} aria-label="Dark mode" />,
+          },
+        ]}
+      />
     </Tooltip>
   )
 }
@@ -196,8 +210,7 @@ function FooterNote() {
     <Text ta="center" size="xs" c="dimmed" mt="xl">
       Auto-refreshes every 10s &middot; JSON APIs:{' '}
       <a href="/stats">/stats</a> &middot; <a href="/api/overview">/api/overview</a> &middot;{' '}
-      <a href="/metrics">/metrics</a> &middot; legacy{' '}
-      <a href="/dashboard">HTML dashboard</a>
+      <a href="/metrics">/metrics</a>
     </Text>
   )
 }

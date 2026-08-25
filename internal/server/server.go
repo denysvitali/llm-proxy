@@ -74,7 +74,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics.handler())
-	mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	mux.HandleFunc("GET /{$}", s.handleSPA)
 	mux.HandleFunc("GET /{path...}", s.handleSPA)
 	return s.withMiddleware(mux)

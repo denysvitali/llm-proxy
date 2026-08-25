@@ -52,7 +52,18 @@ export default function TokenMixBar({
   )
 }
 
-export function TokenLegend({ segments }: { segments: MixSegment[] }) {
+// Legend under a TokenMixBar. Counts by default; `showPercent` appends each
+// kind's share of the mix (useful when raw counts are huge but the shape of
+// the mix is what matters). Percent is computed against the segment total so
+// it always sums to ~100% regardless of zero-value segments.
+export function TokenLegend({
+  segments,
+  showPercent = false,
+}: {
+  segments: MixSegment[]
+  showPercent?: boolean
+}) {
+  const total = segments.reduce((s, x) => s + x.value, 0)
   return (
     <Box style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 6 }}>
       {segments
@@ -71,6 +82,12 @@ export function TokenLegend({ segments }: { segments: MixSegment[] }) {
             {/* Text wears text tokens; the swatch carries identity only. */}
             <Text size="xs" c="dimmed">
               {s.name} {s.value.toLocaleString('en-US')}
+              {showPercent && total > 0 && (
+                <Text span c="var(--mantine-color-dimmed)" opacity={0.75}>
+                  {' '}
+                  · {((s.value / total) * 100).toFixed(1)}%
+                </Text>
+              )}
             </Text>
           </Box>
         ))}

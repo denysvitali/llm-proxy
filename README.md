@@ -295,6 +295,7 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | POST   | `/v1/responses`               | OpenAI Responses API (any backend)             |
 | GET    | `/v1/models`                  | Merged model catalog, bare + qualified `<backend>/<id>` IDs |
 | GET    | `/`                           | Dashboard: status, routing, per-model stats, client setup |
+| GET    | `/api/overview`               | JSON data used by the dashboard SPA |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |

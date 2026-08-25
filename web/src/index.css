@@ -1,8 +1,12 @@
 /* App-level chrome that sits under Mantine's tokens. Loaded after
    @mantine/core styles so these win where they overlap. */
 
-:root {
-  color-scheme: light dark;
+[data-mantine-color-scheme='light'] {
+  color-scheme: light;
+}
+
+[data-mantine-color-scheme='dark'] {
+  color-scheme: dark;
 }
 
 body {

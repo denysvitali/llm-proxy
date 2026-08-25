@@ -5,6 +5,19 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llm-proxy</title>
+    <script>
+      try {
+        const storedColorScheme = window.localStorage.getItem('mantine-color-scheme-value')
+        const colorScheme = ['light', 'auto', 'dark'].includes(storedColorScheme)
+          ? storedColorScheme
+          : 'auto'
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        document.documentElement.setAttribute(
+          'data-mantine-color-scheme',
+          colorScheme === 'auto' ? (prefersDark ? 'dark' : 'light') : colorScheme,
+        )
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

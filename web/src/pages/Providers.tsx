@@ -1,6 +1,7 @@
+import type { ReactNode } from 'react'
 import {
-  Badge,
   Box,
+  Badge,
   Card,
   Code,
   Divider,
@@ -10,8 +11,11 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
+  Tooltip,
 } from '@mantine/core'
+import { IconServerOff } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchOverview, fetchStats } from '../api'
 import type { ModelStat, OverviewBackend } from '../api'
@@ -34,15 +38,26 @@ export default function ProvidersPage() {
   return (
     <Fade fetching={ovQ.isFetching || statsQ.isFetching}>
       <Stack gap="md">
-        <Title order={4}>Providers</Title>
+        <div>
+          <Title order={4} mb={2}>Providers</Title>
+          <Text size="xs" c="dimmed">
+            {backends.length} configured · health, token mix, and catalog per provider
+          </Text>
+        </div>
         {ovQ.isPending ? (
           <Group justify="center" py="xl">
             <Loader size="sm" />
           </Group>
         ) : backends.length === 0 ? (
-          <Text c="dimmed" py="xl" ta="center">
-            No backends configured.
-          </Text>
+          <Stack align="center" py="xl" gap={6}>
+            <ThemeIcon variant="light" color="gray" size="lg" radius="xl">
+              <IconServerOff size={20} stroke={1.6} />
+            </ThemeIcon>
+            <Text fw={600}>No providers configured</Text>
+            <Text size="sm" c="dimmed" ta="center" maw={340}>
+              Add a backend to the proxy config and it will appear here.
+            </Text>
+          </Stack>
         ) : (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
             {backends.map((b) => (
@@ -58,6 +73,55 @@ export default function ProvidersPage() {
         )}
       </Stack>
     </Fade>
+  )
+}
+
+// Colored dot + explicit label so key/catalog state is never color-alone;
+// same status hues as UptimeBadge.
+function StatusDot({
+  ok,
+  okLabel,
+  badLabel,
+}: {
+  ok: boolean
+  okLabel: string
+  badLabel: string
+}) {
+  const color = ok ? '#0ca30c' : '#ec835a'
+  return (
+    <Group gap={5} wrap="nowrap">
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          background: color,
+          display: 'inline-block',
+          flexShrink: 0,
+        }}
+      />
+      <Text size="xs" c="dimmed">
+        {ok ? okLabel : badLabel}
+      </Text>
+    </Group>
+  )
+}
+
+function CardSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Box>
+      <Text
+        size="xs"
+        tt="uppercase"
+        c="dimmed"
+        fw={600}
+        mb={6}
+        style={{ letterSpacing: '0.03em' }}
+      >
+        {title}
+      </Text>
+      <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{children}</Box>
+    </Box>
   )
 }
 
@@ -77,16 +141,18 @@ function ProviderCard({
   const toolCalls = models.reduce((s, m) => s + m.tool_calls, 0)
   const toolErrors = models.reduce((s, m) => s + m.tool_errors, 0)
   const uptime = requests ? successes / requests : 0
+  const segTotal = segments.reduce((s, x) => s + x.value, 0)
   const shownModels = b.models?.slice(0, 5) ?? []
   const extra = (b.models?.length ?? 0) - shownModels.length
 
-  // Ring color mirrors UptimeBadge thresholds; the badge next to it carries
-  // the icon+label so state is never color-alone.
+  // Ring color mirrors UptimeBadge thresholds; the badge under the ring
+  // carries the icon+label so state is never color-alone.
   const ringColor = !requests ? 'gray' : uptime >= 0.99 ? 'teal' : uptime >= 0.9 ? 'yellow' : 'red'
 
   return (
     <Card withBorder radius="lg" p="lg">
-      <Group justify="space-between" wrap="nowrap" align="flex-start" mb="xs">
+      <Group justify="space-between" wrap="nowrap" align="flex-start" gap="md">
+        {/* Left: identity + config health. */}
         <Box style={{ minWidth: 0 }}>
           <Group gap="xs" mb={4}>
             <Title order={5} mb={0}>
@@ -96,35 +162,60 @@ function ProviderCard({
               {b.enabled ? 'enabled' : 'disabled'}
             </Badge>
           </Group>
-          <Text size="sm" c="dimmed">
-            <Code>{b.host}</Code> · API key {b.hasKey ? 'set' : 'missing'} · catalog{' '}
-            {b.catalogOK ? 'ok' : 'unavailable'}
-          </Text>
-          <Box mt={8}>
-            <UptimeBadge uptime={uptime} requests={requests} />
-          </Box>
+          <Code>{b.host}</Code>
+          <Group gap="sm" wrap="wrap" mt={8}>
+            <StatusDot
+              ok={b.hasKey}
+              okLabel="API key set"
+              badLabel="API key missing"
+            />
+            <StatusDot
+              ok={b.catalogOK}
+              okLabel="catalog ok"
+              badLabel="catalog unavailable"
+            />
+          </Group>
         </Box>
-        <RingProgress
-          size={84}
-          thickness={7}
-          roundCaps
-          sections={[{ value: requests ? uptime * 100 : 0, color: ringColor }]}
-          label={
-            <Text ta="center" size="xs" fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {requests ? fmtPct(uptime, 0) : '—'}
-            </Text>
-          }
-          aria-label={`uptime ${fmtPct(uptime)}`}
-          style={{ flexShrink: 0 }}
-        />
+        {/* Right: uptime ring with its state badge stacked under it so the
+              pair reads as one unit. */}
+        <Stack align="center" gap={4} style={{ flexShrink: 0 }}>
+          <Tooltip
+            label={
+              requests
+                ? `${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`
+                : 'No requests recorded yet'
+            }
+            withArrow
+          >
+            <RingProgress
+              size={84}
+              thickness={7}
+              roundCaps
+              sections={[{ value: requests ? uptime * 100 : 0, color: ringColor }]}
+              label={
+                <Text ta="center" size="xs" fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {requests ? fmtPct(uptime, 0) : '—'}
+                </Text>
+              }
+              aria-label={`uptime ${fmtPct(uptime)}`}
+            />
+          </Tooltip>
+          <UptimeBadge uptime={uptime} requests={requests} />
+        </Stack>
       </Group>
 
-      {(segments.length > 0 && requests > 0) && (
+      {/* Stats show whenever traffic exists — even if every request carried
+            zero tokens (segments all empty), the counts still matter. */}
+      {requests > 0 && (
         <>
           <Divider my="sm" />
-          <TokenMixBar segments={segments} height={14} />
-          <TokenLegend segments={segments} />
-          <Text size="xs" c="dimmed" mt={6}>
+          {segTotal > 0 && (
+            <>
+              <TokenMixBar segments={segments} height={14} />
+              <TokenLegend segments={segments} showPercent />
+            </>
+          )}
+          <Text size="xs" c="dimmed" mt={segTotal > 0 ? 6 : 0}>
             {fmtInt(requests)} requests · uptime {fmtPct(uptime)} · tools{' '}
             {fmtInt(toolCalls)} ({fmtPct(toolCalls ? toolErrors / toolCalls : 0)} err)
           </Text>
@@ -134,20 +225,20 @@ function ProviderCard({
       {routes.length > 0 && (
         <>
           <Divider my="sm" />
-          <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <CardSection title={`Routes · ${routes.length}`}>
             {routes.map((r) => (
               <Code key={r.model} style={{ fontSize: '0.72rem' }}>
                 {r.model} → {r.upstream || '(as requested)'}
               </Code>
             ))}
-          </Box>
+          </CardSection>
         </>
       )}
 
       {shownModels.length > 0 && (
         <>
           <Divider my="sm" />
-          <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <CardSection title={`Catalog · ${(b.models?.length ?? 0)}`}>
             {shownModels.map((m) => (
               <Code key={m} style={{ fontSize: '0.72rem' }}>
                 {m}
@@ -158,7 +249,7 @@ function ProviderCard({
                 +{extra} more
               </Text>
             )}
-          </Box>
+          </CardSection>
         </>
       )}
     </Card>

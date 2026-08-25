@@ -89,7 +89,7 @@ func runServe(cfg *config.Config) error {
 		return err
 	}
 	if len(backends) == 0 {
-		log.Warn("no backends configured; only health/dashboard endpoints will work")
+		log.Warn("no backends configured; only health and dashboard API endpoints will work")
 	}
 	srv := server.New(cfg, log, store, backends)
 	defer func() { _ = srv.Close() }()

@@ -28,7 +28,7 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	}
 	index, ok := readWebAsset("index.html")
 	if !ok {
-		http.Redirect(w, r, "/dashboard", http.StatusTemporaryRedirect)
+		http.NotFound(w, r)
 		return
 	}
 	writeWebAsset(w, "index.html", index)

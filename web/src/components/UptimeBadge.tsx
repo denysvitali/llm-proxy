@@ -1,4 +1,4 @@
-import { Badge } from '@mantine/core'
+import { Badge, Tooltip } from '@mantine/core'
 
 interface UptimeBadgeProps {
   uptime: number // fraction 0..1
@@ -12,17 +12,21 @@ function rgba(hex: string, alpha: number): string {
 
 // Availability state as icon-dot + label (never color alone). Thresholds:
 // >=99% healthy, >=90% degraded, otherwise unhealthy; no traffic is neutral.
+// A tooltip exposes the exact percentage and request count so the coarse
+// label doesn't hide the underlying numbers.
 export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
   if (!requests) {
     return (
-      <Badge
-        color="gray"
-        variant="light"
-        leftSection={<Dot color="#9aa2ad" />}
-        styles={{ root: { flex: 'none' }, label: { overflow: 'visible' } }}
-      >
-        no traffic
-      </Badge>
+      <Tooltip label="No requests recorded yet" withArrow>
+        <Badge
+          color="gray"
+          variant="light"
+          leftSection={<Dot color="#9aa2ad" />}
+          styles={{ root: { flex: 'none' }, label: { overflow: 'visible' } }}
+        >
+          no traffic
+        </Badge>
+      </Tooltip>
     )
   }
   const state =
@@ -32,16 +36,26 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
         ? { color: '#fab219', label: 'degraded' }
         : { color: '#d03b3b', label: 'unhealthy' }
   return (
-    <Badge
-      variant="light"
-      leftSection={<Dot color={state.color} />}
-      styles={{
-        root: { color: state.color, backgroundColor: rgba(state.color, 0.12), flex: 'none' },
-        label: { overflow: 'visible' },
-      }}
+    <Tooltip
+      label={`${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`}
+      withArrow
     >
-      {state.label}
-    </Badge>
+      <Badge
+        variant="light"
+        leftSection={<Dot color={state.color} />}
+        styles={{
+          root: {
+            color: state.color,
+            backgroundColor: rgba(state.color, 0.12),
+            flex: 'none',
+            cursor: 'default', // hover target, not a click affordance
+          },
+          label: { overflow: 'visible' },
+        }}
+      >
+        {state.label}
+      </Badge>
+    </Tooltip>
   )
 }
 
