@@ -17,12 +17,14 @@ const (
 // overviewBackend describes one configured backend. It never carries key
 // material — only HasKey.
 type overviewBackend struct {
-	Name      string   `json:"name"`
-	Enabled   bool     `json:"enabled"`
-	Host      string   `json:"host"`
-	HasKey    bool     `json:"hasKey"`
-	Models    []string `json:"models"`
-	CatalogOK bool     `json:"catalogOK"`
+	Name           string   `json:"name"`
+	Enabled        bool     `json:"enabled"`
+	Host           string   `json:"host"`
+	HasKey         bool     `json:"hasKey"`
+	AuthLabel      string   `json:"authLabel"`
+	AuthConfigured bool     `json:"authConfigured"`
+	Models         []string `json:"models"`
+	CatalogOK      bool     `json:"catalogOK"`
 }
 
 // overviewRoute is one configured route. An empty Upstream means the requested
@@ -72,7 +74,14 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 			Name:    bc.Type,
 			Enabled: bc.IsEnabled(),
 			Host:    baseURLHost(bc.BaseURL),
-			HasKey:  bc.ResolveKey(os.Getenv) != "",
+			HasKey:  bc.Type != "grok" && bc.ResolveKey(os.Getenv) != "",
+		}
+		if bc.Type == "grok" {
+			entry.AuthLabel = "xAI account"
+			entry.AuthConfigured = s.grokAuth != nil && s.grokAuth.HasSession()
+		} else {
+			entry.AuthLabel = "API key"
+			entry.AuthConfigured = entry.HasKey
 		}
 		if entry.Enabled {
 			if models, err := s.backendCatalogForOverview(r, bc.Type); err != nil {

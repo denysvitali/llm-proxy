@@ -25,6 +25,11 @@ func Load() (*Config, error) {
 	// key was absent from the config file.
 	v.SetDefault("server.listen", "127.0.0.1:8090")
 	v.SetDefault("server.max_body_bytes", 16<<20)
+	// Keep Grok's credential file compatible with grok-proxy so an existing
+	// account session can be reused without introducing an API-key setting.
+	if home, err := os.UserHomeDir(); err == nil {
+		v.SetDefault("grok_auth_file", filepath.Join(home, ".config", "grok-proxy", "auth.json"))
+	}
 	v.SetDefault("log_level", "info")
 	v.SetDefault("log_format", "text")
 

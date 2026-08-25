@@ -65,3 +65,13 @@ func TestValidateRejectsUnknownBackendInRoute(t *testing.T) {
 		t.Fatalf("Validate rejected valid route: %v", err)
 	}
 }
+
+func TestValidateRejectsGrokAPIKeyConfiguration(t *testing.T) {
+	cfg := &Config{
+		Server:   ServerConfig{Listen: "127.0.0.1:8090"},
+		Backends: []BackendConfig{{Type: "grok", APIKeyEnv: "GROK_API_KEY"}},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "does not support API keys") {
+		t.Fatalf("Validate() error = %v, want Grok API-key rejection", err)
+	}
+}

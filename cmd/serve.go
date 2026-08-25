@@ -13,6 +13,7 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/auth"
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/all"
+	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/denysvitali/llm-proxy/internal/server"
 	"github.com/sirupsen/logrus"
@@ -50,12 +51,17 @@ func init() {
 // buildBackends constructs the enabled backends in configuration order via
 // the backend registry.
 func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
+	return buildBackendsWithTokenSource(cfg, grokbackend.NewManager(cfg.GrokAuthFile))
+}
+
+func buildBackendsWithTokenSource(cfg *config.Config, tokens backend.TokenSource) ([]backend.Backend, error) {
 	out := make([]backend.Backend, 0, len(cfg.Backends))
 	for _, bc := range cfg.EnabledBackends() {
 		b, err := backend.New(bc.Type, backend.Options{
-			BaseURL:  bc.BaseURL,
-			APIKey:   bc.ResolveKey(os.Getenv),
-			FreeOnly: bc.FreeOnly,
+			BaseURL:     bc.BaseURL,
+			APIKey:      bc.ResolveKey(os.Getenv),
+			TokenSource: tokensForBackend(bc.Type, tokens),
+			FreeOnly:    bc.FreeOnly,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("backends: %w", err)
@@ -63,6 +69,13 @@ func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
 		out = append(out, b)
 	}
 	return out, nil
+}
+
+func tokensForBackend(name string, tokens backend.TokenSource) backend.TokenSource {
+	if name == "grok" {
+		return tokens
+	}
+	return nil
 }
 
 func runServe(cfg *config.Config) error {
@@ -84,14 +97,15 @@ func runServe(cfg *config.Config) error {
 		}
 	}
 
-	backends, err := buildBackends(cfg)
+	grokTokens := grokbackend.NewManager(cfg.GrokAuthFile)
+	backends, err := buildBackendsWithTokenSource(cfg, grokTokens)
 	if err != nil {
 		return err
 	}
 	if len(backends) == 0 {
 		log.Warn("no backends configured; only health and dashboard API endpoints will work")
 	}
-	srv := server.New(cfg, log, store, backends)
+	srv := server.NewWithGrokAuth(cfg, log, store, backends, grokTokens)
 	defer func() { _ = srv.Close() }()
 
 	httpServer := &http.Server{

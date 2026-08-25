@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import {
   Box,
   Badge,
+  Button,
   Card,
   Code,
   Divider,
@@ -164,11 +165,24 @@ function ProviderCard({
           </Group>
           <Code>{b.host}</Code>
           <Group gap="sm" wrap="wrap" mt={8}>
-            <StatusDot
-              ok={b.hasKey}
-              okLabel="API key set"
-              badLabel="API key missing"
-            />
+            {b.name === 'grok' ? (
+              <Group gap="xs">
+                <StatusDot
+                  ok={b.authConfigured}
+                  okLabel="xAI account signed in"
+                  badLabel="xAI account not signed in"
+                />
+                <Button component="a" href="/login" size="compact-xs" variant="light">
+                  {b.authConfigured ? 'Sign in again' : 'Sign in'}
+                </Button>
+              </Group>
+            ) : (
+              <StatusDot
+                ok={b.hasKey}
+                okLabel="API key set"
+                badLabel="API key missing"
+              />
+            )}
             <StatusDot
               ok={b.catalogOK}
               okLabel="catalog ok"

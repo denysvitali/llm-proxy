@@ -4,6 +4,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,11 +66,14 @@ type StatsConfig struct {
 
 // Config is the whole configuration document.
 type Config struct {
-	BaseURL  string          `mapstructure:"base_url"`
-	Server   ServerConfig    `mapstructure:"server"`
-	Auth     AuthConfig      `mapstructure:"auth"`
-	Backends []BackendConfig `mapstructure:"backends"`
-	Stats    StatsConfig     `mapstructure:"stats"`
+	BaseURL string `mapstructure:"base_url"`
+	// GrokAuthFile stores the xAI account session used by the Grok
+	// subscription backend. It is not an API key.
+	GrokAuthFile string          `mapstructure:"grok_auth_file"`
+	Server       ServerConfig    `mapstructure:"server"`
+	Auth         AuthConfig      `mapstructure:"auth"`
+	Backends     []BackendConfig `mapstructure:"backends"`
+	Stats        StatsConfig     `mapstructure:"stats"`
 
 	// Routes maps inbound model name -> explicit route. Models not listed are
 	// matched against each enabled backend's catalog (first match wins in
@@ -83,6 +88,12 @@ type Config struct {
 
 // Defaults fills zero-value fields with the documented defaults.
 func (c *Config) Defaults() {
+	if c.GrokAuthFile == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			c.GrokAuthFile = filepath.Join(home, ".config", "grok-proxy", "auth.json")
+		}
+	}
 	if c.Server.Listen == "" {
 		c.Server.Listen = "127.0.0.1:8090"
 	}
@@ -118,6 +129,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("backends: duplicate type %q", b.Type)
 		}
 		seen[b.Type] = true
+		if strings.EqualFold(b.Type, "grok") && (b.APIKeyEnv != "" || b.APIKey != "") {
+			return fmt.Errorf("backends.grok does not support API keys; sign in from the dashboard")
+		}
 	}
 	for name, r := range c.Routes {
 		if !backend.Has(r.Backend) {

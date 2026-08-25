@@ -17,8 +17,12 @@ import (
 
 var _ backend.Backend = (*Client)(nil)
 
+type staticToken string
+
+func (t staticToken) AccessToken(context.Context) (string, error) { return string(t), nil }
+
 func TestSupports(t *testing.T) {
-	c := New("", "tok")
+	c := New("", staticToken("tok"))
 	for _, kind := range []backend.Kind{
 		backend.KindOpenAIResponses,
 		backend.KindOpenAIChat,
@@ -37,7 +41,7 @@ func TestDefaultBaseURL(t *testing.T) {
 	if defaultBaseURL != "https://cli-chat-proxy.grok.com/v1" {
 		t.Errorf("defaultBaseURL = %q, want %q", defaultBaseURL, "https://cli-chat-proxy.grok.com/v1")
 	}
-	if got := New("", "tok").BaseURL; got != defaultBaseURL {
+	if got := New("", staticToken("tok")).BaseURL; got != defaultBaseURL {
 		t.Errorf("New(\"\") BaseURL = %q, want %q", got, defaultBaseURL)
 	}
 }
@@ -72,7 +76,7 @@ func TestSendHeadersAndBody(t *testing.T) {
 				}{
 					{"Authorization", "Bearer test-token"},
 					{"X-XAI-Token-Auth", "xai-grok-cli"},
-					{"x-grok-client-version", "0.1.0"},
+					{"x-grok-client-version", ClientVersion},
 					{"x-grok-client-mode", "cli"},
 					{"Content-Type", "application/json"},
 					{"Accept", tt.wantAccept},
@@ -92,7 +96,7 @@ func TestSendHeadersAndBody(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			c := New(srv.URL, "test-token")
+			c := New(srv.URL, staticToken("test-token"))
 			resp, err := c.Send(context.Background(), &backend.Request{
 				Kind:      backend.KindOpenAIResponses,
 				Model:     "grok-4.5",
@@ -129,7 +133,7 @@ func TestSendEmptyToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "")
+	c := New(srv.URL, staticToken(""))
 	resp, err := c.Send(context.Background(), &backend.Request{
 		Kind:    backend.KindOpenAIResponses,
 		RawBody: []byte(`{}`),
@@ -146,7 +150,7 @@ func TestSendEmptyToken(t *testing.T) {
 }
 
 func TestModels(t *testing.T) {
-	c := New("", "tok")
+	c := New("", staticToken("tok"))
 	models, err := c.Models(context.Background())
 	if err != nil {
 		t.Fatalf("Models: %v", err)
@@ -163,7 +167,7 @@ func TestSendNon2xxReadError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "test-token")
+	c := New(srv.URL, staticToken("test-token"))
 	resp, err := c.Send(context.Background(), &backend.Request{
 		Kind:    backend.KindOpenAIResponses,
 		RawBody: []byte(`{}`),

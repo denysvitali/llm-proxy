@@ -1,8 +1,11 @@
+import { useState } from 'react'
 import {
   Box,
   Card,
+  Code,
   Group,
   Loader,
+  Paper,
   ScrollArea,
   SimpleGrid,
   Stack,
@@ -18,13 +21,14 @@ import {
   IconShieldCheck,
   IconTool,
 } from '@tabler/icons-react'
-import { BarChart } from '@mantine/charts'
+import { BarChart, LineChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
-import { useQuery } from '@tanstack/react-query'
-import { fetchOverview, fetchStats } from '../api'
-import type { ModelStat } from '../api'
-import { fmtInt, fmtPct, fmtTps } from '../format'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { fetchOverview, fetchStats, fetchStatsSeries } from '../api'
+import type { ModelStat, SeriesPoint } from '../api'
+import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
+import { SegmentedControl } from '@mantine/core'
 import StatTile from '../components/StatTile'
 import UptimeBadge from '../components/UptimeBadge'
 import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
@@ -33,6 +37,13 @@ import { Fade } from '../App'
 export default function OverviewPage() {
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
   const ovQ = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const [range, setRange] = useState('24h')
+  const seriesQ = useQuery({
+    queryKey: ['stats-series', range],
+    queryFn: () => fetchStatsSeries(range),
+    placeholderData: keepPreviousData,
+    refetchInterval: 30_000,
+  })
 
   const models = statsQ.data?.models ?? []
   const pal = useChartPalette()
@@ -65,12 +76,83 @@ export default function OverviewPage() {
       requests: m.requests,
     }))
 
+  const latencyData = mergeSeries(seriesQ.data?.series.ttft_p50, seriesQ.data?.series.e2e_p50)
+  const throughputData = seriesQ.data?.series.throughput_p50.map(toChartData) ?? []
+  const volumeData = mergeSeries(seriesQ.data?.series.tokens_in, seriesQ.data?.series.tokens_out)
+  const requestCount = sumPoints(seriesQ.data?.series.requests)
+  const latencySeries = [
+    { name: 'series0', label: 'First byte', color: pal.series[0], formatter: fmtSec },
+    { name: 'series1', label: 'Full response', color: pal.series[1], formatter: fmtSec },
+  ]
+  const throughputSeries = [{ name: 'value', label: 'Tokens/sec', color: pal.series[2], formatter: fmtTps }]
+  const volumeSeries = [
+    { name: 'series0', label: 'Input', color: pal.series[0], formatter: fmtInt },
+    { name: 'series1', label: 'Output', color: pal.series[1], formatter: fmtInt },
+  ]
+  const hasTraffic =
+    latencyData.some((point) => Number(point.series0) > 0 || Number(point.series1) > 0) ||
+    throughputData.some((point) => Number(point.value) > 0) ||
+    volumeData.some((point) => Number(point.series0) > 0 || Number(point.series1) > 0)
+
   return (
     <Fade fetching={statsQ.isFetching || ovQ.isFetching}>
       <Stack gap="lg">
         <Title order={4} mb={-6}>
           Fleet overview
         </Title>
+
+        <Card withBorder radius="lg" p="md">
+          <Group justify="space-between" align="center" wrap="wrap" gap="sm" mb={12}>
+            <div>
+              <Title order={5}>Performance over time</Title>
+              <Text size="xs" c="dimmed">
+                {seriesQ.isError ? 'History unavailable' : `${requestCount.toLocaleString('en-US')} requests in range`}
+              </Text>
+            </div>
+            <SegmentedControl
+              value={range}
+              onChange={setRange}
+              data={[
+                { value: '1h', label: '1h' },
+                { value: '6h', label: '6h' },
+                { value: '24h', label: '24h' },
+                { value: '7d', label: '7d' },
+              ]}
+            />
+          </Group>
+
+          {seriesQ.isPending ? (
+            <Group justify="center" py="xl"><Loader size="sm" /></Group>
+          ) : seriesQ.isError ? (
+            <Text c="dimmed" py="xl" ta="center">
+              Time history requires <Code>stats.persist_file</Code> to be configured.
+            </Text>
+          ) : (
+            <SimpleGrid cols={{ base: 1, lg: 3 }} spacing="lg">
+              <TimeChart
+                title="Latency"
+                description="Median first byte and full response"
+                data={latencyData}
+                series={latencySeries}
+                empty={!hasTraffic}
+              />
+              <TimeChart
+                title="Throughput"
+                description="Median output rate"
+                data={throughputData}
+                series={throughputSeries}
+                empty={!hasTraffic}
+              />
+              <TimeChart
+                title="Token volume"
+                description="Input and output tokens"
+                data={volumeData}
+                series={volumeSeries}
+                empty={!hasTraffic}
+              />
+            </SimpleGrid>
+          )}
+        </Card>
 
         {statsQ.isPending ? (
           <Group justify="center" py="xl">
@@ -218,6 +300,124 @@ export default function OverviewPage() {
       </Stack>
     </Fade>
   )
+}
+
+interface TimeSeriesEntry {
+  name: string
+  label: string
+  color: string
+  formatter: (value: number) => string
+}
+
+type TimeChartData = Record<string, number | string>
+
+function TimeChart({
+  title,
+  description,
+  data,
+  series,
+  empty,
+}: {
+  title: string
+  description: string
+  data: TimeChartData[]
+  series: TimeSeriesEntry[]
+  empty?: boolean
+}) {
+  return (
+    <Box>
+      <Group justify="space-between" align="baseline" wrap="nowrap" gap="xs" mb={4}>
+        <Text size="sm" fw={600}>{title}</Text>
+      </Group>
+      <Text size="xs" c="dimmed" mb={8}>{description}</Text>
+
+      {empty ? (
+        <Box h={180} style={{ display: 'grid', placeItems: 'center' }}>
+          <Text size="sm" c="dimmed" ta="center">No traffic in this range</Text>
+        </Box>
+      ) : (
+        <LineChart
+          h={180}
+          data={data}
+          dataKey="time"
+          curveType="monotone"
+          connectNulls
+          series={series.map((item) => ({ name: item.name, label: item.label, color: item.color }))}
+          valueFormatter={(value) => series[0].formatter(value)}
+          tooltipProps={{
+            content: ({ active, payload, label }) =>
+              active && payload?.length ? (
+                <ChartTooltip payload={payload} timestamp={String(label)} series={series} />
+              ) : null,
+          }}
+          xAxisProps={{
+            tickFormatter: formatAxisTime,
+            tickLine: false,
+            axisLine: false,
+            minTickGap: 28,
+          }}
+          yAxisProps={{ tickLine: false, axisLine: false, width: 52 }}
+          gridAxis="y"
+          tooltipAnimationDuration={150}
+        />
+      )}
+    </Box>
+  )
+}
+
+function toChartData(point: SeriesPoint): TimeChartData {
+  return { time: point.ts, value: point.value }
+}
+
+function ChartTooltip({
+  payload,
+  timestamp,
+  series,
+}: {
+  payload: ReadonlyArray<{ dataKey?: unknown; value?: unknown }>
+  timestamp: string
+  series: TimeSeriesEntry[]
+}) {
+  const byName = new Map(payload.map((item) => [String(item.dataKey), Number(item.value ?? 0)]))
+  return (
+    <Paper withBorder p={10} radius="md" shadow="sm" style={{ minWidth: 150 }}>
+      <Text size="xs" c="dimmed" mb={6}>{new Date(timestamp).toLocaleString('en-US')}</Text>
+      <Stack gap={4}>
+        {series.map((item) => (
+          <Group key={item.name} justify="space-between" wrap="nowrap" gap="md">
+            <Box style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: item.color }} />
+              <Text size="xs">{item.label}</Text>
+            </Box>
+            <Text size="xs" fw={600}>{item.formatter(byName.get(item.name) ?? 0)}</Text>
+          </Group>
+        ))}
+      </Stack>
+    </Paper>
+  )
+}
+
+function mergeSeries(...groups: Array<SeriesPoint[] | undefined>): TimeChartData[] {
+  const timestamps = [...new Set(groups.flatMap((group) => group ?? []).map((point) => point.ts))].sort()
+  const byTs = groups.map((group) => new Map((group ?? []).map((point) => [point.ts, point.value])))
+  return timestamps.map((ts) => {
+    const row: TimeChartData = { time: ts }
+    byTs.forEach((values, index) => {
+      row[`series${index}`] = values.get(ts) ?? 0
+    })
+    return row
+  })
+}
+
+function sumPoints(points?: SeriesPoint[]) {
+  return Math.round((points ?? []).reduce((sum, point) => sum + point.value, 0))
+}
+
+function formatAxisTime(value: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+  return new Date(value).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
 
 export function providerSegments(

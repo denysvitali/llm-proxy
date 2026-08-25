@@ -30,11 +30,33 @@ export interface StatsResponse {
   models: ModelStat[]
 }
 
+export interface SeriesPoint {
+  ts: string
+  value: number
+}
+
+export interface StatsSeries {
+  requests: SeriesPoint[]
+  success_rate: SeriesPoint[]
+  ttft_p50: SeriesPoint[]
+  e2e_p50: SeriesPoint[]
+  throughput_p50: SeriesPoint[]
+  tokens_in: SeriesPoint[]
+  tokens_out: SeriesPoint[]
+}
+
+export interface StatsSeriesResponse {
+  models: string[]
+  series: StatsSeries
+}
+
 export interface OverviewBackend {
   name: string
   enabled: boolean
   host: string
   hasKey: boolean
+  authLabel: string
+  authConfigured: boolean
   models: string[] | null
   catalogOK: boolean
 }
@@ -68,6 +90,10 @@ async function getJSON<T>(url: string): Promise<T> {
 
 export function fetchStats(): Promise<StatsResponse> {
   return getJSON<StatsResponse>('/stats')
+}
+
+export function fetchStatsSeries(range: string): Promise<StatsSeriesResponse> {
+  return getJSON<StatsSeriesResponse>(`/api/stats?range=${encodeURIComponent(range)}`)
 }
 
 export function fetchOverview(): Promise<Overview> {

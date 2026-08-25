@@ -57,6 +57,13 @@ export default function SetupPage() {
             </Alert>
           )}
 
+          {ov.backends.some((b) => b.name === 'grok') && (
+            <Alert color="violet" variant="light" title="Grok uses your xAI account">
+              Grok does not use an upstream API key.{' '}
+              <a href="/login">Sign in with xAI</a> to use your coding subscription.
+            </Alert>
+          )}
+
           <Card withBorder radius="lg" p={0}>
             <Tabs defaultValue="claude" keepMounted={false}>
               <Tabs.List px="md" pt={6}>

@@ -6,9 +6,10 @@ the OpenAI Responses API — and the proxy routes each request to one of the
 configured backends, translating between API shapes when needed.
 
 Access control is two-sided: end users authenticate to the proxy with their own
-API keys (each user can hold any number of keys), while the upstream provider
-keys are configured once, per backend, server-side. Users never see upstream
-credentials.
+API keys (each user can hold any number of keys), while ordinary upstream
+provider keys are configured once, per backend, server-side. Grok is different:
+it uses an xAI account session and coding subscription signed in from the web
+dashboard; Grok has no upstream API-key setting.
 
 > [!IMPORTANT]
 > Each backend is a separate service with its own terms of service. Check that
@@ -123,6 +124,12 @@ push to `main` and for `v*` tags.
    export VENICE_API_KEY="sk-..."
    ./llm-proxy serve
    ```
+
+   If the configuration includes the `grok` backend, open
+   `http://127.0.0.1:8090/login` and choose **Sign in with xAI**. Approve the
+   device authorization with the xAI account that owns the coding subscription;
+   the session is stored in `~/.config/grok-proxy/auth.json` and refreshed by
+   the proxy. Grok account sign-in is available from this web page only.
 
 3. Create a user and mint an API key. The plaintext key starts with `llx_`,
    grants access to everything the proxy can reach, and is shown exactly once:
@@ -255,10 +262,11 @@ flags are applied afterwards.
 | `server.listen`              | `LLM_PROXY_SERVER_LISTEN`            | `127.0.0.1:8090`         | HTTP listen address.                                                        |
 | `server.max_body_bytes`      | `LLM_PROXY_SERVER_MAX_BODY_BYTES`    | `16777216`               | Maximum request body size (16 MiB).                                         |
 | `auth.file`                  | `LLM_PROXY_AUTH_FILE`                | *(empty)*                | Path to the JSON key store. Empty disables client authentication — keep the listener on loopback if you do. |
+| `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
 | `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `grok`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
-| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding the upstream key (recommended).     |
-| `backends[].api_key`         | —                                    | —                        | Literal upstream key; only used when `api_key_env` is unset or empty.       |
+| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key (not supported for `grok`). |
+| `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok`).                   |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
 | `routes.<model>.backend`     | —                                    | —                        | Backend serving this inbound model name.                                    |
@@ -313,6 +321,7 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET    | `/v1/models`                  | Merged model catalog, bare + qualified `<backend>/<id>` IDs |
 | GET    | `/`                           | Dashboard: status, routing, per-model stats, client setup |
 | GET    | `/api/overview`               | JSON data used by the dashboard SPA |
+| GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |

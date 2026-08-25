@@ -1,7 +1,6 @@
 // Package grok implements the xAI Grok subscription backend. The
 // subscription endpoint (cli-chat-proxy.grok.com) speaks the OpenAI
-// Responses API, so responses requests pass through with the access token
-// swapped in.
+// Responses API. Credentials come from the signed-in xAI account session.
 package grok
 
 import (
@@ -18,23 +17,19 @@ import (
 
 const defaultBaseURL = "https://cli-chat-proxy.grok.com/v1"
 
-// clientVersion is hardcoded so the client identifies as grok-cli without
-// any configuration.
-const clientVersion = "0.1.0"
-
 type Client struct {
 	BaseURL string
-	Token   string
+	Tokens  backend.TokenSource
 	HTTP    *http.Client
 }
 
-func New(baseURL, token string) *Client {
+func New(baseURL string, tokens backend.TokenSource) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
-		Token:   token,
+		Tokens:  tokens,
 		HTTP: &http.Client{
 			Timeout: 0,
 			Transport: &http.Transport{
@@ -51,7 +46,7 @@ func (c *Client) Name() string { return "grok" }
 
 func init() {
 	backend.Register("grok", func(opts backend.Options) (backend.Backend, error) {
-		return New(opts.BaseURL, opts.APIKey), nil
+		return New(opts.BaseURL, opts.TokenSource), nil
 	})
 }
 
@@ -62,18 +57,25 @@ func (c *Client) Supports(kind backend.Kind) bool {
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
-	if c.Token == "" {
-		return nil, fmt.Errorf("grok backend has no access token configured")
+	if c.Tokens == nil {
+		return nil, fmt.Errorf("grok backend has no xAI account configured; sign in from the dashboard")
+	}
+	token, err := c.Tokens.AccessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if token == "" {
+		return nil, fmt.Errorf("grok account returned an empty access token")
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/responses", bytes.NewReader(req.RawBody))
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.Token)
+	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
-	httpReq.Header.Set("x-grok-client-version", clientVersion)
+	httpReq.Header.Set("x-grok-client-version", ClientVersion)
 	httpReq.Header.Set("x-grok-client-mode", "cli")
-	httpReq.Header.Set("User-Agent", "llm-proxy/"+clientVersion)
+	httpReq.Header.Set("User-Agent", "llm-proxy/"+ClientVersion)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	if req.Streaming {

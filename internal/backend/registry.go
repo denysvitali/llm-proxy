@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -13,9 +14,19 @@ type Options struct {
 	BaseURL string
 	// APIKey is the resolved upstream credential (env var or literal).
 	APIKey string
+	// TokenSource supplies an account session token for subscription-backed
+	// providers. It is deliberately separate from APIKey: subscription
+	// providers must not be configured with API keys.
+	TokenSource TokenSource
 	// FreeOnly asks the backend to refuse any model that is not free of
 	// charge. Backends without a pricing concept ignore it.
 	FreeOnly bool
+}
+
+// TokenSource supplies a current account access token. Implementations may
+// refresh an expired token before returning it.
+type TokenSource interface {
+	AccessToken(context.Context) (string, error)
 }
 
 // Factory builds a backend instance from its configuration options.
