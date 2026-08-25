@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   Box,
   Badge,
@@ -6,24 +6,36 @@ import {
   Card,
   Code,
   Divider,
+  Drawer,
   Group,
   Loader,
+  Paper,
   RingProgress,
+  ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Stack,
+  Table,
   Text,
   ThemeIcon,
   Title,
   Tooltip,
 } from '@mantine/core'
 import { IconServerOff } from '@tabler/icons-react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchOverview, fetchStats } from '../api'
-import type { ModelStat, OverviewBackend } from '../api'
-import { fmtInt, fmtPct } from '../format'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { fetchBackendStatsSeries, fetchOverview, fetchStats } from '../api'
+import type { ModelStat, OverviewBackend, StatsSeries } from '../api'
+import { useMediaQuery } from '@mantine/hooks'
+import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
 import UptimeBadge from '../components/UptimeBadge'
 import TokenMixBar, { TokenLegend } from '../components/TokenMixBar'
+import {
+  HistoryBarChart,
+  HistoryLineChart,
+  historyData,
+  historyFormatters,
+} from '../components/HistoryCharts'
 import { providerSegments } from './Overview'
 import { Fade } from '../App'
 
@@ -35,6 +47,16 @@ export default function ProvidersPage() {
   const backends = ovQ.data?.backends ?? []
   const models = statsQ.data?.models ?? []
   const segByBackend = new Map(providerSegments(models, pal.series))
+  const isMobile = useMediaQuery('(max-width: 48em)') ?? false
+  const [selected, setSelected] = useState<OverviewBackend | null>(null)
+  const [historyRange, setHistoryRange] = useState('24h')
+
+  const selectedSeriesQ = useQuery({
+    queryKey: ['stats-series', 'backend', selected?.name, historyRange],
+    queryFn: () => fetchBackendStatsSeries(selected!.name, historyRange),
+    enabled: !!selected,
+    placeholderData: keepPreviousData,
+  })
 
   return (
     <Fade fetching={ovQ.isFetching || statsQ.isFetching}>
@@ -68,10 +90,36 @@ export default function ProvidersPage() {
                 routes={(ovQ.data?.routes ?? []).filter((r) => r.backend === b.name)}
                 segments={segByBackend.get(b.name) ?? []}
                 models={models.filter((m) => m.backend === b.name)}
+                onInspect={() => setSelected(b)}
               />
             ))}
           </SimpleGrid>
         )}
+
+        <Drawer
+          opened={!!selected}
+          onClose={() => setSelected(null)}
+          position="right"
+          size={isMobile ? '100%' : 'lg'}
+          title={selected && (
+            <Box style={{ minWidth: 0 }}>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>Provider</Text>
+              <Group gap="xs" wrap="nowrap">
+                <Text fw={700} truncate>{selected.name}</Text>
+              </Group>
+            </Box>
+          )}
+        >
+          {selected && (
+            <ProviderDetail
+              backend={selected}
+              models={models.filter((m) => m.backend === selected.name)}
+              series={selectedSeriesQ.data?.series}
+              range={historyRange}
+              onRangeChange={setHistoryRange}
+            />
+          )}
+        </Drawer>
       </Stack>
     </Fade>
   )
@@ -131,11 +179,13 @@ function ProviderCard({
   routes,
   segments,
   models,
+  onInspect,
 }: {
   backend: OverviewBackend
   routes: { model: string; backend: string; upstream: string }[]
   segments: Parameters<typeof TokenMixBar>[0]['segments']
   models: ModelStat[]
+  onInspect: () => void
 }) {
   const requests = models.reduce((s, m) => s + m.requests, 0)
   const successes = models.reduce((s, m) => s + m.successes, 0)
@@ -151,7 +201,13 @@ function ProviderCard({
   const ringColor = !requests ? 'gray' : uptime >= 0.99 ? 'teal' : uptime >= 0.9 ? 'yellow' : 'red'
 
   return (
-    <Card withBorder radius="lg" p="lg">
+    <Card
+      withBorder
+      radius="lg"
+      p="lg"
+      onClick={onInspect}
+      style={{ cursor: 'pointer', height: '100%' }}
+    >
       <Group justify="space-between" wrap="nowrap" align="flex-start" gap="md">
         {/* Left: identity + config health. */}
         <Box style={{ minWidth: 0 }}>
@@ -267,5 +323,110 @@ function ProviderCard({
         </>
       )}
     </Card>
+  )
+}
+
+function ProviderDetail({
+  models,
+  series,
+  range,
+  onRangeChange,
+}: {
+  backend: OverviewBackend
+  models: ModelStat[]
+  series?: StatsSeries
+  range: string
+  onRangeChange: (value: string) => void
+}) {
+  const requests = models.reduce((sum, model) => sum + model.requests, 0)
+  const successes = models.reduce((sum, model) => sum + model.successes, 0)
+  const toolCalls = models.reduce((sum, model) => sum + model.tool_calls, 0)
+  const toolErrors = models.reduce((sum, model) => sum + model.tool_errors, 0)
+
+  return (
+    <ScrollArea style={{ height: 'calc(100vh - 90px)' }} type="auto">
+      <Stack gap="lg" pr="sm">
+        <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
+          <Text size="sm" fw={600}>History</Text>
+          <SegmentedControl
+            size="compact-xs"
+            value={range}
+            onChange={onRangeChange}
+            data={[
+              { value: '1h', label: '1h' },
+              { value: '6h', label: '6h' },
+              { value: '24h', label: '24h' },
+              { value: '7d', label: '7d' },
+            ]}
+          />
+        </Group>
+
+        <SimpleGrid cols={2} spacing="md">
+          <Paper withBorder radius="md" p="sm">
+            <Text size="xs" c="dimmed">Requests</Text>
+            <Text fz={24} fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtInt(requests)}</Text>
+          </Paper>
+          <Paper withBorder radius="md" p="sm">
+            <Text size="xs" c="dimmed">Uptime</Text>
+            <Text fz={24} fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtPct(requests ? successes / requests : 0)}</Text>
+          </Paper>
+        </SimpleGrid>
+
+        <HistoryLineChart
+          title="Latency"
+          description="Median first byte and full response"
+          data={historyData([series?.ttft_p50, series?.e2e_p50])}
+          series={[
+            { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
+            { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
+          ]}
+        />
+        <HistoryLineChart
+          title="Throughput"
+          description="Median output rate"
+          data={historyData([series?.throughput_p50])}
+          series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
+        />
+        <HistoryBarChart
+          title="Requests"
+          description="Requests per interval"
+          points={series?.requests ?? []}
+        />
+        <HistoryLineChart
+          title="Token volume"
+          description="Input and output tokens per interval"
+          data={historyData([series?.tokens_in, series?.tokens_out])}
+          series={[
+            { name: 'series0', label: 'Input', formatter: historyFormatters.count },
+            { name: 'series1', label: 'Output', formatter: historyFormatters.count },
+          ]}
+        />
+        <HistoryBarChart
+          title="Tool calls"
+          description="Observed calls per interval"
+          points={series?.tool_calls ?? []}
+        />
+
+        <Divider my="xs" />
+        <Title order={6}>Model performance</Title>
+        <Table verticalSpacing="xs" horizontalSpacing="sm">
+          <Table.Thead><Table.Tr><Table.Th>Model</Table.Th><Table.Th ta="right">Req</Table.Th><Table.Th ta="right">TTFT</Table.Th><Table.Th ta="right">E2E</Table.Th><Table.Th ta="right">tok/s</Table.Th></Table.Tr></Table.Thead>
+          <Table.Tbody>
+            {[...models].sort((a, b) => b.requests - a.requests).map((model) => (
+              <Table.Tr key={`${model.backend}/${model.model}`}>
+                <Table.Td><Code>{model.model}</Code></Table.Td>
+                <Table.Td ta="right">{fmtInt(model.requests)}</Table.Td>
+                <Table.Td ta="right">{fmtSec(model.ttft_seconds.p50)}</Table.Td>
+                <Table.Td ta="right">{fmtSec(model.e2e_seconds.p50)}</Table.Td>
+                <Table.Td ta="right">{fmtTps(model.throughput_tps.p50)}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+        {toolCalls > 0 && (
+          <Text size="xs" c="dimmed">{fmtInt(toolCalls)} tool calls · {fmtPct(toolCalls ? toolErrors / toolCalls : 0)} errors</Text>
+        )}
+      </Stack>
+    </ScrollArea>
   )
 }

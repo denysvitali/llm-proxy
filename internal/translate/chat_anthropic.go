@@ -211,6 +211,10 @@ func chatToolChoiceToAnthropic(raw json.RawMessage) any {
 // toolChoiceToAnthropic maps an already-decoded OpenAI/Responses tool_choice
 // value to its Anthropic equivalent.
 func toolChoiceToAnthropic(choice any) any {
+	return toolChoiceToAnthropicWithNamespaces(choice, nil)
+}
+
+func toolChoiceToAnthropicWithNamespaces(choice any, namespaces map[string]responseNamespaceTool) any {
 	switch choice := choice.(type) {
 	case string:
 		switch choice {
@@ -231,6 +235,11 @@ func toolChoiceToAnthropic(choice any) any {
 				if fn, ok := choice["function"].(map[string]any); ok {
 					name, _ = fn["name"].(string)
 				}
+			}
+			if namespace, _ := choice["namespace"].(string); namespace != "" {
+				name = qualifyResponsesToolName(namespace, name)
+			} else if tool, ok := namespaces[name]; ok {
+				name = tool.Qualified
 			}
 			if name != "" {
 				return map[string]any{"type": "tool", "name": name}

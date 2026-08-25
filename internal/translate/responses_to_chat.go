@@ -62,6 +62,10 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 			}
 		case "function_call":
 			// Assistant-initiated tool call in the conversation history.
+			name := item.Name
+			if item.Namespace != "" {
+				name = qualifyResponsesToolName(item.Namespace, name)
+			}
 			converted.Messages = append(converted.Messages, openAIMessage{
 				Role: "assistant",
 				ToolCalls: []openAIToolCall{{
@@ -70,7 +74,7 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 					Function: struct {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
-					}{Name: item.Name, Arguments: item.Arguments},
+					}{Name: name, Arguments: item.Arguments},
 				}},
 			})
 		case "function_call_output":
@@ -95,7 +99,11 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 		return nil, fmt.Errorf("request contains no translatable input")
 	}
 
-	for _, tool := range req.Tools {
+	tools, namespaces, err := responsesTools(body)
+	if err != nil {
+		return nil, fmt.Errorf("decode tools: %w", err)
+	}
+	for _, tool := range tools {
 		if tool.Name == "" {
 			continue
 		}
@@ -109,7 +117,7 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 			},
 		})
 	}
-	converted.ToolChoice = responsesToolChoiceToChat(req.ToolChoice)
+	converted.ToolChoice = responsesToolChoiceToChatWithNamespaces(req.ToolChoice, namespaces)
 	if req.ParallelToolCalls != nil {
 		converted.ParallelToolCalls = req.ParallelToolCalls
 	}
@@ -165,9 +173,7 @@ func chatMessageFromItem(item responsesInputItem) (*openAIMessage, error) {
 	return &openAIMessage{Role: role, Content: chatParts}, nil
 }
 
-// responsesToolChoiceToResponses maps a Responses tool_choice back to its
-// chat-completions equivalent, which nests forced functions one level deeper.
-func responsesToolChoiceToChat(raw any) any {
+func responsesToolChoiceToChatWithNamespaces(raw any, namespaces map[string]responseNamespaceTool) any {
 	switch choice := raw.(type) {
 	case string:
 		switch choice {
@@ -178,6 +184,11 @@ func responsesToolChoiceToChat(raw any) any {
 	case map[string]any:
 		if choice["type"] == "function" {
 			name, _ := choice["name"].(string)
+			if namespace, _ := choice["namespace"].(string); namespace != "" {
+				name = qualifyResponsesToolName(namespace, name)
+			} else if tool, ok := namespaces[name]; ok {
+				name = tool.Qualified
+			}
 			if name != "" {
 				return map[string]any{
 					"type":     "function",
@@ -194,6 +205,21 @@ func responsesToolChoiceToChat(raw any) any {
 // ResponsesFromChat converts a non-streaming chat-completions response into
 // an OpenAI Responses response object.
 func ResponsesFromChat(body []byte, model string) ([]byte, error) {
+	return responsesFromChat(body, model, nil)
+}
+
+// ResponsesFromChatForRequest is the request-aware form of ResponsesFromChat.
+// It restores namespace metadata for function calls from a flat upstream
+// response when the request used Codex's namespace tool extension.
+func ResponsesFromChatForRequest(body []byte, model string, requestBody []byte) ([]byte, error) {
+	namespaces, err := responseNamespaceMap(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("decode request tools: %w", err)
+	}
+	return responsesFromChat(body, model, namespaces)
+}
+
+func responsesFromChat(body []byte, model string, namespaces map[string]responseNamespaceTool) ([]byte, error) {
 	var chat chatResponseOut
 	if err := json.Unmarshal(body, &chat); err != nil {
 		return nil, err
@@ -233,11 +259,13 @@ func ResponsesFromChat(body []byte, model string) ([]byte, error) {
 			if args == "" {
 				args = "{}"
 			}
+			name, namespace := restoreResponsesToolName(call.Function.Name, namespaces)
 			out.Output = append(out.Output, responsesOutputItem{
 				ID:        call.ID,
 				Type:      "function_call",
 				CallID:    call.ID,
-				Name:      call.Function.Name,
+				Namespace: namespace,
+				Name:      name,
 				Arguments: args,
 				Status:    "completed",
 			})

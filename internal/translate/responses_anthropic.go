@@ -59,12 +59,16 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 			}
 		case "function_call":
 			// Assistant-initiated tool call in the conversation history.
+			name := item.Name
+			if item.Namespace != "" {
+				name = qualifyResponsesToolName(item.Namespace, name)
+			}
 			converted.Messages = append(converted.Messages, AnthropicMessage{
 				Role: "assistant",
 				Content: mustMarshal([]anthropicBlock{{
 					Type:  "tool_use",
 					ID:    item.CallID,
-					Name:  item.Name,
+					Name:  name,
 					Input: argumentsJSON(item.Arguments),
 				}}),
 			})
@@ -87,7 +91,11 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 		return nil, fmt.Errorf("request contains no translatable input")
 	}
 
-	for _, tool := range req.Tools {
+	tools, namespaces, err := responsesTools(body)
+	if err != nil {
+		return nil, fmt.Errorf("decode tools: %w", err)
+	}
+	for _, tool := range tools {
 		if tool.Name == "" {
 			continue
 		}
@@ -97,7 +105,7 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 			InputSchema: sanitizeSchema(tool.Parameters),
 		})
 	}
-	converted.ToolChoice = toolChoiceToAnthropic(req.ToolChoice)
+	converted.ToolChoice = toolChoiceToAnthropicWithNamespaces(req.ToolChoice, namespaces)
 
 	return json.Marshal(converted)
 }
@@ -146,6 +154,20 @@ func anthropicMessageFromItem(item responsesInputItem) (*AnthropicMessage, error
 // ResponsesFromAnthropic converts a non-streaming Anthropic Messages response
 // into an OpenAI Responses response object.
 func ResponsesFromAnthropic(body []byte, model string) ([]byte, error) {
+	return responsesFromAnthropic(body, model, nil)
+}
+
+// ResponsesFromAnthropicForRequest restores namespace metadata for tool calls
+// when the client request used Codex's grouped-tool extension.
+func ResponsesFromAnthropicForRequest(body []byte, model string, requestBody []byte) ([]byte, error) {
+	namespaces, err := responseNamespaceMap(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("decode request tools: %w", err)
+	}
+	return responsesFromAnthropic(body, model, namespaces)
+}
+
+func responsesFromAnthropic(body []byte, model string, namespaces map[string]responseNamespaceTool) ([]byte, error) {
 	var response anthropicResponseIn
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
@@ -185,11 +207,13 @@ func ResponsesFromAnthropic(body []byte, model string) ([]byte, error) {
 				Content: []responsesOutputContent{{Type: "output_text", Text: block.Text}},
 			})
 		case "tool_use":
+			name, namespace := restoreResponsesToolName(block.Name, namespaces)
 			out.Output = append(out.Output, responsesOutputItem{
 				ID:        block.ID,
 				Type:      "function_call",
 				CallID:    block.ID,
-				Name:      block.Name,
+				Namespace: namespace,
+				Name:      name,
 				Arguments: compactJSON(block.Input),
 				Status:    "completed",
 			})
@@ -218,12 +242,24 @@ func ResponsesFromAnthropic(body []byte, model string) ([]byte, error) {
 // ResponsesStreamFromAnthropic converts an upstream Anthropic SSE stream into
 // OpenAI Responses API events.
 type ResponsesStreamFromAnthropic struct {
-	stream  responsesItemStream
-	blocks  map[int]string // anthropic block index -> open item kind
-	failure error
+	stream     responsesItemStream
+	blocks     map[int]string // anthropic block index -> open item kind
+	namespaces map[string]responseNamespaceTool
+	failure    error
 }
 
 func NewResponsesStreamFromAnthropic(writer io.Writer, flush func(), model string) *ResponsesStreamFromAnthropic {
+	return newResponsesStreamFromAnthropic(writer, flush, model, nil)
+}
+
+// NewResponsesStreamFromAnthropicForRequest restores namespace metadata for
+// tool calls when the client request used Codex's grouped-tool extension.
+func NewResponsesStreamFromAnthropicForRequest(writer io.Writer, flush func(), model string, requestBody []byte) *ResponsesStreamFromAnthropic {
+	namespaces, _ := responseNamespaceMap(requestBody)
+	return newResponsesStreamFromAnthropic(writer, flush, model, namespaces)
+}
+
+func newResponsesStreamFromAnthropic(writer io.Writer, flush func(), model string, namespaces map[string]responseNamespaceTool) *ResponsesStreamFromAnthropic {
 	return &ResponsesStreamFromAnthropic{
 		stream: responsesItemStream{
 			writer: writer,
@@ -231,7 +267,8 @@ func NewResponsesStreamFromAnthropic(writer io.Writer, flush func(), model strin
 			model:  model,
 			id:     "resp_llm-proxy",
 		},
-		blocks: map[int]string{},
+		blocks:     map[int]string{},
+		namespaces: namespaces,
 	}
 }
 
@@ -289,7 +326,8 @@ func (s *ResponsesStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 			s.stream.openItem("reasoning")
 		case "tool_use":
 			s.blocks[event.Index] = "tool_use"
-			s.stream.startToolCall(event.ContentBlock.ID, event.ContentBlock.Name)
+			name, namespace := restoreResponsesToolName(event.ContentBlock.Name, s.namespaces)
+			s.stream.startToolCallWithNamespace(event.ContentBlock.ID, name, namespace)
 		}
 
 	case "content_block_delta":

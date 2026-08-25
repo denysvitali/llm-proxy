@@ -115,6 +115,7 @@ type responsesInputItem struct {
 	Role      string          `json:"role,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
 	CallID    string          `json:"call_id,omitempty"`
+	Namespace string          `json:"namespace,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments string          `json:"arguments,omitempty"`
 	Output    string          `json:"output,omitempty"`
@@ -152,6 +153,7 @@ type responsesOutputItem struct {
 	Content   []responsesOutputContent `json:"content,omitempty"`
 	Summary   []responsesOutputContent `json:"summary,omitempty"`
 	CallID    string                   `json:"call_id,omitempty"`
+	Namespace string                   `json:"namespace,omitempty"`
 	Name      string                   `json:"name,omitempty"`
 	Arguments string                   `json:"arguments,omitempty"`
 }

@@ -99,6 +99,51 @@ func TestResponsesToChatToolChoiceStrings(t *testing.T) {
 	}
 }
 
+func TestResponsesToChatFlattensNamespaceTools(t *testing.T) {
+	in := []byte(`{
+		"input":[{"type":"message","role":"user","content":"inspect"}],
+		"tools":[{"type":"namespace","name":"mcp__happy","tools":[
+			{"type":"function","name":"update_plan","description":"update the plan","parameters":{"type":"object","properties":{"plan":{"type":"array"}}}}
+		]}],
+		"tool_choice":{"type":"function","name":"update_plan","namespace":"mcp__happy"}
+	}`)
+	out, err := ResponsesToChat(in, "m")
+	if err != nil {
+		t.Fatalf("ResponsesToChat: %v", err)
+	}
+	var got openAIRequest
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode translated request: %v", err)
+	}
+	if len(got.Tools) != 1 || got.Tools[0].Function.Name != "mcp__happy__update_plan" {
+		t.Fatalf("tools = %+v, want one qualified child function", got.Tools)
+	}
+	choice, ok := got.ToolChoice.(map[string]any)
+	if !ok {
+		t.Fatalf("tool_choice = %#v, want function choice", got.ToolChoice)
+	}
+	fn, _ := choice["function"].(map[string]any)
+	if fn == nil || fn["name"] != "mcp__happy__update_plan" {
+		t.Fatalf("tool_choice.function = %#v, want qualified child function", choice["function"])
+	}
+}
+
+func TestResponsesFromChatRestoresNamespaceTool(t *testing.T) {
+	request := []byte(`{"tools":[{"type":"namespace","name":"mcp__happy","tools":[{"type":"function","name":"update_plan","parameters":{"type":"object"}}]}]}`)
+	response := []byte(`{"id":"chat-1","choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"mcp__happy__update_plan","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+	out, err := ResponsesFromChatForRequest(response, "m", request)
+	if err != nil {
+		t.Fatalf("ResponsesFromChatForRequest: %v", err)
+	}
+	var got responsesResponse
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got.Output) != 1 || got.Output[0].Name != "update_plan" || got.Output[0].Namespace != "mcp__happy" {
+		t.Fatalf("output = %+v, want namespaced update_plan", got.Output)
+	}
+}
+
 func TestResponsesToChatRejectsEmptyAndUnknown(t *testing.T) {
 	if _, err := ResponsesToChat([]byte(`{"input":[]}`), "m"); err == nil {
 		t.Error("empty input accepted")
@@ -255,6 +300,25 @@ func TestResponsesStreamFromChatToolCall(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("stream missing %q\nfull:\n%s", want, body)
 		}
+	}
+}
+
+func TestResponsesStreamFromChatRestoresNamespaceTool(t *testing.T) {
+	request := []byte(`{"tools":[{"type":"namespace","name":"mcp__happy","tools":[{"type":"function","name":"update_plan","parameters":{"type":"object"}}]}]}`)
+	upstream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"mcp__happy__update_plan","arguments":"{}"}}]}}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	}, "\n")
+
+	var out strings.Builder
+	w := NewResponsesStreamFromChatForRequest(&out, nil, "mock", request)
+	if err := w.Consume(strings.NewReader(upstream)); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, `"name":"update_plan"`) || !strings.Contains(body, `"namespace":"mcp__happy"`) {
+		t.Fatalf("stream did not restore namespace: %s", body)
 	}
 }
 

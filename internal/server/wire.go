@@ -120,20 +120,20 @@ var translations = map[[2]backend.Kind]*translationPath{
 		kind:   backend.KindOpenAIChat,
 		encode: func(env translateEnv) ([]byte, error) { return translate.ResponsesToChat(env.body, env.model) },
 		decode: func(env translateEnv, data []byte) ([]byte, error) {
-			return translate.ResponsesFromChat(data, env.clientModel)
+			return translate.ResponsesFromChatForRequest(data, env.clientModel, env.body)
 		},
 		stream: func(env translateEnv, client io.Writer, flush func()) streamTranslator {
-			return translate.NewResponsesStreamFromChat(client, flush, env.clientModel)
+			return translate.NewResponsesStreamFromChatForRequest(client, flush, env.clientModel, env.body)
 		},
 	},
 	{backend.KindOpenAIResponses, backend.KindAnthropic}: {
 		kind:   backend.KindAnthropic,
 		encode: func(env translateEnv) ([]byte, error) { return translate.ResponsesToAnthropic(env.body, env.model) },
 		decode: func(env translateEnv, data []byte) ([]byte, error) {
-			return translate.ResponsesFromAnthropic(data, env.clientModel)
+			return translate.ResponsesFromAnthropicForRequest(data, env.clientModel, env.body)
 		},
 		stream: func(env translateEnv, client io.Writer, flush func()) streamTranslator {
-			return translate.NewResponsesStreamFromAnthropic(client, flush, env.clientModel)
+			return translate.NewResponsesStreamFromAnthropicForRequest(client, flush, env.clientModel, env.body)
 		},
 	},
 }

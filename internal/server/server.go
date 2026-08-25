@@ -94,6 +94,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("GET /api/stats", s.handleStatsSeries)
+	mux.HandleFunc("GET /api/stats/backends/{backend}", s.handleStatsBackendSeries)
+	mux.HandleFunc("GET /api/stats/backends/{backend}/{model}", s.handleStatsBackendSeries)
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("GET /api/grok/usage", s.handleGrokUsage)
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)

@@ -11,6 +11,7 @@ import {
   Paper,
   ScrollArea,
   Select,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
@@ -22,14 +23,20 @@ import {
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { IconArrowsSort, IconInboxOff, IconSearch, IconSearchOff } from '@tabler/icons-react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchStats } from '../api'
-import type { ModelStat } from '../api'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { fetchBackendStatsSeries, fetchStats } from '../api'
+import type { ModelStat, StatsSeries } from '../api'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
 import UptimeBadge from '../components/UptimeBadge'
 import PercentileBars from '../components/PercentileBars'
 import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
+import {
+  HistoryBarChart,
+  HistoryLineChart,
+  historyData,
+  historyFormatters,
+} from '../components/HistoryCharts'
 import { Fade } from '../App'
 
 type SortKey =
@@ -111,6 +118,14 @@ export default function ModelsPage() {
   const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'requests', dir: -1 })
   const [selected, setSelected] = useState<ModelStat | null>(null)
+  const [historyRange, setHistoryRange] = useState('24h')
+
+  const selectedSeriesQ = useQuery({
+    queryKey: ['stats-series', 'model', selected?.backend, selected?.model, historyRange],
+    queryFn: () => fetchBackendStatsSeries(selected!.backend, historyRange, selected!.model),
+    enabled: !!selected,
+    placeholderData: keepPreviousData,
+  })
 
   const rows = useMemo(() => {
     const f = filter.trim().toLowerCase()
@@ -286,7 +301,15 @@ export default function ModelsPage() {
           )
         }
       >
-        {selected && <ModelDetail stat={selected} colors={pal.series} />}
+        {selected && (
+          <ModelDetail
+            stat={selected}
+            colors={pal.series}
+            series={selectedSeriesQ.data?.series}
+            range={historyRange}
+            onRangeChange={setHistoryRange}
+          />
+        )}
       </Drawer>
     </Fade>
   )
@@ -413,7 +436,19 @@ function EmptyState({
   )
 }
 
-function ModelDetail({ stat, colors }: { stat: ModelStat; colors: string[] }) {
+function ModelDetail({
+  stat,
+  colors,
+  series,
+  range,
+  onRangeChange,
+}: {
+  stat: ModelStat
+  colors: string[]
+  series?: StatsSeries
+  range: string
+  onRangeChange: (value: string) => void
+}) {
   const segs = mixSegments(stat, colors)
   const totalTok = segs.reduce((s, x) => s + x.value, 0)
   // TTFT and E2E share one time scale so their bar lengths are directly
@@ -422,6 +457,55 @@ function ModelDetail({ stat, colors }: { stat: ModelStat; colors: string[] }) {
 
   return (
     <Stack gap="lg">
+      <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
+        <Text size="sm" fw={600}>History</Text>
+        <SegmentedControl
+          size="compact-xs"
+          value={range}
+          onChange={onRangeChange}
+          data={[
+            { value: '1h', label: '1h' },
+            { value: '6h', label: '6h' },
+            { value: '24h', label: '24h' },
+            { value: '7d', label: '7d' },
+          ]}
+        />
+      </Group>
+      <HistoryLineChart
+        title="Latency"
+        description="Median first byte and full response"
+        data={historyData([series?.ttft_p50, series?.e2e_p50])}
+        series={[
+          { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
+          { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
+        ]}
+      />
+      <HistoryLineChart
+        title="Throughput"
+        description="Median output rate"
+        data={historyData([series?.throughput_p50])}
+        series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
+      />
+      <HistoryBarChart
+        title="Requests"
+        description="Successful requests per interval"
+        points={series?.requests ?? []}
+      />
+      <HistoryBarChart
+        title="Tool calls"
+        description="Observed tool calls per interval"
+        points={series?.tool_calls ?? []}
+      />
+      <HistoryLineChart
+        title="Token volume"
+        description="Input and output tokens per interval"
+        data={historyData([series?.tokens_in, series?.tokens_out])}
+        series={[
+          { name: 'series0', label: 'Input', formatter: historyFormatters.count },
+          { name: 'series1', label: 'Output', formatter: historyFormatters.count },
+        ]}
+      />
+      <Divider />
       <Section title="Latency">
         <Text size="xs" fw={600} c="dimmed" mb={4}>
           Time to first token

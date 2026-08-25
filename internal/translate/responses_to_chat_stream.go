@@ -28,18 +28,19 @@ type responsesItemStream struct {
 	model  string
 	id     string
 
-	started    bool // response.created emitted
-	finished   bool
-	outputIdx  int
-	itemOpen   string // type of the currently open output item ("" = none)
-	itemText   strings.Builder
-	args       strings.Builder
-	callID     string
-	callName   string
-	incomplete bool
-	usageIn    int64
-	usageOut   int64
-	doneItems  []map[string]any
+	started       bool // response.created emitted
+	finished      bool
+	outputIdx     int
+	itemOpen      string // type of the currently open output item ("" = none)
+	itemText      strings.Builder
+	args          strings.Builder
+	callID        string
+	callName      string
+	callNamespace string
+	incomplete    bool
+	usageIn       int64
+	usageOut      int64
+	doneItems     []map[string]any
 }
 
 // openItem emits response.created (once) and response.output_item.added for a
@@ -80,13 +81,17 @@ func (s *responsesItemStream) openItem(kind string) bool {
 		if s.args.Len() > 0 {
 			args = s.args.String()
 		}
+		item := map[string]any{
+			"type": "function_call", "id": s.callID, "call_id": s.callID,
+			"name": s.callName, "arguments": args, "status": "in_progress",
+		}
+		if s.callNamespace != "" {
+			item["namespace"] = s.callNamespace
+		}
 		s.emit("response.output_item.added", map[string]any{
 			"type":         "response.output_item.added",
 			"output_index": s.outputIdx,
-			"item": map[string]any{
-				"type": "function_call", "id": s.callID, "call_id": s.callID,
-				"name": s.callName, "arguments": args, "status": "in_progress",
-			},
+			"item":         item,
 		})
 	}
 	return true
@@ -117,6 +122,9 @@ func (s *responsesItemStream) closeItem() {
 		done = map[string]any{
 			"type": "function_call", "id": s.callID, "call_id": s.callID,
 			"name": s.callName, "arguments": args, "status": "completed",
+		}
+		if s.callNamespace != "" {
+			done["namespace"] = s.callNamespace
 		}
 	}
 	s.emit("response.output_item.done", map[string]any{
@@ -163,12 +171,11 @@ func (s *responsesItemStream) appendArgs(delta string) {
 	})
 }
 
-// startToolCall closes whatever is open and prepares a fresh function_call
-// item under the given call identity.
-func (s *responsesItemStream) startToolCall(callID, name string) {
+func (s *responsesItemStream) startToolCallWithNamespace(callID, name, namespace string) {
 	s.closeItem()
 	s.callID = callID
 	s.callName = name
+	s.callNamespace = namespace
 	s.args.Reset()
 	s.openItem("function_call")
 }
@@ -279,16 +286,28 @@ func (s *responsesItemStream) emit(event string, payload any) {
 // consume chat-only backends. It mirrors the event subset the real API emits
 // for plain text and function calls.
 type ResponsesStreamFromChatWriter struct {
-	stream responsesItemStream
+	stream     responsesItemStream
+	namespaces map[string]responseNamespaceTool
 }
 
 func NewResponsesStreamFromChat(writer io.Writer, flush func(), model string) *ResponsesStreamFromChatWriter {
+	return newResponsesStreamFromChat(writer, flush, model, nil)
+}
+
+// NewResponsesStreamFromChatForRequest restores namespace metadata for tool
+// calls when the client request used Codex's grouped-tool extension.
+func NewResponsesStreamFromChatForRequest(writer io.Writer, flush func(), model string, requestBody []byte) *ResponsesStreamFromChatWriter {
+	namespaces, _ := responseNamespaceMap(requestBody)
+	return newResponsesStreamFromChat(writer, flush, model, namespaces)
+}
+
+func newResponsesStreamFromChat(writer io.Writer, flush func(), model string, namespaces map[string]responseNamespaceTool) *ResponsesStreamFromChatWriter {
 	return &ResponsesStreamFromChatWriter{stream: responsesItemStream{
 		writer: writer,
 		flush:  flush,
 		model:  model,
 		id:     "resp_llm-proxy",
-	}}
+	}, namespaces: namespaces}
 }
 
 // Consume reads the upstream chat-completions SSE stream to completion. It
@@ -349,7 +368,8 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 		for _, call := range delta.ToolCalls {
 			if call.ID != "" || call.Function.Name != "" {
 				// First fragment of a new tool call: open a function_call item.
-				s.stream.startToolCall(call.ID, call.Function.Name)
+				name, namespace := restoreResponsesToolName(call.Function.Name, s.namespaces)
+				s.stream.startToolCallWithNamespace(call.ID, name, namespace)
 			}
 			if call.Function.Arguments != "" && s.stream.itemOpen == "function_call" {
 				s.stream.appendArgs(call.Function.Arguments)

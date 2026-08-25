@@ -7,6 +7,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -300,6 +302,61 @@ func TestStatsSeriesRecordsWithoutPersistence(t *testing.T) {
 	}
 	if len(models) != 1 || models[0] != "upstream-m1" {
 		t.Fatalf("models = %#v, want [upstream-m1]", models)
+	}
+}
+
+func TestStatsSeriesScopeIncludesLoadedModels(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stats.json")
+	now := time.Now()
+	window := now.Truncate(5 * time.Minute)
+	snapshot := statsSnapshot{
+		Version: 1,
+		SavedAt: now,
+		Models: map[string]modelSnapshot{
+			"fake\x00loaded-model": {
+				Buckets: []bucket{{
+					WindowStart:       window,
+					Requests:          2,
+					Successes:         1,
+					TokensIn:          10,
+					TokensOut:         5,
+					TTFTBuckets:       make([]uint64, len(ttftEdges)),
+					E2EBuckets:        make([]uint64, len(e2eEdges)),
+					ThroughputBuckets: make([]uint64, len(tpsEdges)),
+				}},
+			},
+		},
+	}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	st := newStats(reg, config.StatsConfig{
+		PersistFile:   path,
+		RetentionDays: 7,
+	})
+	if err := st.load(path); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	result, models, err := st.seriesAt("1h", now)
+	if err != nil {
+		t.Fatalf("seriesAt: %v", err)
+	}
+	var requests float64
+	for _, point := range result.Requests {
+		requests += point.Value
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %f, want 2", requests)
+	}
+	if len(models) != 1 || models[0] != "loaded-model" {
+		t.Fatalf("models = %#v, want [loaded-model]", models)
 	}
 }
 

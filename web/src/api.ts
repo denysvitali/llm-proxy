@@ -43,11 +43,25 @@ export interface StatsSeries {
   throughput_p50: SeriesPoint[]
   tokens_in: SeriesPoint[]
   tokens_out: SeriesPoint[]
+  tool_calls: SeriesPoint[]
 }
 
 export interface StatsSeriesResponse {
   models: string[]
   series: StatsSeries
+}
+
+export type ScopedStatsSeriesResponse = StatsSeriesResponse
+
+export function fetchBackendStatsSeries(
+  backend: string,
+  range: string,
+  model?: string,
+): Promise<ScopedStatsSeriesResponse> {
+  const path = model
+    ? `/api/stats/backends/${encodeURIComponent(backend)}/${encodeURIComponent(model)}`
+    : `/api/stats/backends/${encodeURIComponent(backend)}`
+  return getJSON<ScopedStatsSeriesResponse>(`${path}?range=${encodeURIComponent(range)}`)
 }
 
 export interface OverviewBackend {

@@ -1162,6 +1162,15 @@ type seriesSet struct {
 	ThroughputP50 []point `json:"throughput_p50"`
 	TokensIn      []point `json:"tokens_in"`
 	TokensOut     []point `json:"tokens_out"`
+	ToolCalls     []point `json:"tool_calls"`
+}
+
+// scopedSeriesSet carries the same fleet-wide series, restricted to one
+// optional backend (and optionally model). An empty Model selects every model
+// in the backend.
+type scopedSeriesSet struct {
+	Series seriesSet `json:"series"`
+	Models []string  `json:"models"`
 }
 
 var seriesRangeBuckets = map[string]time.Duration{
@@ -1183,9 +1192,20 @@ var seriesRangePoints = map[string]int{
 // even when it began before the requested range. An unknown range returns an
 // error.
 func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error) {
+	series, models, err := st.seriesAtScope(rng, now, "", "")
+	if err != nil {
+		return seriesSet{}, nil, err
+	}
+	return series.Series, models, nil
+}
+
+// seriesAtScope aggregates the same buckets as seriesAt while filtering rows
+// by backend and model. Empty selectors mean "all"; this is the shared core
+// for fleet, provider, and model histories.
+func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName string) (scopedSeriesSet, []string, error) {
 	dur, ok := seriesRangeBuckets[rng]
 	if !ok {
-		return seriesSet{}, nil, fmt.Errorf("unknown range %q; supported ranges: 1h, 6h, 24h, 7d", rng)
+		return scopedSeriesSet{}, nil, fmt.Errorf("unknown range %q; supported ranges: 1h, 6h, 24h, 7d", rng)
 	}
 	n := seriesRangePoints[rng]
 	current := now.Truncate(5 * time.Minute)
@@ -1193,8 +1213,8 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 	start := end.Add(-time.Duration(n) * dur)
 
 	type agg struct {
-		requests, successes, tokensIn, tokensOut, cacheRead uint64
-		ttft, e2e, tps                                      []uint64
+		requests, successes, tokensIn, tokensOut, cacheRead, toolCalls uint64
+		ttft, e2e, tps                                                 []uint64
 	}
 	aggs := make([]*agg, n)
 	for i := range aggs {
@@ -1209,8 +1229,12 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	for key, ms := range st.models {
-		_, model, ok := strings.Cut(key, "\x00")
+		rowBackend, rowModel, ok := strings.Cut(key, "\x00")
 		if !ok {
+			continue
+		}
+		if (backendName != "" && rowBackend != backendName) ||
+			(modelName != "" && rowModel != modelName) {
 			continue
 		}
 		ms.mu.Lock()
@@ -1229,6 +1253,7 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 			a.tokensIn += b.TokensIn
 			a.tokensOut += b.TokensOut
 			a.cacheRead += b.CacheRead
+			a.toolCalls += b.ToolCalls
 			for i := range b.TTFTBuckets {
 				a.ttft[i] += b.TTFTBuckets[i]
 			}
@@ -1240,16 +1265,16 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 			}
 		}
 		if len(ms.buckets) > 0 {
-			modelSet[model] = struct{}{}
+			modelSet[rowModel] = struct{}{}
 		}
 		ms.mu.Unlock()
 	}
 
-	models := make([]string, 0, len(modelSet))
-	for m := range modelSet {
-		models = append(models, m)
+	scopedModels := make([]string, 0, len(modelSet))
+	for model := range modelSet {
+		scopedModels = append(scopedModels, model)
 	}
-	sort.Strings(models)
+	sort.Strings(scopedModels)
 
 	series := seriesSet{
 		Requests:      make([]point, 0, n),
@@ -1259,6 +1284,7 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 		ThroughputP50: make([]point, 0, n),
 		TokensIn:      make([]point, 0, n),
 		TokensOut:     make([]point, 0, n),
+		ToolCalls:     make([]point, 0, n),
 	}
 	for i := 0; i < n; i++ {
 		ts := start.Add(time.Duration(i) * dur).Format(time.RFC3339)
@@ -1267,11 +1293,12 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 		series.SuccessRate = append(series.SuccessRate, point{TS: ts, Value: ratio(a.successes, a.requests)})
 		series.TokensIn = append(series.TokensIn, point{TS: ts, Value: float64(a.tokensIn)})
 		series.TokensOut = append(series.TokensOut, point{TS: ts, Value: float64(a.tokensOut)})
+		series.ToolCalls = append(series.ToolCalls, point{TS: ts, Value: float64(a.toolCalls)})
 		series.TTFTP50 = append(series.TTFTP50, point{TS: ts, Value: histogramQuantile(0.5, ttftEdges, a.ttft, 0)})
 		series.E2EP50 = append(series.E2EP50, point{TS: ts, Value: histogramQuantile(0.5, e2eEdges, a.e2e, 0)})
 		series.ThroughputP50 = append(series.ThroughputP50, point{TS: ts, Value: histogramQuantile(0.5, tpsEdges, a.tps, 0)})
 	}
-	return series, models, nil
+	return scopedSeriesSet{Series: series, Models: scopedModels}, scopedModels, nil
 }
 
 // handleStats serves GET /stats with the per-model summary as JSON. With
@@ -1279,6 +1306,26 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 // history"); otherwise it falls back to the Prometheus-backed counters.
 func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"models": s.stats.snapshot()})
+}
+
+// handleStatsBackendSeries serves GET /api/stats/backends/{backend}?range=...
+// with that provider's aggregate history. Omitting model returns provider-wide
+// data; supplying it narrows to a single upstream model.
+func (s *Server) handleStatsBackendSeries(w http.ResponseWriter, r *http.Request) {
+	rng := r.URL.Query().Get("range")
+	if rng == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "missing required query parameter \"range\"; supported values: 1h, 6h, 24h, 7d",
+		})
+		return
+	}
+	backendName := r.PathValue("backend")
+	result, _, err := s.stats.seriesAtScope(rng, time.Now(), backendName, r.PathValue("model"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleStatsSeries serves GET /api/stats?range=1h|6h|24h|7d with fleet-wide
