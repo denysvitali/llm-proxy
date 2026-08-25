@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -43,6 +44,10 @@ func New(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends
 	}
 	cfg.Defaults()
 	metrics := newMetrics()
+	stats := newStats(metrics.reg, cfg.Stats)
+	if err := stats.load(cfg.Stats.PersistFile); err != nil {
+		log.WithError(err).Warn("stats persistence load failed; starting with empty stats")
+	}
 	return &Server{
 		cfg:      cfg,
 		log:      log,
@@ -50,7 +55,7 @@ func New(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends
 		backends: backends,
 		byName:   byName,
 		metrics:  metrics,
-		stats:    newStats(metrics.reg),
+		stats:    stats,
 		catalogs: newCatalogCache(),
 	}
 }
@@ -64,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/responses", s.handleResponses)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /stats", s.handleStats)
+	mux.HandleFunc("GET /api/stats", s.handleStatsSeries)
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
@@ -141,17 +147,33 @@ func (s *Server) enabled(name string) bool {
 
 // hasModel reports whether the list contains an exact match, ignoring a
 // trailing -YYYYMMDD date suffix on catalog entries (Anthropic-style dated
-// snapshots).
+// snapshots: a dash followed by exactly eight ASCII digits forming a valid
+// calendar date).
 func hasModel(models []string, want string) bool {
 	for _, m := range models {
 		if m == want {
 			return true
 		}
-		if len(m) > 9 && m[len(m)-9] == '-' && m[:len(m)-9] == want {
+		if len(m) > 9 && m[len(m)-9] == '-' && m[:len(m)-9] == want && isDatedSnapshotSuffix(m[len(m)-8:]) {
 			return true
 		}
 	}
 	return false
+}
+
+// isDatedSnapshotSuffix reports whether s is exactly eight ASCII digits that
+// parse as a valid YYYYMMDD date (e.g. 20250514).
+func isDatedSnapshotSuffix(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for i := 0; i < 8; i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	_, err := time.Parse("20060102", s)
+	return err == nil
 }
 
 type cachedCatalog struct {
@@ -159,8 +181,19 @@ type cachedCatalog struct {
 	expires time.Time
 }
 
-// catalogCache memoizes backend model lists for a minute so request routing
-// does not hammer provider /models endpoints.
+const (
+	// catalogTTL is how long a fetched model list is considered fresh.
+	catalogTTL = time.Minute
+	// catalogMaxStaleness is the upper bound on how long a stale catalog
+	// entry may be served while a backend's /models endpoint is failing (10x
+	// the TTL). Beyond it the refresh error propagates so a permanently
+	// broken catalog endpoint does not go unnoticed.
+	catalogMaxStaleness = 10 * catalogTTL
+)
+
+// catalogCache memoizes backend model lists for catalogTTL so request routing
+// does not hammer provider /models endpoints. Once an entry is older than
+// catalogMaxStaleness it is refreshed even if the backend is failing.
 type catalogCache struct {
 	mu      sync.Mutex
 	entries map[string]cachedCatalog
@@ -168,43 +201,199 @@ type catalogCache struct {
 }
 
 func newCatalogCache() catalogCache {
-	return catalogCache{entries: map[string]cachedCatalog{}, ttl: time.Minute}
+	return catalogCache{entries: map[string]cachedCatalog{}, ttl: catalogTTL}
 }
 
 func (s *Server) catalog(ctx context.Context, b backend.Backend) ([]string, error) {
 	s.catalogs.mu.Lock()
 	cached, ok := s.catalogs.entries[b.Name()]
 	s.catalogs.mu.Unlock()
-	if ok && time.Now().Before(cached.expires) {
+
+	now := time.Now()
+	if ok && now.Before(cached.expires) {
 		return cached.models, nil
 	}
+
 	models, err := b.Models(ctx)
 	if err != nil {
 		if ok {
-			// Serve stale rather than failing routing entirely.
-			return cached.models, nil
+			// Age is measured from when the entry was last refreshed.
+			age := now.Sub(cached.expires.Add(-s.catalogs.ttl))
+			if age < catalogMaxStaleness {
+				s.log.WithField("backend", b.Name()).
+					WithField("age", age.Round(time.Second)).
+					Warn("serving stale model catalog; backend /models is failing")
+				return cached.models, nil
+			}
+			s.log.WithField("backend", b.Name()).
+				WithField("age", age.Round(time.Second)).
+				Warn("stale model catalog exceeds maximum age; propagating backend error")
 		}
 		return nil, err
 	}
+
 	s.catalogs.mu.Lock()
-	s.catalogs.entries[b.Name()] = cachedCatalog{models: models, expires: time.Now().Add(s.catalogs.ttl)}
+	s.catalogs.entries[b.Name()] = cachedCatalog{models: models, expires: now.Add(s.catalogs.ttl)}
 	s.catalogs.mu.Unlock()
 	return models, nil
 }
 
-// rewriteModel replaces only the "model" field of a JSON object, preserving
-// every other byte-semantic exactly as the client sent it.
+// rewriteModel replaces only the top-level "model" string value of a JSON
+// object, preserving every other byte exactly as the client sent it: key
+// order, whitespace, indentation, string escapes and nested values are all
+// left untouched.
 func rewriteModel(body []byte, model string) ([]byte, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil {
+	// Validate that the body is a JSON object before mutating anything.
+	var probe interface{}
+	if err := json.Unmarshal(body, &probe); err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(model)
+	if _, ok := probe.(map[string]interface{}); !ok {
+		return nil, fmt.Errorf("body is not a JSON object")
+	}
+
+	quoted, err := json.Marshal(model)
 	if err != nil {
 		return nil, err
 	}
-	fields["model"] = encoded
-	return json.Marshal(fields)
+	return spliceModelValue(body, quoted)
+}
+
+// spliceModelValue walks body byte-by-byte, tracking JSON depth, to find the
+// top-level "model" key and replace its string value with quoted. Everything
+// outside that value is copied verbatim.
+func spliceModelValue(body, quoted []byte) ([]byte, error) {
+	n := len(body)
+	depth := 0
+	for i := 0; i < n; {
+		switch body[i] {
+		case '{':
+			depth++
+			i++
+		case '}':
+			depth--
+			i++
+		case '[':
+			depth++
+			i++
+		case ']':
+			depth--
+			i++
+		case '"':
+			key, end, err := parseJSONString(body, i)
+			if err != nil {
+				return nil, err
+			}
+			// A string immediately followed by ':' is an object key.
+			j := end
+			for j < n && isJSONSpace(body[j]) {
+				j++
+			}
+			if j < n && body[j] == ':' && depth == 1 && key == "model" {
+				// Skip whitespace after ':' to reach the value.
+				k := j + 1
+				for k < n && isJSONSpace(body[k]) {
+					k++
+				}
+				if k >= n || body[k] != '"' {
+					return nil, fmt.Errorf(`"model" value is not a string`)
+				}
+				_, vend, err := parseJSONString(body, k)
+				if err != nil {
+					return nil, err
+				}
+				out := make([]byte, 0, len(body)-(vend-k)+len(quoted))
+				out = append(out, body[:k]...)
+				out = append(out, quoted...)
+				out = append(out, body[vend:]...)
+				return out, nil
+			}
+			i = end
+		default:
+			// Number, literal or whitespace: the validation pass already
+			// guaranteed these are well-formed, so a byte-wise walk is safe.
+			i++
+		}
+	}
+	return nil, fmt.Errorf(`no top-level "model" key found`)
+}
+
+// parseJSONString parses the JSON string beginning at body[i] (which must be
+// '"') and returns its decoded contents together with the exclusive end
+// offset. It handles all JSON escapes, including \uXXXX surrogate pairs.
+func parseJSONString(body []byte, i int) (string, int, error) {
+	if i >= len(body) || body[i] != '"' {
+		return "", 0, fmt.Errorf("expected string")
+	}
+	i++ // skip opening quote
+	var sb strings.Builder
+	for i < len(body) {
+		c := body[i]
+		switch c {
+		case '"':
+			return sb.String(), i + 1, nil
+		case '\\':
+			i++
+			if i >= len(body) {
+				return "", 0, fmt.Errorf("unterminated string escape")
+			}
+			switch body[i] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				sb.WriteByte(body[i])
+			case 'u':
+				if i+4 >= len(body) {
+					return "", 0, fmt.Errorf("invalid unicode escape")
+				}
+				r := hexToRune(body[i+1 : i+5])
+				if r < 0 {
+					return "", 0, fmt.Errorf("invalid unicode escape")
+				}
+				i += 4
+				// Decode an optional low surrogate to form a supplementary
+				// code point (\uXXXX\uXXXX pair).
+				if r >= 0xD800 && r <= 0xDBFF && i+6 < len(body) && body[i+1] == '\\' && body[i+2] == 'u' {
+					if lo := hexToRune(body[i+3 : i+7]); lo >= 0xDC00 && lo <= 0xDFFF {
+						r = 0x10000 + ((r - 0xD800) << 10) + (lo - 0xDC00)
+						i += 6
+					}
+				}
+				sb.WriteRune(r)
+			default:
+				return "", 0, fmt.Errorf("invalid escape")
+			}
+			i++
+		default:
+			sb.WriteByte(c)
+			i++
+		}
+	}
+	return "", 0, fmt.Errorf("unterminated string")
+}
+
+// hexToRune converts exactly four ASCII hex digits to a rune, or returns -1.
+func hexToRune(h []byte) rune {
+	if len(h) != 4 {
+		return -1
+	}
+	var r rune
+	for _, c := range h {
+		r *= 16
+		switch {
+		case '0' <= c && c <= '9':
+			r += rune(c - '0')
+		case 'a' <= c && c <= 'f':
+			r += rune(c - 'a' + 10)
+		case 'A' <= c && c <= 'F':
+			r += rune(c - 'A' + 10)
+		default:
+			return -1
+		}
+	}
+	return r
+}
+
+func isJSONSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // readBody enforces the configured maximum request body size.
@@ -225,4 +414,9 @@ func (s *Server) sortedRoutes() []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// Close shuts down the stats persistence layer, flushing once more.
+func (s *Server) Close() error {
+	return s.stats.Close()
 }

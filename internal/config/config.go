@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 )
@@ -51,12 +52,23 @@ type AuthConfig struct {
 	File string `mapstructure:"file"`
 }
 
+// StatsConfig controls usage-stats persistence and retention.
+type StatsConfig struct {
+	// PersistFile is the JSON snapshot path. Empty disables persistence.
+	PersistFile string `mapstructure:"persist_file"`
+	// PersistInterval is how often the in-memory stats are flushed to disk.
+	PersistInterval time.Duration `mapstructure:"persist_interval"`
+	// RetentionDays drops buckets older than this (0 = keep forever).
+	RetentionDays int `mapstructure:"retention_days"`
+}
+
 // Config is the whole configuration document.
 type Config struct {
 	BaseURL  string          `mapstructure:"base_url"`
 	Server   ServerConfig    `mapstructure:"server"`
 	Auth     AuthConfig      `mapstructure:"auth"`
 	Backends []BackendConfig `mapstructure:"backends"`
+	Stats    StatsConfig     `mapstructure:"stats"`
 
 	// Routes maps inbound model name -> explicit route. Models not listed are
 	// matched against each enabled backend's catalog (first match wins in
@@ -86,6 +98,9 @@ func (c *Config) Defaults() {
 	if c.Routes == nil {
 		c.Routes = map[string]ModelRoute{}
 	}
+	if c.Stats.PersistFile != "" && c.Stats.PersistInterval == 0 {
+		c.Stats.PersistInterval = 60 * time.Second
+	}
 }
 
 // Validate reports misconfiguration that would only surface at request time
@@ -103,10 +118,10 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("backends: duplicate type %q", b.Type)
 		}
 		seen[b.Type] = true
-		for name, r := range c.Routes {
-			if r.Backend == b.Type && !seen[r.Backend] {
-				return fmt.Errorf("routes[%s]: unknown backend %q", name, r.Backend)
-			}
+	}
+	for name, r := range c.Routes {
+		if !backend.Has(r.Backend) {
+			return fmt.Errorf("routes[%s]: unknown backend %q (registered: %v)", name, r.Backend, backend.Names())
 		}
 	}
 	if d := c.DefaultRoute.Backend; d != "" && !seen[d] {
@@ -114,6 +129,9 @@ func (c *Config) Validate() error {
 	}
 	for _, b := range c.Backends {
 		_ = b.Enabled
+	}
+	if c.Stats.PersistInterval != 0 && c.Stats.PersistInterval < 5*time.Second {
+		return fmt.Errorf("stats.persist_interval must be at least 5s, got %v", c.Stats.PersistInterval)
 	}
 	return nil
 }

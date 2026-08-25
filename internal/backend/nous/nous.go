@@ -64,6 +64,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if c.Key == "" {
 		return nil, fmt.Errorf("nous backend has no API key configured")
 	}
+	switch req.Kind {
+	case backend.KindOpenAIChat:
+	default:
+		return nil, fmt.Errorf("nous backend does not support kind %q", req.Kind)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(req.RawBody))
 	if err != nil {
 		return nil, err

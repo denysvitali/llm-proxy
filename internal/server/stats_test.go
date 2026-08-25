@@ -306,7 +306,7 @@ func getStatsModels(t *testing.T, s *Server) []ModelStat {
 
 func TestSnifferForwardsBytesAndCaptures(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	tr := newStats(reg).track("b", "m")
+	tr := newStats(reg, config.StatsConfig{}).track("b", "m")
 	payload := strings.Repeat("x", 4096)
 	sn := newSniffer(io.NopCloser(strings.NewReader(payload)), tr, false)
 	buf := make([]byte, len(payload)+16)
@@ -365,5 +365,53 @@ func TestBucketQuantile(t *testing.T) {
 func TestPercentilesOfEmpty(t *testing.T) {
 	if got := percentilesOf(nil); got != (Percentiles{}) {
 		t.Fatalf("nil histogram gave %+v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cache-rate computation
+
+func TestCacheRateComputation(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	st := newStats(reg, config.StatsConfig{})
+
+	// input=100, cached=40 -> 0.4. Upstream providers report input_tokens
+	// inclusive of cached tokens, so cache_read is a subset of input, not
+	// additive with it.
+	tr := st.track("b", "m")
+	tr.rep.input = 100
+	tr.rep.cacheRead = 40
+	tr.done()
+
+	// input=0 -> ratio guards division by zero and yields 0.
+	tr2 := st.track("b", "m2")
+	tr2.rep.input = 0
+	tr2.rep.cacheRead = 0
+	tr2.done()
+
+	// Regression for the live-dashboard numbers: 98,112 cached of 98,479
+	// input -> 99.6%, not 49.9%.
+	tr3 := st.track("b", "m3")
+	tr3.rep.input = 98479
+	tr3.rep.cacheRead = 98112
+	tr3.done()
+
+	got := st.snapshot()
+	if len(got) != 3 {
+		t.Fatalf("snapshot rows = %d, want 3: %+v", len(got), got)
+	}
+	byModel := make(map[string]ModelStat, len(got))
+	for _, r := range got {
+		byModel[r.Model] = r
+	}
+
+	if want := 40.0 / 100.0; byModel["m"].CacheRate != want {
+		t.Fatalf("m CacheRate = %f, want %f", byModel["m"].CacheRate, want)
+	}
+	if byModel["m2"].CacheRate != 0 {
+		t.Fatalf("m2 CacheRate = %f, want 0", byModel["m2"].CacheRate)
+	}
+	if want := 98112.0 / 98479.0; byModel["m3"].CacheRate != want {
+		t.Fatalf("m3 CacheRate = %f, want %f", byModel["m3"].CacheRate, want)
 	}
 }

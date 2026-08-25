@@ -50,6 +50,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.Defaults()
+	// RetentionDays: 0 means "keep forever"; apply the 7-day default only when
+	// the field was not set explicitly in the config file or environment.
+	if cfg.Stats.PersistFile != "" && !v.IsSet("stats.retention_days") {
+		cfg.Stats.RetentionDays = 7
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

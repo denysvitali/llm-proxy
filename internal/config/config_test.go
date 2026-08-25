@@ -40,3 +40,28 @@ func TestValidateRejectsUnknownBackend(t *testing.T) {
 		t.Fatalf("error %q should list registered backends", err)
 	}
 }
+
+func TestValidateRejectsUnknownBackendInRoute(t *testing.T) {
+	cfg := &Config{
+		Server:   ServerConfig{Listen: "127.0.0.1:8090"},
+		Backends: []BackendConfig{{Type: "venice"}},
+		Routes: map[string]ModelRoute{
+			"foo": {Backend: "nonexistent"},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted route with unknown backend")
+	}
+	if !strings.Contains(err.Error(), `unknown backend "nonexistent"`) {
+		t.Fatalf("error %q should name the unknown backend", err)
+	}
+
+	// A valid route must pass.
+	cfg.Routes = map[string]ModelRoute{
+		"foo": {Backend: "venice"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate rejected valid route: %v", err)
+	}
+}

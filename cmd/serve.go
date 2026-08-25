@@ -92,6 +92,7 @@ func runServe(cfg *config.Config) error {
 		log.Warn("no backends configured; only health/dashboard endpoints will work")
 	}
 	srv := server.New(cfg, log, store, backends)
+	defer func() { _ = srv.Close() }()
 
 	httpServer := &http.Server{
 		Addr:              cfg.Server.Listen,
