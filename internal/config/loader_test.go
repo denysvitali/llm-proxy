@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // isolateEnv unsets every LLM_PROXY_* variable for the duration of the test
@@ -200,6 +201,17 @@ func TestLoadDefaultsWhenNoFileExists(t *testing.T) {
 	if cfg.Server.MaxBodyBytes != 16777216 {
 		t.Errorf("Server.MaxBodyBytes = %d, want 16777216", cfg.Server.MaxBodyBytes)
 	}
+	home := os.Getenv("HOME")
+	wantStatsPath := filepath.Join(home, ".local", "state", "llm-proxy", "stats.json")
+	if cfg.Stats.PersistFile != wantStatsPath {
+		t.Errorf("Stats.PersistFile = %q, want %q", cfg.Stats.PersistFile, wantStatsPath)
+	}
+	if cfg.Stats.PersistInterval != time.Minute {
+		t.Errorf("Stats.PersistInterval = %s, want one minute", cfg.Stats.PersistInterval)
+	}
+	if cfg.Stats.RetentionDays != 7 {
+		t.Errorf("Stats.RetentionDays = %d, want 7", cfg.Stats.RetentionDays)
+	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want info", cfg.LogLevel)
 	}
@@ -210,6 +222,27 @@ func TestLoadDefaultsWhenNoFileExists(t *testing.T) {
 		t.Error("Routes is nil, want non-nil empty map")
 	} else if len(cfg.Routes) != 0 {
 		t.Errorf("Routes = %v, want empty", cfg.Routes)
+	}
+}
+
+func TestLoadStatsPersistFileEnvOverride(t *testing.T) {
+	isolateEnv(t)
+	isolateHome(t)
+	path := writeFile(t, "stats.json", "{}")
+	t.Setenv("LLM_PROXY_STATS_PERSIST_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Stats.PersistFile != path {
+		t.Errorf("Stats.PersistFile = %q, want %q", cfg.Stats.PersistFile, path)
+	}
+	if cfg.Stats.PersistInterval != time.Minute {
+		t.Errorf("Stats.PersistInterval = %s, want one minute", cfg.Stats.PersistInterval)
+	}
+	if cfg.Stats.RetentionDays != 7 {
+		t.Errorf("Stats.RetentionDays = %d, want 7", cfg.Stats.RetentionDays)
 	}
 }
 

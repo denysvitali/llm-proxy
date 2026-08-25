@@ -25,6 +25,9 @@ func Load() (*Config, error) {
 	// key was absent from the config file.
 	v.SetDefault("server.listen", "127.0.0.1:8090")
 	v.SetDefault("server.max_body_bytes", 16<<20)
+	if home, err := os.UserHomeDir(); err == nil {
+		v.SetDefault("stats.persist_file", filepath.Join(home, ".local", "state", "llm-proxy", "stats.json"))
+	}
 	// Keep Grok's credential file compatible with grok-proxy so an existing
 	// account session can be reused without introducing an API-key setting.
 	if home, err := os.UserHomeDir(); err == nil {
@@ -56,7 +59,8 @@ func Load() (*Config, error) {
 	}
 	cfg.Defaults()
 	// RetentionDays: 0 means "keep forever"; apply the 7-day default only when
-	// the field was not set explicitly in the config file or environment.
+	// persistence is enabled and the field was not set explicitly in the config
+	// file or environment.
 	if cfg.Stats.PersistFile != "" && !v.IsSet("stats.retention_days") {
 		cfg.Stats.RetentionDays = 7
 	}

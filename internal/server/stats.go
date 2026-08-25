@@ -744,13 +744,8 @@ func histIndex(edges []float64, v float64) int {
 	return len(edges) - 1
 }
 
-// record folds one completed upstream request into the in-memory model. It is
-// a no-op when persistence is disabled (empty PersistFile), preserving the
-// current Prometheus-only behavior.
+// record folds one completed upstream request into the in-memory model.
 func (st *Stats) record(backend, model, status string, ttft, e2e, throughput float64, rep usageReport) {
-	if st.cfg.PersistFile == "" {
-		return
-	}
 	key := backend + "\x00" + model
 	ms := st.modelFor(key)
 
@@ -790,10 +785,9 @@ func (st *Stats) record(backend, model, status string, ttft, e2e, throughput flo
 }
 
 // recordToolErrors attributes errored tool results to the current bucket of
-// the given backend/model (the turn in which the error surfaces), keeping the
-// cumulative counters and the Prometheus counter in sync.
+// the given backend/model (the turn in which the error surfaces).
 func (st *Stats) recordToolErrors(backend, model string, n int64) {
-	if st.cfg.PersistFile == "" || n <= 0 {
+	if n <= 0 {
 		return
 	}
 	key := backend + "\x00" + model
@@ -1185,14 +1179,17 @@ var seriesRangePoints = map[string]int{
 }
 
 // seriesAt aggregates the in-memory buckets into fleet-wide series for the
-// given range, as of now. An unknown range returns an error.
+// given range, as of now. The current 5-minute bucket is always included,
+// even when it began before the requested range. An unknown range returns an
+// error.
 func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error) {
 	dur, ok := seriesRangeBuckets[rng]
 	if !ok {
 		return seriesSet{}, nil, fmt.Errorf("unknown range %q; supported ranges: 1h, 6h, 24h, 7d", rng)
 	}
 	n := seriesRangePoints[rng]
-	end := now.Truncate(dur)
+	current := now.Truncate(5 * time.Minute)
+	end := current.Add(dur)
 	start := end.Add(-time.Duration(n) * dur)
 
 	type agg struct {

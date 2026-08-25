@@ -279,6 +279,30 @@ func TestStatsRecordsUpstreamFailureAndTransportError(t *testing.T) {
 	}
 }
 
+func TestStatsSeriesRecordsWithoutPersistence(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	st := newStats(reg, config.StatsConfig{})
+	tr := st.track("fake", "upstream-m1")
+	tr.setUpstreamStatus(http.StatusOK)
+	tr.done()
+
+	now := time.Now()
+	series, models, err := st.seriesAt("1h", now)
+	if err != nil {
+		t.Fatalf("seriesAt: %v", err)
+	}
+	var requests uint64
+	for _, point := range series.Requests {
+		requests += uint64(point.Value)
+	}
+	if requests == 0 {
+		t.Fatalf("requests series = %#v, want recorded traffic", series.Requests)
+	}
+	if len(models) != 1 || models[0] != "upstream-m1" {
+		t.Fatalf("models = %#v, want [upstream-m1]", models)
+	}
+}
+
 type errFakeSend struct{}
 
 func (errFakeSend) Error() string { return "boom" }

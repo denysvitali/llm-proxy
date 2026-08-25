@@ -262,6 +262,9 @@ flags are applied afterwards.
 | `server.listen`              | `LLM_PROXY_SERVER_LISTEN`            | `127.0.0.1:8090`         | HTTP listen address.                                                        |
 | `server.max_body_bytes`      | `LLM_PROXY_SERVER_MAX_BODY_BYTES`    | `16777216`               | Maximum request body size (16 MiB).                                         |
 | `auth.file`                  | `LLM_PROXY_AUTH_FILE`                | *(empty)*                | Path to the JSON key store. Empty disables client authentication — keep the listener on loopback if you do. |
+| `stats.persist_file`         | `LLM_PROXY_STATS_PERSIST_FILE`       | `~/.local/state/llm-proxy/stats.json` | JSON snapshot backing dashboard history. Empty disables persistence and time-range charts. |
+| `stats.persist_interval`     | `LLM_PROXY_STATS_PERSIST_INTERVAL`   | `1m` when persistence is enabled | How often stats are flushed to `stats.persist_file`. |
+| `stats.retention_days`       | `LLM_PROXY_STATS_RETENTION_DAYS`     | `7` when persistence is enabled | Bucket retention period; `0` keeps history indefinitely. |
 | `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
 | `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `grok`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
