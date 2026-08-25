@@ -73,6 +73,9 @@ jobs:
           if [ -n "${OPENROUTER_API_KEY:-}" ]; then
             echo "HAS_OPENROUTER=yes" >> "$GITHUB_ENV"
             sed -i '/^default_route:/i\  - type: openrouter\n    api_key_env: OPENROUTER_API_KEY' /tmp/llm-proxy-e2e/config.yaml
+            # Venice's free tier rate-limits in bursts; fail over to
+            # OpenRouter instead of burning the full retry budget on 429s.
+            sed -i '/api_key_env: VENICE_API_KEY/a\    retry_attempts: 3\n    retry_max_backoff: 10s\n    fallbacks:\n      - backend: openrouter\n        model: openai/gpt-4o-mini' /tmp/llm-proxy-e2e/config.yaml
           else
             echo "OPENROUTER_API_KEY not set; OpenRouter smoke step will be skipped"
           fi
