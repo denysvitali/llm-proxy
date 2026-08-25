@@ -2,11 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/backend/apodex"
 	"github.com/denysvitali/llm-proxy/internal/config"
 )
 
@@ -169,6 +172,63 @@ func TestResponsesClientOnAnthropicBackend(t *testing.T) {
 	}
 	if out.Usage.InputTokens != 3 || out.Usage.OutputTokens != 4 {
 		t.Errorf("usage = %+v, want 3/4", out.Usage)
+	}
+}
+
+func TestResponsesClientOnApodexUsesChatCompatibilityPath(t *testing.T) {
+	var upstreamPath string
+	var upstreamBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		upstreamBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chat-apodex",
+			"model":"apodex-1.1",
+			"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}
+		}`))
+	}))
+	defer upstream.Close()
+
+	client := apodex.New(upstream.URL, "test-token")
+	s := newTestServer(t, []backend.Backend{client}, config.BackendConfig{Type: "apodex"})
+	rec := postOpenAI(t, s, "/v1/responses", `{
+		"model":"apodex/apodex-1.1",
+		"instructions":"base instructions",
+		"input":[
+			{"type":"message","role":"user","content":"first"},
+			{"type":"reasoning","content":null,"encrypted_content":"opaque"},
+			{"type":"message","role":"developer","content":"developer rules"},
+			{"type":"message","role":"user","content":"latest"}
+		]
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if upstreamPath != "/chat/completions" {
+		t.Fatalf("upstream path = %q, want Chat compatibility endpoint", upstreamPath)
+	}
+	var forwarded struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(upstreamBody, &forwarded); err != nil {
+		t.Fatalf("decode upstream body: %v", err)
+	}
+	if len(forwarded.Messages) != 3 || forwarded.Messages[0].Role != "system" ||
+		forwarded.Messages[0].Content != "base instructions\n\ndeveloper rules" {
+		t.Fatalf("forwarded messages = %+v, want one leading merged prompt", forwarded.Messages)
+	}
+	if strings.Contains(string(upstreamBody), "opaque") ||
+		strings.Contains(string(upstreamBody), `"content":null`) {
+		t.Fatalf("opaque Responses reasoning reached Apodex Chat: %s", upstreamBody)
+	}
+	if !strings.Contains(rec.Body.String(), `"type":"message"`) ||
+		!strings.Contains(rec.Body.String(), `"text":"ok"`) {
+		t.Fatalf("translated Responses body = %s", rec.Body.String())
 	}
 }
 

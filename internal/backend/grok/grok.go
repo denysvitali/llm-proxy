@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 const defaultBaseURL = "https://cli-chat-proxy.grok.com/v1"
@@ -120,6 +121,11 @@ type namespaceTool struct {
 // list accepted by Grok. Child names are qualified on the Grok wire so the
 // namespace can be restored on response function_call items.
 func normalizeRequest(body []byte) ([]byte, []namespaceTool, string, error) {
+	normalized, err := translate.NormalizeResponsesRequest(body)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	body = normalized
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, nil, "", err

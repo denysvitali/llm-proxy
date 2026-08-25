@@ -1,8 +1,8 @@
 // Package apodex implements the Apodex backend (platform.apodex.ai). Apodex
-// serves all three shapes the proxy speaks natively — the Anthropic Messages
-// API at /messages, OpenAI Chat Completions at /chat/completions, and the
-// OpenAI Responses API at /responses — so every inbound request passes through
-// with the upstream key swapped in and no translation.
+// exposes Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses
+// endpoints. Responses requests are routed through Chat translation because
+// Apodex's Responses compatibility is not sufficient for Codex conversation
+// history and opaque reasoning state.
 package apodex
 
 import (
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 const (
@@ -62,7 +63,8 @@ func init() {
 	})
 }
 
-// Supports: Apodex serves all three APIs natively, so nothing is translated.
+// Supports reports the API shapes exposed by Apodex. SupportsModel refines
+// Responses support for normal server routing.
 func (c *Client) Supports(kind backend.Kind) bool {
 	switch kind {
 	case backend.KindAnthropic, backend.KindOpenAIChat, backend.KindOpenAIResponses:
@@ -70,6 +72,18 @@ func (c *Client) Supports(kind backend.Kind) bool {
 	default:
 		return false
 	}
+}
+
+// SupportsModel forces Responses clients through the proxy's Chat adapter.
+// Apodex's /responses endpoint rejects valid Codex requests when instructions
+// and prompt-role history coexist, and its opaque reasoning state cannot be
+// replayed reliably by Codex. The Chat adapter hoists prompt roles, drops
+// provider-specific reasoning history, and preserves namespaced tool calls.
+func (c *Client) SupportsModel(kind backend.Kind, _ string) bool {
+	if kind == backend.KindOpenAIResponses {
+		return false
+	}
+	return c.Supports(kind)
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
@@ -89,6 +103,13 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 
 	body := req.RawBody
+	if req.Kind == backend.KindOpenAIResponses {
+		normalized, err := translate.NormalizeResponsesRequest(body)
+		if err != nil {
+			return nil, fmt.Errorf("normalize Apodex Responses request: %w", err)
+		}
+		body = normalized
+	}
 	if req.Kind != backend.KindAnthropic {
 		body = withExplicitStream(body, req.Streaming)
 	}

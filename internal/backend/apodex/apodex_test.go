@@ -16,6 +16,7 @@ import (
 )
 
 var _ backend.Backend = (*Client)(nil)
+var _ backend.ModelWireOverrider = (*Client)(nil)
 
 func TestSupports(t *testing.T) {
 	c := New("", "tok")
@@ -30,6 +31,22 @@ func TestSupports(t *testing.T) {
 	} {
 		if got := c.Supports(tc.kind); got != tc.want {
 			t.Errorf("Supports(%q) = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+}
+
+func TestSupportsModelForcesResponsesThroughChatTranslation(t *testing.T) {
+	c := New("", "tok")
+	for _, test := range []struct {
+		kind backend.Kind
+		want bool
+	}{
+		{backend.KindAnthropic, true},
+		{backend.KindOpenAIChat, true},
+		{backend.KindOpenAIResponses, false},
+	} {
+		if got := c.SupportsModel(test.kind, "apodex-1.1"); got != test.want {
+			t.Errorf("SupportsModel(%q) = %v, want %v", test.kind, got, test.want)
 		}
 	}
 }
@@ -271,6 +288,67 @@ func TestSendLeavesAnthropicBodyUntouched(t *testing.T) {
 	_ = resp.Body.Close()
 	if string(got) != rawBody {
 		t.Errorf("upstream body = %q, want byte-for-byte %q", got, rawBody)
+	}
+}
+
+func TestSendNormalizesResponsesPromptRoles(t *testing.T) {
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	resp, err := c.Send(context.Background(), &backend.Request{
+		Kind:  backend.KindOpenAIResponses,
+		Model: "apodex-1.1",
+		RawBody: []byte(`{"model":"apodex-1.1","instructions":"base","input":[` +
+			`{"type":"message","role":"developer","content":"skills"},` +
+			`{"type":"message","role":"user","content":"hello"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	var request struct {
+		Instructions string `json:"instructions"`
+		Input        []struct {
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(got, &request); err != nil {
+		t.Fatalf("decode upstream body: %v", err)
+	}
+	if request.Instructions != "base\n\nskills" {
+		t.Errorf("instructions = %q", request.Instructions)
+	}
+	if len(request.Input) != 1 || request.Input[0].Role != "user" {
+		t.Errorf("upstream input = %+v, want only the user item", request.Input)
+	}
+}
+
+func TestSendPreservesResponsesClientTools(t *testing.T) {
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	resp, err := c.Send(context.Background(), &backend.Request{
+		Kind:    backend.KindOpenAIResponses,
+		Model:   "apodex-1.1",
+		RawBody: []byte(`{"model":"apodex-1.1","input":"hi","tools":[{"type":"function","name":"shell","parameters":{}}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	_ = resp.Body.Close()
+	if !strings.Contains(string(got), `"name":"shell"`) {
+		t.Errorf("client tool was removed from request: %s", got)
 	}
 }
 

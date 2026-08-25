@@ -21,7 +21,7 @@ dashboard; Grok has no upstream API-key setting.
 
 | Backend   | Upstream                          | Native APIs                              | Notes                                                        |
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
-| `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions, Responses API | Every shape is served natively, so nothing is translated. See [Apodex](#apodex) for the model tiers and their limits. |
+| `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
 | `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
@@ -34,9 +34,12 @@ response.
 
 ### Apodex
 
-[Apodex](https://platform.apodex.ai/docs) serves all three APIs the proxy
-speaks — `/v1/messages`, `/v1/chat/completions`, and `/v1/responses` — so every
-inbound shape passes through untranslated. Configure it like any other backend:
+[Apodex](https://platform.apodex.ai/docs) exposes all three APIs the proxy
+speaks. The proxy uses native `/v1/messages` and `/v1/chat/completions`, but
+routes Responses clients through Chat translation. Apodex's `/v1/responses`
+implementation rejects valid Codex prompt-role history and returns opaque
+reasoning state that Codex cannot reliably replay. Configure it like any other
+backend:
 
 ```yaml
 backends:
@@ -54,11 +57,10 @@ any model the account can reach. Two families are on offer:
 
 Two Apodex behaviours are worth knowing before pointing a client at it:
 
-- **Tools.** The core models take no tool definitions, and the deep-research
-  models run their own server-side tools rather than calling back to the
-  client (they take `mcp_servers` instead of `tools`). Agents that depend on
-  client-side tool execution — Claude Code and Codex both do — will not work
-  against Apodex; it suits one-shot and chat-style traffic.
+- **Tools.** `apodex-1.1` accepts Chat Completions function tools, which lets
+  Codex use client-side tools through the proxy's Responses translation. The
+  deep-research models instead run provider-side tools and take `mcp_servers`;
+  they are not substitutes for an interactive coding-agent tool loop.
 - **Streaming default.** Apodex defaults `stream` to `true` on the deep-research
   models, the opposite of OpenAI. The backend pins the field to whatever the
   inbound request asked for, so a body that omits `stream` still gets one JSON

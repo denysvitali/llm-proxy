@@ -75,6 +75,47 @@ func TestResponsesToChatRequest(t *testing.T) {
 	}
 }
 
+func TestResponsesToChatHoistsPromptHistoryAheadOfConversation(t *testing.T) {
+	in := []byte(`{
+		"model":"ignored",
+		"instructions":"base instructions",
+		"input":[
+			{"type":"message","role":"user","content":"first user"},
+			{"type":"reasoning","content":null,"encrypted_content":"opaque"},
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer rules"}]},
+			{"type":"message","role":"assistant","content":"prior answer"},
+			{"type":"message","role":"system","content":"system rules"},
+			{"type":"message","role":"user","content":"latest user"}
+		]
+	}`)
+	out, err := ResponsesToChat(in, "apodex-1.1")
+	if err != nil {
+		t.Fatalf("ResponsesToChat: %v", err)
+	}
+	var got openAIRequest
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode translated request: %v", err)
+	}
+
+	if len(got.Messages) != 4 {
+		t.Fatalf("messages = %d, want system plus three conversation messages", len(got.Messages))
+	}
+	if got.Messages[0].Role != "system" ||
+		got.Messages[0].Content != "base instructions\n\ndeveloper rules\n\nsystem rules" {
+		t.Fatalf("prompt message = %+v, want all prompt roles hoisted in order", got.Messages[0])
+	}
+	wantRoles := []string{"user", "assistant", "user"}
+	for index, wantRole := range wantRoles {
+		if got.Messages[index+1].Role != wantRole {
+			t.Errorf("message %d role = %q, want %q", index+1, got.Messages[index+1].Role, wantRole)
+		}
+	}
+	encoded := string(out)
+	if strings.Contains(encoded, "opaque") || strings.Contains(encoded, `"content":null`) {
+		t.Fatalf("provider-specific reasoning leaked into chat request: %s", encoded)
+	}
+}
+
 func TestResponsesToChatToolChoiceStrings(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

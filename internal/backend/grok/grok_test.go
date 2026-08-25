@@ -238,6 +238,20 @@ func TestFlattenNamespaceToolsLeavesOrdinaryRequestUnchanged(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequestRemovesNullReasoningContentWithoutTools(t *testing.T) {
+	input := []byte(`{"model":"grok-4.6","input":[{"type":"reasoning","encrypted_content":"opaque+/=","content":null},{"type":"message","role":"user","content":"continue"}]}`)
+	got, _, _, err := normalizeRequest(input)
+	if err != nil {
+		t.Fatalf("normalizeRequest: %v", err)
+	}
+	if strings.Contains(string(got), `"content":null`) {
+		t.Fatalf("null reasoning content remains: %s", got)
+	}
+	if !strings.Contains(string(got), `"encrypted_content":"opaque+/="`) {
+		t.Fatalf("encrypted reasoning was lost: %s", got)
+	}
+}
+
 func TestFlattenNamespaceToolsRemovesUnsupportedWebSearchFlag(t *testing.T) {
 	input := []byte(`{"model":"grok-4.6","tools":[{"type":"web_search","external_web_access":true}]}`)
 	got, _, _, err := normalizeRequest(input)
