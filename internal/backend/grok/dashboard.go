@@ -111,7 +111,7 @@ func (c *DashboardClient) get(ctx context.Context, endpoint, accessToken, userID
 	if err != nil {
 		return nil, fmt.Errorf("request account service: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read account service response: %w", err)

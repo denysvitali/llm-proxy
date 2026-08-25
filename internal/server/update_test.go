@@ -37,7 +37,7 @@ func TestUpdateHubNotifiesWebSocketClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
-	defer closeWebSocket(conn)
+	defer func() { _ = closeWebSocket(conn) }()
 
 	readCtx, cancelRead := context.WithTimeout(context.Background(), time.Second)
 	defer cancelRead()
