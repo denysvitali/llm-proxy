@@ -4,8 +4,10 @@
 package grok
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -68,7 +70,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if token == "" {
 		return nil, fmt.Errorf("grok account returned an empty access token")
 	}
-	body, err := flattenNamespaceTools(req.RawBody)
+	body, namespaces, promptCacheKey, err := normalizeRequest(req.RawBody)
 	if err != nil {
 		return nil, fmt.Errorf("normalize Grok request: %w", err)
 	}
@@ -78,8 +80,19 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+	httpReq.Header.Set("x-authenticateresponse", "authenticate-response")
 	httpReq.Header.Set("x-grok-client-version", ClientVersion)
+	httpReq.Header.Set("x-grok-client-identifier", "llm-proxy")
 	httpReq.Header.Set("x-grok-client-mode", "cli")
+	httpReq.Header.Set("x-grok-model-override", req.Model)
+	httpReq.Header.Set("x-grok-req-id", requestID())
+	if promptCacheKey != "" {
+		// Codex keeps prompt_cache_key stable for the lifetime of a thread.
+		// Grok's subscription proxy needs the corresponding affinity headers
+		// to decrypt opaque reasoning/compaction items on the next tool round.
+		httpReq.Header.Set("x-grok-conv-id", promptCacheKey)
+		httpReq.Header.Set("x-grok-session-id", promptCacheKey)
+	}
 	httpReq.Header.Set("User-Agent", "llm-proxy/"+ClientVersion)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
@@ -90,47 +103,79 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, fmt.Errorf("request to Grok failed: %w", err)
 	}
-	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+	bodyReader := io.ReadCloser(resp.Body)
+	if len(namespaces) > 0 {
+		bodyReader = restoreNamespaceCalls(resp.Body, namespaces, req.Streaming)
+	}
+	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: bodyReader}, nil
 }
 
-// flattenNamespaceTools adapts Codex's Responses extension for grouped tools
-// to the flat function-tool list accepted by Grok. Function calls still use
-// the nested tool's original name, which is how Codex dispatches the result.
-// Requests without namespaces remain byte-for-byte unchanged.
-func flattenNamespaceTools(body []byte) ([]byte, error) {
+type namespaceTool struct {
+	qualified string
+	namespace string
+	name      string
+}
+
+// normalizeRequest adapts Codex's grouped-tool extension to the flat function
+// list accepted by Grok. Child names are qualified on the Grok wire so the
+// namespace can be restored on response function_call items.
+func normalizeRequest(body []byte) ([]byte, []namespaceTool, string, error) {
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
-		return nil, err
+		return nil, nil, "", err
+	}
+	var promptCacheKey string
+	if raw := request["prompt_cache_key"]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &promptCacheKey)
 	}
 	var tools []json.RawMessage
 	if len(request["tools"]) == 0 {
-		return body, nil
+		return body, nil, promptCacheKey, nil
 	}
 	if err := json.Unmarshal(request["tools"], &tools); err != nil {
-		return nil, fmt.Errorf("decode tools: %w", err)
+		return nil, nil, "", fmt.Errorf("decode tools: %w", err)
 	}
 
 	changed := false
 	flattened := make([]json.RawMessage, 0, len(tools))
+	var namespaces []namespaceTool
 	for _, raw := range tools {
 		var header struct {
 			Type  string            `json:"type"`
+			Name  string            `json:"name"`
 			Tools []json.RawMessage `json:"tools"`
 		}
 		if err := json.Unmarshal(raw, &header); err != nil {
-			return nil, fmt.Errorf("decode tool: %w", err)
+			return nil, nil, "", fmt.Errorf("decode tool: %w", err)
 		}
 		if header.Type != "namespace" {
 			flattened = append(flattened, raw)
 			continue
 		}
 		changed = true
-		flattened = append(flattened, header.Tools...)
+		for _, childRaw := range header.Tools {
+			var child map[string]json.RawMessage
+			if err := json.Unmarshal(childRaw, &child); err != nil {
+				return nil, nil, "", fmt.Errorf("decode namespace child: %w", err)
+			}
+			var childName string
+			if err := json.Unmarshal(child["name"], &childName); err != nil || childName == "" {
+				return nil, nil, "", fmt.Errorf("namespace %q has a child without a valid name", header.Name)
+			}
+			qualified := qualifyToolName(header.Name, childName)
+			child["name"] = json.RawMessage(mustJSON(qualified))
+			encoded, err := json.Marshal(child)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			flattened = append(flattened, encoded)
+			namespaces = append(namespaces, namespaceTool{qualified: qualified, namespace: header.Name, name: childName})
+		}
 	}
 	for i, raw := range flattened {
 		var tool map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &tool); err != nil {
-			return nil, fmt.Errorf("decode flattened tool: %w", err)
+			return nil, nil, "", fmt.Errorf("decode flattened tool: %w", err)
 		}
 		// Codex adds this flag to web_search. Grok supports web_search itself,
 		// but rejects the OpenAI-only flag as an unknown argument.
@@ -138,21 +183,177 @@ func flattenNamespaceTools(body []byte) ([]byte, error) {
 			delete(tool, "external_web_access")
 			encoded, err := json.Marshal(tool)
 			if err != nil {
-				return nil, err
+				return nil, nil, "", err
 			}
 			flattened[i] = encoded
 			changed = true
 		}
 	}
 	if !changed {
-		return body, nil
+		return body, nil, promptCacheKey, nil
 	}
 	encodedTools, err := json.Marshal(flattened)
 	if err != nil {
-		return nil, err
+		return nil, nil, "", err
 	}
 	request["tools"] = encodedTools
-	return json.Marshal(request)
+	if rawInput := request["input"]; len(rawInput) > 0 {
+		var input any
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, nil, "", fmt.Errorf("decode input: %w", err)
+		}
+		if qualifyNamespaceValue(input) {
+			encodedInput, err := json.Marshal(input)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			request["input"] = encodedInput
+		}
+	}
+	encoded, err := json.Marshal(request)
+	return encoded, namespaces, promptCacheKey, err
+}
+
+func qualifyToolName(namespace, name string) string {
+	if strings.HasSuffix(namespace, "__") {
+		return namespace + name
+	}
+	return namespace + "__" + name
+}
+
+// qualifyNamespaceValue reverses response restoration when Codex sends a
+// namespaced function_call back as conversation input on the next tool round.
+func qualifyNamespaceValue(value any) bool {
+	changed := false
+	switch typed := value.(type) {
+	case map[string]any:
+		if typed["type"] == "function_call" {
+			name, nameOK := typed["name"].(string)
+			namespace, namespaceOK := typed["namespace"].(string)
+			if nameOK && namespaceOK && name != "" && namespace != "" {
+				typed["name"] = qualifyToolName(namespace, name)
+				delete(typed, "namespace")
+				changed = true
+			}
+		}
+		for _, child := range typed {
+			if qualifyNamespaceValue(child) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if qualifyNamespaceValue(child) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func mustJSON(value string) []byte {
+	encoded, _ := json.Marshal(value)
+	return encoded
+}
+
+func requestID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40
+	raw[8] = (raw[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		raw[0:4], raw[4:6], raw[6:8], raw[8:10], raw[10:16])
+}
+
+func restoreNamespaceCalls(upstream io.ReadCloser, tools []namespaceTool, streaming bool) io.ReadCloser {
+	reader, writer := io.Pipe()
+	go func() {
+		defer func() { _ = upstream.Close() }()
+		var err error
+		if streaming {
+			err = restoreNamespaceStream(writer, upstream, tools)
+		} else {
+			var data []byte
+			data, err = io.ReadAll(upstream)
+			if err == nil {
+				data = restoreNamespaceJSON(data, tools)
+				_, err = writer.Write(data)
+			}
+		}
+		_ = writer.CloseWithError(err)
+	}()
+	return reader
+}
+
+func restoreNamespaceStream(writer io.Writer, upstream io.Reader, tools []namespaceTool) error {
+	scanner := bufio.NewScanner(upstream)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if bytes.HasPrefix(line, []byte("data:")) {
+			prefixLen := len("data:")
+			for prefixLen < len(line) && (line[prefixLen] == ' ' || line[prefixLen] == '\t') {
+				prefixLen++
+			}
+			payload := line[prefixLen:]
+			if len(payload) > 0 && !bytes.Equal(payload, []byte("[DONE]")) {
+				line = append(append([]byte(nil), line[:prefixLen]...), restoreNamespaceJSON(payload, tools)...)
+			}
+		}
+		if _, err := writer.Write(append(line, '\n')); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
+func restoreNamespaceJSON(data []byte, tools []namespaceTool) []byte {
+	var value any
+	if json.Unmarshal(data, &value) != nil {
+		return data
+	}
+	byName := make(map[string]namespaceTool, len(tools))
+	for _, tool := range tools {
+		byName[tool.qualified] = tool
+	}
+	if !restoreNamespaceValue(value, byName) {
+		return data
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return data
+	}
+	return encoded
+}
+
+func restoreNamespaceValue(value any, tools map[string]namespaceTool) bool {
+	changed := false
+	switch typed := value.(type) {
+	case map[string]any:
+		if typed["type"] == "function_call" {
+			if name, ok := typed["name"].(string); ok {
+				if tool, found := tools[name]; found {
+					typed["name"] = tool.name
+					typed["namespace"] = tool.namespace
+					changed = true
+				}
+			}
+		}
+		for _, child := range typed {
+			if restoreNamespaceValue(child, tools) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if restoreNamespaceValue(child, tools) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // Models: the subscription endpoint has no public model catalog, so a static

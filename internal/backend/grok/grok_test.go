@@ -126,17 +126,18 @@ func TestSendHeadersAndBody(t *testing.T) {
 }
 
 func TestFlattenNamespaceTools(t *testing.T) {
-	input := []byte(`{"model":"grok-4.6","tools":[{"type":"function","name":"plain","parameters":{}},{"type":"namespace","name":"agents","tools":[{"type":"function","name":"spawn_agent","description":"spawn","parameters":{"type":"object"}},{"type":"function","name":"wait_agent","parameters":{}}]}],"stream":true}`)
-	got, err := flattenNamespaceTools(input)
+	input := []byte(`{"model":"grok-4.6","prompt_cache_key":"thread-1","input":[{"type":"reasoning","encrypted_content":"opaque+/="},{"type":"function_call","name":"spawn_agent","namespace":"agents","arguments":"{}"}],"tools":[{"type":"function","name":"plain","parameters":{}},{"type":"namespace","name":"agents","tools":[{"type":"function","name":"spawn_agent","description":"spawn","parameters":{"type":"object"}},{"type":"function","name":"wait_agent","parameters":{}}]}],"stream":true}`)
+	got, namespaces, promptCacheKey, err := normalizeRequest(input)
 	if err != nil {
-		t.Fatalf("flattenNamespaceTools: %v", err)
+		t.Fatalf("normalizeRequest: %v", err)
 	}
 	var request struct {
 		Tools []struct {
 			Type string `json:"type"`
 			Name string `json:"name"`
 		} `json:"tools"`
-		Stream bool `json:"stream"`
+		Stream bool             `json:"stream"`
+		Input  []map[string]any `json:"input"`
 	}
 	if err := json.Unmarshal(got, &request); err != nil {
 		t.Fatalf("decode result: %v", err)
@@ -144,7 +145,19 @@ func TestFlattenNamespaceTools(t *testing.T) {
 	if !request.Stream {
 		t.Error("unrelated request fields were lost")
 	}
-	want := []string{"plain", "spawn_agent", "wait_agent"}
+	if promptCacheKey != "thread-1" {
+		t.Fatalf("prompt cache key = %q", promptCacheKey)
+	}
+	if got := request.Input[0]["encrypted_content"]; got != "opaque+/=" {
+		t.Fatalf("opaque content changed: %v", got)
+	}
+	if got := request.Input[1]["name"]; got != "agents__spawn_agent" {
+		t.Fatalf("history function name = %v", got)
+	}
+	if _, remains := request.Input[1]["namespace"]; remains {
+		t.Fatalf("history namespace was not flattened: %+v", request.Input[1])
+	}
+	want := []string{"plain", "agents__spawn_agent", "agents__wait_agent"}
 	if len(request.Tools) != len(want) {
 		t.Fatalf("tools = %+v, want names %v", request.Tools, want)
 	}
@@ -153,13 +166,72 @@ func TestFlattenNamespaceTools(t *testing.T) {
 			t.Errorf("tool[%d] = %+v, want function %q", i, tool, want[i])
 		}
 	}
+	if len(namespaces) != 2 || namespaces[0].namespace != "agents" || namespaces[0].name != "spawn_agent" {
+		t.Fatalf("namespace mapping = %+v", namespaces)
+	}
+}
+
+func TestSendRestoresNamespaceAndSetsAffinityHeaders(t *testing.T) {
+	var headers []http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers = append(headers, r.Header.Clone())
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_item.added\n"+
+			`data: {"type":"response.output_item.added","item":{"type":"function_call","name":"mcp__happy__todo_add","arguments":"{}"},"opaque":"keep+/="}`+"\n\n"+
+			`data: {"type":"response.completed","response":{"status":"completed"}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, staticToken("test-token"))
+	request := &backend.Request{
+		Kind:      backend.KindOpenAIResponses,
+		Model:     "grok-4.6",
+		Streaming: true,
+		RawBody:   []byte(`{"model":"grok-4.6","prompt_cache_key":"thread-stable","stream":true,"input":"hi","tools":[{"type":"namespace","name":"mcp__happy","tools":[{"type":"function","name":"todo_add","parameters":{}}]}]}`),
+	}
+	for range 2 {
+		resp, err := client.Send(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("read response: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"name":"todo_add"`) || !strings.Contains(text, `"namespace":"mcp__happy"`) {
+			t.Fatalf("namespace was not restored: %s", text)
+		}
+		if !strings.Contains(text, `"opaque":"keep+/="`) {
+			t.Fatalf("opaque value changed: %s", text)
+		}
+	}
+
+	if len(headers) != 2 {
+		t.Fatalf("requests = %d", len(headers))
+	}
+	for _, header := range headers {
+		if header.Get("x-grok-conv-id") != "thread-stable" || header.Get("x-grok-session-id") != "thread-stable" {
+			t.Fatalf("missing stable affinity headers: %+v", header)
+		}
+		if header.Get("x-grok-model-override") != "grok-4.6" {
+			t.Fatalf("model override = %q", header.Get("x-grok-model-override"))
+		}
+		if header.Get("x-grok-req-id") == "" {
+			t.Fatal("request id is empty")
+		}
+	}
+	if headers[0].Get("x-grok-req-id") == headers[1].Get("x-grok-req-id") {
+		t.Fatal("request id must be fresh for each HTTP attempt")
+	}
 }
 
 func TestFlattenNamespaceToolsLeavesOrdinaryRequestUnchanged(t *testing.T) {
 	input := []byte(`{ "model": "grok-4.6", "tools": [{"type":"function","name":"shell"}] }`)
-	got, err := flattenNamespaceTools(input)
+	got, _, _, err := normalizeRequest(input)
 	if err != nil {
-		t.Fatalf("flattenNamespaceTools: %v", err)
+		t.Fatalf("normalizeRequest: %v", err)
 	}
 	if !bytes.Equal(got, input) {
 		t.Errorf("ordinary request changed: %q", got)
@@ -168,9 +240,9 @@ func TestFlattenNamespaceToolsLeavesOrdinaryRequestUnchanged(t *testing.T) {
 
 func TestFlattenNamespaceToolsRemovesUnsupportedWebSearchFlag(t *testing.T) {
 	input := []byte(`{"model":"grok-4.6","tools":[{"type":"web_search","external_web_access":true}]}`)
-	got, err := flattenNamespaceTools(input)
+	got, _, _, err := normalizeRequest(input)
 	if err != nil {
-		t.Fatalf("flattenNamespaceTools: %v", err)
+		t.Fatalf("normalizeRequest: %v", err)
 	}
 	if strings.Contains(string(got), "external_web_access") {
 		t.Fatalf("unsupported flag remains in request: %s", got)
