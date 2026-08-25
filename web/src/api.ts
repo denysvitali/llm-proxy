@@ -75,11 +75,37 @@ export interface Overview {
   backends: OverviewBackend[]
   routes: OverviewRoute[]
   stats?: ModelStat[]
+  grokUsage: GrokUsageMetadata
   hasDefault: boolean
   defaultRoute: OverviewRoute
   exampleModel: string
   claudeSnippet: string
   codexSnippet: string
+}
+
+export interface GrokUsageMetadata {
+  configured: boolean
+  available: boolean
+  error?: string
+}
+
+export interface GrokUsage {
+  available: boolean
+  email?: string
+  name?: string
+  subscriptionTier?: string
+  percentUsed: number
+  hasPercent: boolean
+  limitCents?: number
+  usedCents?: number
+  remainingCents?: number
+  onDemandUsedCents?: number
+  onDemandCapCents?: number
+  prepaidCents?: number
+  periodType?: string
+  periodStart?: string
+  periodEnd?: string
+  fetchedAt: string
 }
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -98,4 +124,8 @@ export function fetchStatsSeries(range: string): Promise<StatsSeriesResponse> {
 
 export function fetchOverview(): Promise<Overview> {
   return getJSON<Overview>('/api/overview')
+}
+
+export function fetchGrokUsage(): Promise<GrokUsage> {
+  return getJSON<GrokUsage>('/api/grok/usage')
 }

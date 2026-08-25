@@ -1,11 +1,16 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"sort"
+	"strings"
+	"time"
+
+	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
 )
 
 // Build identity shown by the overview API and SPA.
@@ -27,6 +32,12 @@ type overviewBackend struct {
 	CatalogOK      bool     `json:"catalogOK"`
 }
 
+type grokUsageMetadata struct {
+	Configured bool   `json:"configured"`
+	Available  bool   `json:"available"`
+	Error      string `json:"error,omitempty"`
+}
+
 // overviewRoute is one configured route. An empty Upstream means the requested
 // model name is forwarded unchanged.
 type overviewRoute struct {
@@ -44,6 +55,7 @@ type overviewPage struct {
 	Backends      []overviewBackend `json:"backends"`
 	Routes        []overviewRoute   `json:"routes"`
 	Stats         []ModelStat       `json:"stats,omitempty"`
+	GrokUsage     grokUsageMetadata `json:"grokUsage"`
 	HasDefault    bool              `json:"hasDefault"`
 	DefaultRoute  overviewRoute     `json:"defaultRoute"`
 	ExampleModel  string            `json:"exampleModel"`
@@ -93,6 +105,8 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 		}
 		page.Backends = append(page.Backends, entry)
 	}
+
+	page.GrokUsage = s.grokUsageMetadata(r)
 	page.ExampleModel = exampleModel(page.Backends)
 
 	for _, name := range s.sortedRoutes() {
@@ -123,6 +137,96 @@ env_key = "LLM_PROXY_API_KEY"
 # launch: codex --config model_provider=%s --model %s`,
 		proxyName, proxyName, r.Host, proxyName, page.ExampleModel)
 	return page
+}
+
+func (s *Server) grokUsageMetadata(r *http.Request) grokUsageMetadata {
+	configured := false
+	for _, bc := range s.cfg.Backends {
+		if bc.Type != grokUsageBackendName || !bc.IsEnabled() {
+			continue
+		}
+		configured = true
+		break
+	}
+	if !configured {
+		return grokUsageMetadata{}
+	}
+	if s.grokAuth == nil || !s.grokAuth.HasSession() {
+		return grokUsageMetadata{Configured: true}
+	}
+	usage, err := s.grokUsage(r.Context(), false)
+	if err != nil {
+		return grokUsageMetadata{Configured: true, Available: false, Error: sanitizeUsageError(err)}
+	}
+	return grokUsageMetadata{Configured: true, Available: usage.Available}
+}
+
+func (s *Server) grokUsage(ctx context.Context, refresh bool) (grokbackend.UsageView, error) {
+	if s.grokAuth == nil {
+		return grokbackend.UsageView{}, errUsageUnavailable
+	}
+	if !refresh {
+		if usage, ok := s.grokUsageSnapshot(); ok {
+			return usage, nil
+		}
+	}
+	s.grokUsageMu.Lock()
+	if !refresh {
+		if usage, ok := s.grokUsageSnapshotLocked(); ok {
+			s.grokUsageMu.Unlock()
+			return usage, nil
+		}
+	}
+	baseURL := s.grokUsageBaseURL()
+	usage, err := s.grokAuth.Usage(ctx, baseURL)
+	if err != nil {
+		s.grokUsageMu.Unlock()
+		return grokbackend.UsageView{}, err
+	}
+	view := grokbackend.NewUsageView(usage, time.Now())
+	s.grokUsageValue = &view
+	s.grokUsageMu.Unlock()
+	return view, nil
+}
+
+func (s *Server) grokUsageSnapshot() (grokbackend.UsageView, bool) {
+	s.grokUsageMu.Lock()
+	defer s.grokUsageMu.Unlock()
+	return s.grokUsageSnapshotLocked()
+}
+
+func (s *Server) grokUsageSnapshotLocked() (grokbackend.UsageView, bool) {
+	if s.grokUsageValue == nil || time.Since(s.grokUsageValue.FetchedAt) >= grokUsageTTL {
+		return grokbackend.UsageView{}, false
+	}
+	return *s.grokUsageValue, true
+}
+
+func (s *Server) grokUsageBaseURL() string {
+	for _, backendConfig := range s.cfg.Backends {
+		if backendConfig.Type != grokUsageBackendName {
+			continue
+		}
+		if backendConfig.BaseURL != "" {
+			return strings.TrimRight(backendConfig.BaseURL, "/")
+		}
+	}
+	return ""
+}
+
+func sanitizeUsageError(err error) string {
+	message := err.Error()
+	if idx := strings.Index(message, ": {"); idx >= 0 {
+		message = message[:idx]
+	}
+	if idx := strings.Index(message, " body="); idx >= 0 {
+		message = message[:idx]
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "Usage information is temporarily unavailable."
+	}
+	return message
 }
 
 // backendCatalogForOverview lists one backend's models, sorted. A configured

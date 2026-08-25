@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import {
   Box,
+  Alert,
   Badge,
   Card,
   Code,
+  Divider,
   Group,
   Loader,
+  Progress,
   Paper,
   ScrollArea,
   SimpleGrid,
@@ -18,6 +21,7 @@ import {
   IconActivity,
   IconAlertTriangle,
   IconBolt,
+  IconCoin,
   IconCoins,
   IconShieldCheck,
   IconTool,
@@ -25,9 +29,10 @@ import {
 import { BarChart, LineChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { fetchOverview, fetchStats, fetchStatsSeries } from '../api'
+import type { UseQueryResult } from '@tanstack/react-query'
+import { fetchGrokUsage, fetchOverview, fetchStats, fetchStatsSeries } from '../api'
 import { useLiveStatsUpdates } from '../useLiveUpdates'
-import type { ModelStat, SeriesPoint } from '../api'
+import type { GrokUsage, ModelStat, SeriesPoint } from '../api'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
 import { SegmentedControl } from '@mantine/core'
@@ -40,6 +45,14 @@ export default function OverviewPage() {
   const liveConnected = useLiveStatsUpdates()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
   const ovQ = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const grokUsageEnabled = ovQ.data?.grokUsage.configured ?? false
+  const grokUsageQ = useQuery({
+    queryKey: ['grok-usage'],
+    queryFn: fetchGrokUsage,
+    enabled: grokUsageEnabled,
+    refetchInterval: 60_000,
+    retry: 1,
+  })
   const [range, setRange] = useState('24h')
   const seriesQ = useQuery({
     queryKey: ['stats-series', range],
@@ -158,6 +171,8 @@ export default function OverviewPage() {
             </SimpleGrid>
           )}
         </Card>
+
+        {grokUsageEnabled && <GrokUsageCard query={grokUsageQ} />}
 
         {statsQ.isPending ? (
           <Group justify="center" py="xl">
@@ -305,6 +320,99 @@ export default function OverviewPage() {
       </Stack>
     </Fade>
   )
+}
+
+function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsage, Error> }) {
+  const usage = query.data
+  const error = query.error
+  const percent = usage?.hasPercent ? Math.max(0, Math.min(100, usage.percentUsed)) : null
+  const color = percent === null ? 'blue' : percent >= 90 ? 'red' : percent >= 70 ? 'yellow' : 'teal'
+
+  return (
+    <Card withBorder radius="lg" p="md">
+      <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm" mb={usage?.hasPercent ? 10 : 0}>
+        <div>
+          <Title order={5}>Grok subscription</Title>
+          <Text size="xs" c="dimmed">
+            {usage?.subscriptionTier || 'xAI coding subscription'}
+            {usage?.email ? ` · ${usage.email}` : ''}
+          </Text>
+        </div>
+        {query.isFetching ? <Loader size="xs" /> : null}
+      </Group>
+
+      {query.isPending ? (
+        <Group justify="center" py="md"><Loader size="sm" /></Group>
+      ) : error ? (
+        <Alert color="red" variant="light" title="Usage unavailable">
+          {sanitizeGrokError(error.message)}
+        </Alert>
+      ) : !usage?.hasPercent ? (
+        <Text c="dimmed">No billing data is available for this account.</Text>
+      ) : (
+        <>
+          <Group justify="space-between" align="baseline" mb={6}>
+            <Text fz={28} fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {usage.percentUsed.toFixed(1)}%
+            </Text>
+            <Text size="sm" c="dimmed">used this period</Text>
+          </Group>
+          <Progress value={percent ?? 0} color={color} size="lg" radius="sm" aria-label="Grok subscription used" />
+          <Group justify="space-between" mt={6}>
+            <Text size="xs" c="dimmed">{formatPeriod(usage.periodStart, usage.periodEnd)}</Text>
+            <Text size="xs" c="dimmed">Updated {new Date(usage.fetchedAt).toLocaleTimeString('en-US', { hour12: false })}</Text>
+          </Group>
+          <Divider my="md" />
+          <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+            <UsageMoney label="Included limit" cents={usage.limitCents} />
+            <UsageMoney label="Used" cents={usage.usedCents} />
+            <UsageMoney label="Remaining" cents={usage.remainingCents} />
+            <UsageMoney label="Prepaid" cents={usage.prepaidCents} />
+          </SimpleGrid>
+          {(usage.onDemandUsedCents != null || usage.onDemandCapCents != null) && (
+            <Group gap={6} mt="sm">
+              <IconCoin size={15} stroke={1.8} />
+              <Text size="xs" c="dimmed">
+                Extra usage {formatMoney(usage.onDemandUsedCents)}
+                {usage.onDemandCapCents != null ? ` of ${formatMoney(usage.onDemandCapCents)}` : ''}
+              </Text>
+            </Group>
+          )}
+        </>
+      )}
+    </Card>
+  )
+}
+
+function UsageMoney({ label, cents }: { label: string; cents?: number }) {
+  return (
+    <div>
+      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{label}</Text>
+      <Text fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(cents)}</Text>
+    </div>
+  )
+}
+
+function formatMoney(cents?: number) {
+  if (cents == null || !Number.isFinite(cents)) return '—'
+  return (Math.abs(cents) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+}
+
+function formatPeriod(start?: string, end?: string) {
+  if (!start && !end) return 'Current period'
+  const startDate = start ? new Date(start) : undefined
+  const endDate = end ? new Date(end) : undefined
+  const validStart = startDate && !Number.isNaN(startDate.getTime())
+  const validEnd = endDate && !Number.isNaN(endDate.getTime())
+  if (validStart && validEnd) return `${startDate!.toLocaleDateString()} – ${endDate!.toLocaleDateString()}`
+  if (validEnd) return `Resets ${endDate!.toLocaleString()}`
+  if (validStart) return `Started ${startDate!.toLocaleDateString()}`
+  return 'Current period'
+}
+
+function sanitizeGrokError(message: string) {
+  const decoded = message.startsWith('/api/grok/usage: ') ? message.slice('/api/grok/usage: '.length) : message
+  return decoded || 'Usage information is temporarily unavailable.'
 }
 
 interface TimeSeriesEntry {

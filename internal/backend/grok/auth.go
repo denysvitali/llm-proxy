@@ -102,11 +102,13 @@ func (s *Store) Clear() error {
 
 // Manager loads, imports, refreshes, and stores the xAI account session.
 type Manager struct {
-	Store      *Store
-	HTTPClient *http.Client
-	LegacyPath string
-	GrokPath   string
-	mu         sync.Mutex
+	Store       *Store
+	HTTPClient  *http.Client
+	LegacyPath  string
+	GrokPath    string
+	dashboards  map[string]*DashboardClient
+	dashboardMu sync.Mutex
+	mu          sync.Mutex
 }
 
 func NewManager(path string) *Manager {
@@ -119,6 +121,7 @@ func NewManager(path string) *Manager {
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 		LegacyPath: filepath.Join(home, ".config", "grok-subscription-client", "auth.json"),
 		GrokPath:   filepath.Join(home, ".grok", "auth.json"),
+		dashboards: make(map[string]*DashboardClient),
 	}
 }
 
@@ -225,6 +228,59 @@ func (m *Manager) client() *http.Client {
 		return m.HTTPClient
 	}
 	return &http.Client{Timeout: 30 * time.Second}
+}
+
+// Dashboard returns a billing client pinned to a base URL. Tests use this to
+// point xAI account calls at a local server.
+func (m *Manager) Dashboard(baseURL string) *DashboardClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	m.dashboardMu.Lock()
+	defer m.dashboardMu.Unlock()
+	if client, ok := m.dashboards[baseURL]; ok {
+		return client
+	}
+	if m.dashboards == nil {
+		m.dashboards = make(map[string]*DashboardClient)
+	}
+	client := NewDashboardClient(baseURL, m.HTTPClient)
+	m.dashboards[baseURL] = client
+	return client
+}
+
+// Usage fetches account identity and current credit usage. It refreshes the
+// account token when required and returns a generic error for dashboard API
+// failures; no token material is included.
+func (m *Manager) Usage(ctx context.Context, baseURL string) (Usage, error) {
+	accessToken, err := m.AccessToken(ctx)
+	if err != nil {
+		return Usage{}, err
+	}
+	dashboard := m.Dashboard(baseURL)
+	account, accountErr := dashboard.Account(ctx, accessToken)
+	if accountErr != nil || account.UserID == "" {
+		if accountErr != nil && !errors.Is(accountErr, context.Canceled) && !errors.Is(accountErr, context.DeadlineExceeded) {
+			m.mu.Lock()
+			token, loadErr := m.Store.Load()
+			m.mu.Unlock()
+			if loadErr == nil && token != nil {
+				if parsed, parseErr := AccountFromToken(token.AccessToken); parseErr == nil && parsed.UserID != "" {
+					account = parsed
+					accountErr = nil
+				}
+			}
+		}
+		if accountErr != nil {
+			return Usage{}, accountErr
+		}
+		if account.UserID == "" {
+			return Usage{}, errors.New("account service did not return a user ID")
+		}
+	}
+	billing, err := dashboard.Billing(ctx, accessToken, account.UserID)
+	if err != nil {
+		return Usage{}, err
+	}
+	return Usage{Account: account, Billing: billing}, nil
 }
 
 type Discovery struct {

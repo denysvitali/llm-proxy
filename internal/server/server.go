@@ -23,17 +23,24 @@ import (
 // Server wires configuration, authentication, and backends into the proxy
 // HTTP handler. Safe for concurrent use.
 type Server struct {
-	cfg      *config.Config
-	log      logrus.FieldLogger
-	auth     *auth.Store // nil disables client authentication
-	backends []backend.Backend
-	byName   map[string]backend.Backend
-	updates  *updateHub
-	metrics  *Metrics
-	stats    *Stats
-	grokAuth *grokbackend.Manager
-	catalogs catalogCache
+	cfg            *config.Config
+	log            logrus.FieldLogger
+	auth           *auth.Store // nil disables client authentication
+	backends       []backend.Backend
+	byName         map[string]backend.Backend
+	updates        *updateHub
+	metrics        *Metrics
+	stats          *Stats
+	grokAuth       *grokbackend.Manager
+	catalogs       catalogCache
+	grokUsageMu    sync.Mutex
+	grokUsageValue *grokbackend.UsageView
 }
+
+const (
+	grokUsageBackendName = "grok"
+	grokUsageTTL         = time.Minute
+)
 
 // New builds a Server. backends must already be constructed from cfg entries
 // in config order; auth may be nil for unauthenticated loopback deployments.
@@ -88,6 +95,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("GET /api/stats", s.handleStatsSeries)
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
+	mux.HandleFunc("GET /api/grok/usage", s.handleGrokUsage)
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
 	mux.HandleFunc("GET /login", s.grokLoginPage)
 	mux.HandleFunc("POST /login", s.grokLogin)
