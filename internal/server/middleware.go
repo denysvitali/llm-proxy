@@ -11,30 +11,40 @@ import (
 
 // statusRecorder captures the response status for logging and metrics.
 type statusRecorder struct {
-	http.ResponseWriter
-	status int
-	bytes  int64
+	delegate http.ResponseWriter
+	status   int
+	bytes    int64
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
-	r.ResponseWriter.WriteHeader(code)
+	r.delegate.WriteHeader(code)
 }
 
 func (r *statusRecorder) Write(b []byte) (int, error) {
 	if r.status == 0 {
 		r.status = http.StatusOK
 	}
-	n, err := r.ResponseWriter.Write(b)
+	n, err := r.delegate.Write(b)
 	r.bytes += int64(n)
 	return n, err
 }
 
+func (r *statusRecorder) Header() http.Header {
+	return r.delegate.Header()
+}
+
 // Flush promotes streaming so SSE handlers flush through the wrapper.
 func (r *statusRecorder) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+	if f, ok := r.delegate.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Unwrap exposes the original ResponseWriter so connection-upgrade handlers can
+// reach its Hijacker through wrapped middleware.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.delegate
 }
 
 // withMiddleware wraps the mux with panic recovery, request IDs, access
@@ -44,7 +54,7 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		requestID := newRequestID()
 		w.Header().Set("X-Request-Id", requestID)
-		rec := &statusRecorder{ResponseWriter: w}
+		rec := &statusRecorder{delegate: w}
 		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID))
 
 		defer func() {
