@@ -169,7 +169,7 @@ func TestModelsHTTPErrors(t *testing.T) {
 	}
 
 	badJSONServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "{bad")
+		_, _ = fmt.Fprint(w, "{bad")
 	}))
 	defer badJSONServer.Close()
 	_, err = New(badJSONServer.URL, "secret").Models(context.Background())
