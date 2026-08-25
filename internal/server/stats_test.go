@@ -259,6 +259,7 @@ func (b *slowOnceBackend) Send(ctx context.Context, req *backend.Request) (*back
 }
 
 func TestStatsRecordsUpstreamFailureAndTransportError(t *testing.T) {
+	zeroRetryBackoff(t)
 	fb := &msgFakeBackend{
 		supported: map[backend.Kind]bool{backend.KindAnthropic: true},
 		status:    http.StatusBadGateway,
@@ -272,11 +273,10 @@ func TestStatsRecordsUpstreamFailureAndTransportError(t *testing.T) {
 
 	stats := getStatsModels(t, s)
 	row := stats[0]
-	// Both requests fail transiently, so each records two attempts: the
-	// discarded connection-phase try and the final one that reached the
-	// client. Retried attempts count as their own upstream requests so the
-	// uptime denominator stays honest.
-	if row.Requests != 4 || row.Successes != 0 || row.Uptime != 0 {
+	// Both requests fail transiently, so each records the full bounded retry
+	// budget plus its final surfaced attempt. Retried attempts count as their
+	// own upstream requests so the uptime denominator stays honest.
+	if row.Requests != 2*(maxAlwaysRetries+1) || row.Successes != 0 || row.Uptime != 0 {
 		t.Fatalf("availability = %d/%d uptime %f", row.Successes, row.Requests, row.Uptime)
 	}
 }

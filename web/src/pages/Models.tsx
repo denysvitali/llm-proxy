@@ -4,11 +4,11 @@ import {
   Box,
   Card,
   Code,
-  Divider,
   Drawer,
   Group,
   Loader,
   Paper,
+  Progress,
   ScrollArea,
   Select,
   SegmentedControl,
@@ -399,19 +399,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function StatRow({ label, value }: { label: string; value: string }) {
-  return (
-    <Group justify="space-between" py={3} wrap="nowrap">
-      <Text size="sm" c="dimmed">
-        {label}
-      </Text>
-      <Text size="sm" fw={600} style={{ fontVariantNumeric: 'tabular-nums' }}>
-        {value}
-      </Text>
-    </Group>
-  )
-}
-
 function EmptyState({
   icon,
   title,
@@ -454,13 +441,17 @@ function ModelDetail({
   // TTFT and E2E share one time scale so their bar lengths are directly
   // comparable; throughput keeps its own scale (different unit).
   const latMax = Math.max(stat.ttft_seconds.p99, stat.e2e_seconds.p99)
+  const successRate = stat.requests > 0 ? stat.successes / stat.requests : 0
 
   return (
-    <Stack gap="lg">
-      <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
-        <Text size="sm" fw={600}>History</Text>
+    <Stack gap={18}>
+      <Group justify="space-between" align="center" wrap="nowrap" gap="sm">
+        <Text size="xs" tt="uppercase" fw={700} c="dimmed" style={{ letterSpacing: '0.04em' }}>
+          Time range
+        </Text>
         <SegmentedControl
-          size="compact-xs"
+          size="xs"
+          radius="sm"
           value={range}
           onChange={onRangeChange}
           data={[
@@ -471,41 +462,55 @@ function ModelDetail({
           ]}
         />
       </Group>
-      <HistoryLineChart
-        title="Latency"
-        description="Median first byte and full response"
-        data={historyData([series?.ttft_p50, series?.e2e_p50])}
-        series={[
-          { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
-          { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
-        ]}
-      />
-      <HistoryLineChart
-        title="Throughput"
-        description="Median output rate"
-        data={historyData([series?.throughput_p50])}
-        series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
-      />
-      <HistoryBarChart
-        title="Requests"
-        description="Successful requests per interval"
-        points={series?.requests ?? []}
-      />
-      <HistoryBarChart
-        title="Tool calls"
-        description="Observed tool calls per interval"
-        points={series?.tool_calls ?? []}
-      />
-      <HistoryLineChart
-        title="Token volume"
-        description="Input and output tokens per interval"
-        data={historyData([series?.tokens_in, series?.tokens_out])}
-        series={[
-          { name: 'series0', label: 'Input', formatter: historyFormatters.count },
-          { name: 'series1', label: 'Output', formatter: historyFormatters.count },
-        ]}
-      />
-      <Divider />
+      <Paper withBorder radius="lg" p="md">
+        <SimpleGrid cols={{ base: 2, xs: 4 }} spacing="md">
+          <DetailStat label="Requests" value={fmtInt(stat.requests)} hint={`${fmtPct(successRate)} succeeded`} />
+          <DetailStat label="Latency p50" value={fmtSec(stat.e2e_seconds.p50)} hint={`TTFT ${fmtSec(stat.ttft_seconds.p50)}`} />
+          <DetailStat label="Throughput" value={fmtTps(stat.throughput_tps.p50)} hint={`p90 ${fmtTps(stat.throughput_tps.p90)}`} />
+          <DetailStat label="Tool errors" value={fmtPct(stat.tool_error_rate)} hint={`${fmtInt(stat.tool_errors)} calls`} />
+        </SimpleGrid>
+      </Paper>
+
+      <DetailSection title="Performance history">
+        <HistoryLineChart
+          title="Latency"
+          description="Median first byte and full response"
+          data={historyData([series?.ttft_p50, series?.e2e_p50])}
+          series={[
+            { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
+            { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
+          ]}
+        />
+        <HistoryLineChart
+          title="Throughput"
+          description="Median output rate"
+          data={historyData([series?.throughput_p50])}
+          series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
+        />
+      </DetailSection>
+
+      <DetailSection title="Traffic">
+        <HistoryBarChart
+          title="Successful requests"
+          description="Count per interval"
+          points={series?.requests ?? []}
+        />
+        <HistoryBarChart
+          title="Tool calls"
+          description="Observed calls per interval"
+          points={series?.tool_calls ?? []}
+        />
+        <HistoryLineChart
+          title="Token volume"
+          description="Input and output tokens per interval"
+          data={historyData([series?.tokens_in, series?.tokens_out])}
+          series={[
+            { name: 'series0', label: 'Input', formatter: historyFormatters.count },
+            { name: 'series1', label: 'Output', formatter: historyFormatters.count },
+          ]}
+        />
+      </DetailSection>
+
       <Section title="Latency">
         <Text size="xs" fw={600} c="dimmed" mb={4}>
           Time to first token
@@ -519,34 +524,46 @@ function ModelDetail({
           Both share one time scale — bar lengths compare directly.
         </Text>
       </Section>
-      <Divider />
       <Section title="Throughput (tokens/sec)">
         <PercentileBars values={stat.throughput_tps} unit="tok/s" />
       </Section>
-      <Divider />
       <Section
         title={`Tokens · ${fmtInt(totalTok)} total · cache hit ${fmtPct(stat.cache_rate)}`}
       >
         <TokenMixBar segments={segs} height={20} />
         <TokenLegend segments={segs} showPercent />
       </Section>
-      <Divider />
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-        <Paper withBorder radius="md" p="sm">
-          <Section title="Requests">
-            <StatRow label="Total" value={fmtInt(stat.requests)} />
-            <StatRow label="Succeeded" value={fmtInt(stat.successes)} />
-            <StatRow label="Failed" value={fmtInt(stat.requests - stat.successes)} />
-          </Section>
-        </Paper>
-        <Paper withBorder radius="md" p="sm">
-          <Section title="Tool calls">
-            <StatRow label="Calls" value={fmtInt(stat.tool_calls)} />
-            <StatRow label="Errors" value={fmtInt(stat.tool_errors)} />
-            <StatRow label="Error rate" value={fmtPct(stat.tool_error_rate)} />
-          </Section>
-        </Paper>
-      </SimpleGrid>
+      <DetailSection title="Reliability">
+        <DetailStat label="Success rate" value={fmtPct(successRate)} />
+        <Progress value={successRate * 100} radius="sm" size="sm" color={successRate >= 0.99 ? 'teal' : successRate >= 0.9 ? 'yellow' : 'red'} />
+        <DetailStat label="Successful" value={fmtInt(stat.successes)} />
+        <DetailStat label="Failed" value={fmtInt(stat.requests - stat.successes)} />
+      </DetailSection>
     </Stack>
+  )
+}
+
+function DetailStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <Box>
+      <Text size="xs" c="dimmed" fw={600}>{label}</Text>
+      <Text fz={20} fw={700} lh={1.15} mt={2} style={{ fontVariantNumeric: 'tabular-nums' }}>
+        {value}
+      </Text>
+      {hint && (
+        <Text size="xs" c="dimmed" mt={1}>{hint}</Text>
+      )}
+    </Box>
+  )
+}
+
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Paper withBorder radius="lg" p="md">
+      <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb="md" style={{ letterSpacing: '0.04em' }}>
+        {title}
+      </Text>
+      <Stack gap="lg">{children}</Stack>
+    </Paper>
   )
 }

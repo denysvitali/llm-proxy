@@ -430,6 +430,7 @@ func TestMessagesUpstreamErrorRelay(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			zeroRetryBackoff(t)
 			fb := &msgFakeBackend{
 				supported:   map[backend.Kind]bool{backend.KindAnthropic: true},
 				status:      tc.status,

@@ -40,6 +40,16 @@ func newScripted(kind backend.Kind, steps ...step) *scriptedBackend {
 	}
 }
 
+// persistentRetrySteps queues maxAlwaysRetries failures followed by a final
+// successful attempt.
+func persistentRetrySteps(status int, body string, final step) []step {
+	steps := make([]step, 0, maxAlwaysRetries+1)
+	for range maxAlwaysRetries {
+		steps = append(steps, step{resp: unavailableResponse(status, body)})
+	}
+	return append(steps, final)
+}
+
 func (b *scriptedBackend) Name() string { return "fake" }
 
 func (b *scriptedBackend) Models(context.Context) ([]string, error) {
@@ -105,6 +115,15 @@ func outcomeDelta(s *Server, phase, outcome string) func() float64 {
 	return func() float64 {
 		return testutil.ToFloat64(s.metrics.retryOutcomes.WithLabelValues(phase, outcome)) - before
 	}
+}
+
+// zeroRetryBackoff disables exponential sleeps so persistent-retry coverage
+// can exercise the full attempt budget without slowing the suite.
+func zeroRetryBackoff(t *testing.T) {
+	t.Helper()
+	original := testRetryDelayScale
+	testRetryDelayScale = 0
+	t.Cleanup(func() { testRetryDelayScale = original })
 }
 
 const anthropicStreamRequest = `{"model":"m1","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
@@ -332,18 +351,17 @@ func TestMessagesRetriesConnectPhase(t *testing.T) {
 	}
 }
 
-// TestResponsesRetriesUnprocessableEntity covers providers that use 422 as a
-// transient overload signal. Codex otherwise treats that status as fatal even
-// though no response bytes have been forwarded yet.
-func TestResponsesRetriesUnprocessableEntity(t *testing.T) {
+// TestResponsesAlwaysRetriesUnprocessableEntity covers providers that use 422
+// as a persistent overload signal. Codex otherwise treats that status as fatal
+// even though no response bytes have been forwarded yet.
+func TestResponsesAlwaysRetriesUnprocessableEntity(t *testing.T) {
+	zeroRetryBackoff(t)
 	upstream := newScripted(backend.KindOpenAIResponses,
-		step{resp: &backend.Response{
-			Status: http.StatusUnprocessableEntity,
-			Header: http.Header{},
-			Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"temporarily unavailable"}}`)),
-		}},
-		step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
-	)
+		persistentRetrySteps(
+			http.StatusUnprocessableEntity,
+			`{"error":{"message":"temporarily unavailable"}}`,
+			step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+		)...)
 	s := newMsgServerWith(t, upstream)
 
 	recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
@@ -352,8 +370,8 @@ func TestResponsesRetriesUnprocessableEntity(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+	if upstream.callCount() != maxAlwaysRetries+1 {
+		t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "response.completed") {
@@ -367,10 +385,51 @@ func TestResponsesRetriesUnprocessableEntity(t *testing.T) {
 	}
 }
 
+// unavailableResponse builds a JSON error response for a retryable status.
+func unavailableResponse(status int, body string) *backend.Response {
+	return &backend.Response{
+		Status: status,
+		Header: http.Header{},
+		Body:   io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// TestResponsesAlwaysRetriesTooManyRequests ensures rate-limit failures are
+// hidden from clients across every provider-supplied attempt.
+func TestResponsesAlwaysRetriesTooManyRequests(t *testing.T) {
+	zeroRetryBackoff(t)
+	upstream := newScripted(backend.KindOpenAIResponses, persistentRetrySteps(
+		http.StatusTooManyRequests,
+		`{"error":{"message":"rate limited"}}`,
+		step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+	)...)
+	s := newMsgServerWith(t, upstream)
+
+	recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
+
+	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if upstream.callCount() != maxAlwaysRetries+1 {
+		t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
+	}
+	if !strings.Contains(rec.Body.String(), "response.completed") {
+		t.Fatalf("retried Responses stream incomplete:\n%s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "rate limited") {
+		t.Fatalf("pre-output rate-limit failure should remain invisible:\n%s", rec.Body.String())
+	}
+	if recovered() < 1 {
+		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+	}
+}
+
 // TestResponsesRetriesTooManyRequestsHonorsRetryAfter ensures provider rate-
 // limit guidance is respected without allowing an unbounded client wait.
 func TestResponsesRetriesTooManyRequestsHonorsRetryAfter(t *testing.T) {
 	before := time.Now()
+	zeroRetryBackoff(t)
 	upstream := newScripted(backend.KindOpenAIResponses,
 		step{resp: &backend.Response{
 			Status: http.StatusTooManyRequests,
@@ -396,6 +455,7 @@ func TestResponsesRetriesTooManyRequestsHonorsRetryAfter(t *testing.T) {
 // TestMessagesConnectPhaseExhausted answers 503 forever; after the retry
 // budget the client sees the upstream status relayed in its own dialect.
 func TestMessagesConnectPhaseExhausted(t *testing.T) {
+	zeroRetryBackoff(t)
 	upstream := newScripted(backend.KindOpenAIChat,
 		step{resp: &backend.Response{Status: http.StatusServiceUnavailable, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"down"}}`))}},
 	)
@@ -410,8 +470,8 @@ func TestMessagesConnectPhaseExhausted(t *testing.T) {
 	if parsed := decodeAnthropicError(t, rec); parsed.Error.Type != "api_error" {
 		t.Fatalf("expected Anthropic-shaped error, got %s", rec.Body.String())
 	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2 (1 + connectRetries)", upstream.callCount())
+	if upstream.callCount() != maxAlwaysRetries+1 {
+		t.Fatalf("upstream attempts = %d, want %d (1 + maxAlwaysRetries)", upstream.callCount(), maxAlwaysRetries+1)
 	}
 	if exhausted() < 1 {
 		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryExhausted)

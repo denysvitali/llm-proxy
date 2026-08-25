@@ -36,19 +36,20 @@ import (
 //     instead of being masked as a completed turn.
 
 const (
-	// connectRetries is how many extra attempts a transient connection-phase
-	// failure gets before the error reaches the client.
-	connectRetries = 1
 	// midstreamRetries is how many extra attempts a broken upstream response
 	// body gets while nothing has been forwarded to the client yet. The
 	// client only experiences a longer wait.
 	midstreamRetries = 2
 	// retryBaseDelay spaces the first retry from the failed attempt; later
-	// retries double each time.
+	// retries double each time, up to the maxRetryAfter cap.
 	retryBaseDelay = 750 * time.Millisecond
 	// retryCompletionWindow is how much of the streamed tail is kept in the
 	// rolling window checked for a stream's completion marker.
 	retryCompletionWindow = 128
+	// maxAlwaysRetries caps retries for statuses the client must never see.
+	// They remain bounded so a permanently unhealthy upstream cannot keep a
+	// request alive forever.
+	maxAlwaysRetries = 10
 	// maxRetryAfter caps provider-supplied delays so a bad or extreme
 	// Retry-After cannot stall requests indefinitely.
 	maxRetryAfter = 30 * time.Second
@@ -77,10 +78,24 @@ func retryPause(ctx context.Context, attempt int) bool {
 	select {
 	case <-ctx.Done():
 		return false
-	case <-time.After(retryBaseDelay << attempt):
+	case <-time.After(retryDelay(attempt)):
 		return true
 	}
 }
+
+// retryDelay returns the backoff before the given retry attempt: exponential
+// from retryBaseDelay, capped at maxRetryAfter so a long outage bounds each
+// pause — and with it how long a client can be kept waiting.
+func retryDelay(attempt int) time.Duration {
+	if testRetryDelayScale == 0 {
+		return 0
+	}
+	return time.Duration(float64(min(retryBaseDelay<<attempt, maxRetryAfter)) * testRetryDelayScale)
+}
+
+// testRetryDelayScale is zeroed by focused retry tests so persistent-status
+// coverage does not spend minutes sleeping through exponential backoffs.
+var testRetryDelayScale = 1.0
 
 // errReader stands in for an upstream body whose fetch itself failed, so retry
 // loops can treat "could not fetch" like any other mid-transfer break.
@@ -89,15 +104,16 @@ type errReader struct{ err error }
 func (r errReader) Read([]byte) (int, error) { return 0, r.err }
 
 // retryableUpstream reports whether a connection-phase outcome deserves
-// another attempt: transport errors always, transient gateway statuses when
-// the backend answered without a body worth keeping.
+// another attempt: transport errors always, and statuses the client must
+// never see while nothing has been forwarded — gateway failures (502/503/504)
+// plus providers that use 429/422 as transient overload signals.
 func retryableUpstream(resp *backend.Response, err error) bool {
 	if err != nil {
 		return true
 	}
 	switch resp.Status {
-	case http.StatusTooManyRequests, http.StatusUnprocessableEntity, http.StatusBadGateway,
-		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusTooManyRequests, http.StatusUnprocessableEntity,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false
@@ -120,17 +136,17 @@ func retryAfter(header http.Header) (time.Duration, bool) {
 	return min(delay, maxRetryAfter), true
 }
 
-// sendWithRetry runs the connection phase: up to connectRetries extra
-// attempts of fetch on transient failures. Every attempt — including the
-// discarded ones — is recorded as its own upstream request so uptime
-// denominators stay honest.
+// sendWithRetry runs the connection phase: a transient failure gets up to
+// maxAlwaysRetries extra attempts before its status reaches the client. Every
+// attempt — including the discarded ones — is recorded as its own upstream
+// request so uptime denominators stay honest.
 func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt route, fetch upstreamFetch) (*backend.Response, error) {
 	var resp *backend.Response
 	var err error
 	attempts := 0
 	for attempt := 0; ; attempt++ {
 		resp, err = fetch()
-		if attempt >= connectRetries || !retryableUpstream(resp, err) {
+		if !retryableUpstream(resp, err) || attempt >= maxAlwaysRetries {
 			break
 		}
 		failed := s.stats.track(rt.backend.Name(), rt.model)
@@ -145,7 +161,7 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 		log.WithError(err).WithField("attempt", attempts+1).Warn("upstream unavailable; retrying")
 		paused := true
 		if resp != nil {
-			if delay, ok := retryAfter(resp.Header); ok && delay > retryBaseDelay<<attempt {
+			if delay, ok := retryAfter(resp.Header); ok && delay > retryDelay(attempt) {
 				select {
 				case <-ctx.Done():
 					paused = false

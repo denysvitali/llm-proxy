@@ -476,6 +476,7 @@ func TestResponsesUnknownModel404(t *testing.T) {
 }
 
 func TestChatCompletionsUpstreamErrorRelayed(t *testing.T) {
+	zeroRetryBackoff(t)
 	upstreamErr := `{"error":{"message":"overloaded upstream","type":"server_error","code":null}}`
 	fb := &fakeOABackend{
 		name:   "fakeoa",
@@ -507,6 +508,7 @@ func TestChatCompletionsUpstreamErrorRelayed(t *testing.T) {
 }
 
 func TestChatCompletionsUpstreamEmptyErrorSynthesized(t *testing.T) {
+	zeroRetryBackoff(t)
 	fb := &fakeOABackend{
 		name:   "fakeoa",
 		status: http.StatusServiceUnavailable,

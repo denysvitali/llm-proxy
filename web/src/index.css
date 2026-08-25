@@ -61,6 +61,24 @@ a,
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
+/* Keep drawer metrics aligned and make the close affordance less cramped on
+   narrow phones without reducing the touch target. */
+.mantine-Drawer-content {
+  overscroll-behavior: contain;
+}
+
+.mantine-Drawer-header {
+  padding-block: 12px;
+  min-height: 64px;
+  align-items: center;
+}
+
+.mantine-Drawer-close {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--mantine-radius-sm);
+}
+
 /* Setup snippet block: readable on both schemes. */
 .snippet-block {
   margin: 0;

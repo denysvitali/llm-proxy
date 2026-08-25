@@ -93,14 +93,8 @@ export function HistoryLineChart({
 
   return (
     <Box>
-      <Group justify="space-between" align="baseline" mb={4}>
-        <Text size="sm" fw={600}>
-          {title}
-        </Text>
-      </Group>
-      <Text size="xs" c="dimmed" mb={8}>
-        {description}
-      </Text>
+      <Text size="sm" fw={650} lh={1.25}>{title}</Text>
+      <Text size="xs" c="dimmed" mt={1} mb={10} lh={1.3}>{description}</Text>
       {!hasData ? (
         <Box h={150} style={{ display: 'grid', placeItems: 'center' }}>
           <Text size="sm" c="dimmed" ta="center">
@@ -109,10 +103,10 @@ export function HistoryLineChart({
         </Box>
       ) : (
         <LineChart
-          h={150}
+          h={132}
           data={data}
           dataKey="time"
-          curveType="monotone"
+          curveType="linear"
           connectNulls
           series={coloredSeries.map(({ name, label, color }) => ({ name, label, color }))}
           valueFormatter={(value) => coloredSeries[0].formatter(Number(value))}
@@ -128,9 +122,11 @@ export function HistoryLineChart({
             axisLine: false,
             minTickGap: 24,
           }}
-          yAxisProps={{ tickLine: false, axisLine: false, width: 50 }}
+          yAxisProps={{ tickLine: false, axisLine: false, width: 42 }}
           gridAxis="y"
           tooltipAnimationDuration={150}
+          dotProps={{ r: 2, strokeWidth: 0 }}
+          activeDotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
         />
       )}
     </Box>
@@ -158,17 +154,15 @@ export function HistoryBarChart({
   }))
   return (
     <Box>
-      <Group justify="space-between" align="baseline" mb={4}>
-        <Text size="sm" fw={600}>{title}</Text>
-      </Group>
-      <Text size="xs" c="dimmed" mb={8}>{description}</Text>
+      <Text size="sm" fw={650} lh={1.25}>{title}</Text>
+      <Text size="xs" c="dimmed" mt={1} mb={10} lh={1.3}>{description}</Text>
       {data.every((point) => point.value === 0) ? (
         <Box h={130} style={{ display: 'grid', placeItems: 'center' }}>
           <Text size="sm" c="dimmed" ta="center">No traffic in this range</Text>
         </Box>
       ) : (
         <BarChart
-          h={130}
+          h={112}
           data={data}
           dataKey="time"
           series={[{ name: 'value', label: title, color: color ?? pal.series[2] }]}
@@ -191,7 +185,8 @@ export function HistoryBarChart({
             axisLine: false,
             minTickGap: 24,
           }}
-          yAxisProps={{ tickLine: false, axisLine: false, width: 50 }}
+          yAxisProps={{ tickLine: false, axisLine: false, width: 42 }}
+          barProps={{ radius: [3, 3, 0, 0], maxBarSize: 18 }}
           gridAxis="y"
         />
       )}
