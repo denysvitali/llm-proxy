@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -149,15 +148,28 @@ func TestSendEmptyToken(t *testing.T) {
 	}
 }
 
-func TestModels(t *testing.T) {
+func TestModelsIncludesGrok46(t *testing.T) {
 	c := New("", staticToken("tok"))
 	models, err := c.Models(context.Background())
 	if err != nil {
 		t.Fatalf("Models: %v", err)
 	}
-	want := []string{"grok-4.5", "grok-composer-2.5-fast"}
-	if !reflect.DeepEqual(models, want) {
-		t.Errorf("Models() = %#v, want exactly %#v", models, want)
+	want := map[string]bool{
+		"grok-4.5":               false,
+		"grok-4.6":               false,
+		"grok-composer-2.5-fast": false,
+	}
+	for _, model := range models {
+		if _, known := want[model]; !known {
+			t.Errorf("Models() returned unexpected model %q", model)
+			continue
+		}
+		want[model] = true
+	}
+	for model, found := range want {
+		if !found {
+			t.Errorf("Models() missing %q", model)
+		}
 	}
 }
 
