@@ -3,6 +3,7 @@ package translate
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -311,17 +312,11 @@ func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 			s.stream.model = chunk.Model
 		}
 		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
-			message := "upstream stream failed"
-			var decoded struct {
-				Message string `json:"message"`
-			}
-			if json.Unmarshal(chunk.Error, &decoded) == nil && decoded.Message != "" {
-				message = decoded.Message
-			}
-			s.stream.Fail(message)
-			return true, nil
+			return false, chatChunkError(chunk.Error)
 		}
-		s.consumeChunk(chunk)
+		if err := s.consumeChunk(chunk); err != nil {
+			return false, err
+		}
 		return s.stream.finished, nil
 	})
 	if err != nil {
@@ -336,18 +331,18 @@ func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 	return errors.New("upstream stream ended without emitting any events")
 }
 
-func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) {
+func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 	for _, choice := range chunk.Choices {
 		delta := choice.Delta
 		if delta.Content != nil && *delta.Content != "" {
 			if !s.stream.openItem("message") {
-				return
+				return nil
 			}
 			s.stream.appendText(*delta.Content)
 		}
 		if delta.ReasoningContent != "" {
 			if !s.stream.openItem("reasoning") {
-				return
+				return nil
 			}
 			s.stream.appendReasoning(delta.ReasoningContent)
 		}
@@ -360,13 +355,40 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) {
 				s.stream.appendArgs(call.Function.Arguments)
 			}
 		}
-		if choice.FinishReason != nil && *choice.FinishReason == "length" {
-			s.stream.incomplete = true
+		if choice.FinishReason != nil {
+			switch *choice.FinishReason {
+			case "length":
+				s.stream.incomplete = true
+			case "network_error", "server_error", "error", "failed":
+				return fmt.Errorf("upstream stream failed: %s", *choice.FinishReason)
+			}
 		}
 	}
 	if chunk.Usage != nil {
 		s.stream.setUsage(chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens)
 	}
+	return nil
+}
+
+// chatChunkError extracts the useful message from a streamed OpenAI error
+// envelope. Returning an error instead of emitting a terminal Responses event
+// lets the server retry errors that arrived before any translated bytes
+// reached the client.
+func chatChunkError(raw json.RawMessage) error {
+	message := "upstream stream failed"
+	var decoded struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		if decoded.Message != "" {
+			message = decoded.Message
+		}
+		if decoded.Type != "" {
+			return fmt.Errorf("upstream stream failed: %s: %s", decoded.Type, message)
+		}
+	}
+	return errors.New(message)
 }
 
 // Finish closes any open item and emits response.completed.

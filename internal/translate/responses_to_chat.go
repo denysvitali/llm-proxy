@@ -105,6 +105,7 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 				Name:        tool.Name,
 				Description: tool.Description,
 				Parameters:  tool.Parameters,
+				Strict:      tool.Strict,
 			},
 		})
 	}
@@ -195,6 +196,9 @@ func responsesToolChoiceToChat(raw any) any {
 func ResponsesFromChat(body []byte, model string) ([]byte, error) {
 	var chat chatResponseOut
 	if err := json.Unmarshal(body, &chat); err != nil {
+		return nil, err
+	}
+	if err := checkUpstreamError(chat.Error); err != nil {
 		return nil, err
 	}
 

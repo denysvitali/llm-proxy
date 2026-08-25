@@ -218,8 +218,9 @@ func ResponsesFromAnthropic(body []byte, model string) ([]byte, error) {
 // ResponsesStreamFromAnthropic converts an upstream Anthropic SSE stream into
 // OpenAI Responses API events.
 type ResponsesStreamFromAnthropic struct {
-	stream responsesItemStream
-	blocks map[int]string // anthropic block index -> open item kind
+	stream  responsesItemStream
+	blocks  map[int]string // anthropic block index -> open item kind
+	failure error
 }
 
 func NewResponsesStreamFromAnthropic(writer io.Writer, flush func(), model string) *ResponsesStreamFromAnthropic {
@@ -248,6 +249,9 @@ func (s *ResponsesStreamFromAnthropic) Consume(body io.Reader) error {
 	})
 	if err != nil {
 		return err
+	}
+	if s.failure != nil {
+		return s.failure
 	}
 	if s.stream.finished {
 		return nil
@@ -333,8 +337,7 @@ func (s *ResponsesStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 				message = event.Error.Message
 			}
 		}
-		s.emitFailed(errType, message)
-		s.stream.finished = true
+		s.failure = fmt.Errorf("%s: %s", errType, message)
 		return true
 	}
 	return false

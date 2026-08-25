@@ -44,6 +44,7 @@ type ResponsesStreamWriter struct {
 
 	started  bool
 	finished bool
+	failure  error
 
 	blocks         map[int]*responsesOutBlock
 	nextBlockIndex int
@@ -84,7 +85,7 @@ func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 			continue
 		}
 		if s.consumeEvent(event) {
-			return nil
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -92,6 +93,12 @@ func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 		// caller can end it with an explicit failure instead of a
 		// "completed" envelope that hides the truncation.
 		return err
+	}
+	if s.failure != nil {
+		return s.failure
+	}
+	if s.finished {
+		return nil
 	}
 	if s.started {
 		return errors.New("upstream stream ended without completing the response")
@@ -164,8 +171,7 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		return true
 
 	case "response.failed":
-		s.emitError("api_error", "upstream stream failed")
-		s.finished = true
+		s.failure = errors.New("upstream stream failed")
 		return true
 
 	case "error":
@@ -178,8 +184,7 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 				message = event.Error.Message
 			}
 		}
-		s.emitError(errType, message)
-		s.finished = true
+		s.failure = fmt.Errorf("%s: %s", errType, message)
 		return true
 	}
 	return false
@@ -388,6 +393,7 @@ type ChatResponsesStreamWriter struct {
 
 	started    bool
 	finished   bool
+	failure    error
 	sawTool    bool
 	stopReason string
 	usage      *chatUsageOut
@@ -429,7 +435,7 @@ func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 			continue
 		}
 		if c.consumeEvent(event) {
-			return nil
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -437,6 +443,12 @@ func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 		// caller can end it with an explicit failure instead of a finished
 		// turn that hides the truncation.
 		return err
+	}
+	if c.failure != nil {
+		return c.failure
+	}
+	if c.finished {
+		return nil
 	}
 	if c.started {
 		return errors.New("upstream stream ended before the completion marker")
@@ -509,12 +521,7 @@ func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 				message = event.Error.Message
 			}
 		}
-		c.writeData(map[string]any{"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    nil,
-		}})
-		c.finished = true
+		c.failure = fmt.Errorf("%s: %s", errType, message)
 		return true
 	}
 	return false

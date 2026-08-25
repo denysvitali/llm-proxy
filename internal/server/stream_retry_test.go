@@ -130,6 +130,13 @@ const fullChatSSE = `data: {"id":"c1","choices":[{"index":0,"delta":{"role":"ass
 const brokenChatSSE = `data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n" +
 	`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"partial"}}]}` + "\n\n"
 
+const networkErrorChatSSE = `data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"network_error"}]}` + "\n\n" +
+	"data: [DONE]\n\n"
+
+const partialNetworkErrorChatSSE = `data: {"id":"c1","choices":[{"index":0,"delta":{"content":"partial"}}]}` + "\n\n" +
+	`data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"network_error"}]}` + "\n\n" +
+	"data: [DONE]\n\n"
+
 const brokenResponsesSSE = "event: response.created\n" +
 	`data: {"type":"response.created","response":{"id":"resp_1","model":"m"}}` + "\n\n" +
 	"event: response.output_text.delta\n" +
@@ -363,6 +370,63 @@ func TestResponsesEndpointSurfacesBreakAfterContent(t *testing.T) {
 	}
 	if strings.Contains(body, "response.completed") {
 		t.Fatalf("broken stream must not be completed:\n%s", body)
+	}
+	if surfaced() < 1 {
+		t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retrySurfaced)
+	}
+}
+
+// TestResponsesRetriesTranslatedNetworkError covers providers such as
+// OpenCode Zen's x-preview-f-free, which encode an upstream failure as a 200
+// chat stream with finish_reason=network_error. That must be retried while no
+// Responses bytes have reached the client, rather than becoming an empty
+// response.completed event.
+func TestResponsesRetriesTranslatedNetworkError(t *testing.T) {
+	upstream := newScripted(backend.KindOpenAIChat,
+		step{resp: sseResponse("text/event-stream", networkErrorChatSSE)},
+		step{resp: sseResponse("text/event-stream", fullChatSSE)},
+	)
+	s := newMsgServerWith(t, upstream)
+
+	recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
+
+	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if upstream.callCount() != 2 {
+		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "response.completed") || !strings.Contains(body, `"delta":"hi"`) {
+		t.Fatalf("retried Responses stream incomplete: %s", body)
+	}
+	if strings.Contains(body, "response.failed") {
+		t.Fatalf("pre-output upstream failure should remain invisible: %s", body)
+	}
+	if recovered() < 1 {
+		t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
+	}
+}
+
+// TestResponsesSurfacesTranslatedNetworkErrorAfterContent ensures a provider
+// failure after output has started is surfaced as response.failed, without a
+// fake completion or a replay that would duplicate the partial output.
+func TestResponsesSurfacesTranslatedNetworkErrorAfterContent(t *testing.T) {
+	upstream := newScripted(backend.KindOpenAIChat,
+		step{resp: sseResponse("text/event-stream", partialNetworkErrorChatSSE)},
+	)
+	s := newMsgServerWith(t, upstream)
+
+	surfaced := outcomeDelta(s, retryPhaseBody, retrySurfaced)
+
+	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+	body := rec.Body.String()
+	if !strings.Contains(body, `"delta":"partial"`) {
+		t.Fatalf("forwarded content missing: %s", body)
+	}
+	if !strings.Contains(body, "response.failed") || strings.Contains(body, "response.completed") {
+		t.Fatalf("translated failure was not surfaced correctly: %s", body)
 	}
 	if surfaced() < 1 {
 		t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retrySurfaced)

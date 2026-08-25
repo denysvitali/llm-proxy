@@ -660,12 +660,13 @@ func chatToolChoiceToResponses(raw json.RawMessage) any {
 }
 
 type chatResponseOut struct {
-	ID      string          `json:"id"`
-	Object  string          `json:"object"`
-	Created int64           `json:"created"`
-	Model   string          `json:"model"`
-	Choices []chatChoiceOut `json:"choices"`
-	Usage   chatUsageOut    `json:"usage"`
+	ID      string            `json:"id"`
+	Object  string            `json:"object"`
+	Created int64             `json:"created"`
+	Model   string            `json:"model"`
+	Error   *upstreamErrorObj `json:"error,omitempty"`
+	Choices []chatChoiceOut   `json:"choices"`
+	Usage   chatUsageOut      `json:"usage"`
 }
 
 type chatChoiceOut struct {

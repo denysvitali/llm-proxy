@@ -16,7 +16,7 @@ func TestResponsesToChatRequest(t *testing.T) {
 			{"type":"function_call_output","call_id":"call_1","output":"sunny"},
 			{"type":"message","role":"user","content":"plain string input"}
 		],
-		"tools": [{"type":"function","name":"get_weather","description":"weather lookup","parameters":{"type":"object"}}],
+		"tools": [{"type":"function","name":"get_weather","description":"weather lookup","parameters":{"type":"object"},"strict":true}],
 		"tool_choice": {"type":"function","name":"get_weather"},
 		"max_output_tokens": 256,
 		"temperature": 0.5,
@@ -55,6 +55,9 @@ func TestResponsesToChatRequest(t *testing.T) {
 	}
 	if len(got.Tools) != 1 || got.Tools[0].Function.Name != "get_weather" {
 		t.Errorf("tools = %+v", got.Tools)
+	}
+	if !got.Tools[0].Function.Strict {
+		t.Error("tool strict flag was dropped during Responses to Chat translation")
 	}
 	choice, ok := got.ToolChoice.(map[string]any)
 	if !ok || choice["type"] != "function" {
@@ -138,6 +141,13 @@ func TestResponsesFromChatResponse(t *testing.T) {
 	}
 	if resp.Usage.InputTokens != 5 || resp.Usage.OutputTokens != 2 || resp.Usage.TotalTokens != 7 {
 		t.Errorf("usage = %+v", resp.Usage)
+	}
+}
+
+func TestResponsesFromChatRejectsSuccessfulErrorEnvelope(t *testing.T) {
+	_, err := ResponsesFromChat([]byte(`{"error":{"type":"server_error","message":"Endpoint is unavailable"}}`), "m")
+	if err == nil || !strings.Contains(err.Error(), "Endpoint is unavailable") {
+		t.Fatalf("ResponsesFromChat error = %v, want upstream error", err)
 	}
 }
 
@@ -245,6 +255,33 @@ func TestResponsesStreamFromChatToolCall(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("stream missing %q\nfull:\n%s", want, body)
 		}
+	}
+}
+
+func TestResponsesStreamFromChatNetworkErrorReturnsFailure(t *testing.T) {
+	upstream := strings.Join([]string{
+		`data: {"id":"chatcmpl-fail","model":"mock","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"network_error"}]}`,
+		`data: [DONE]`,
+	}, "\n")
+
+	var out strings.Builder
+	w := NewResponsesStreamFromChat(&out, nil, "mock")
+	if err := w.Consume(strings.NewReader(upstream)); err == nil {
+		t.Fatal("Consume accepted finish_reason network_error")
+	}
+	if strings.Contains(out.String(), "response.completed") || strings.Contains(out.String(), "response.failed") {
+		t.Fatalf("translator must leave retry/failure handling to the server: %s", out.String())
+	}
+}
+
+func TestResponsesStreamFromChatErrorEnvelopeReturnsFailure(t *testing.T) {
+	upstream := `data: {"error":{"type":"server_error","message":"Endpoint is unavailable"}}` + "\n"
+
+	var out strings.Builder
+	w := NewResponsesStreamFromChat(&out, nil, "mock")
+	err := w.Consume(strings.NewReader(upstream))
+	if err == nil || !strings.Contains(err.Error(), "Endpoint is unavailable") {
+		t.Fatalf("Consume error = %v, want upstream error message", err)
 	}
 }
 
