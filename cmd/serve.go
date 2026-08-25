@@ -17,6 +17,7 @@ import (
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/denysvitali/llm-proxy/internal/server"
+	"github.com/denysvitali/llm-proxy/internal/tracing"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -111,6 +112,20 @@ func runServe(cfg *config.Config) error {
 	if len(backends) == 0 {
 		log.Warn("no backends configured; only health and dashboard API endpoints will work")
 	}
+
+	// OTel tracing activates only when OTEL_* environment variables point at
+	// a collector; otherwise the global no-op tracer stays in place.
+	shutdownTracing, err := tracing.Setup(context.Background(), "llm-proxy")
+	if err != nil {
+		log.WithError(err).Warn("tracing setup failed; continuing without spans")
+	} else if shutdownTracing != nil {
+		defer func() {
+			flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = shutdownTracing(flushCtx)
+		}()
+	}
+
 	srv := server.NewWithGrokAuth(cfg, log, store, backends, grokTokens)
 	defer func() { _ = srv.Close() }()
 

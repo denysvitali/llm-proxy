@@ -41,18 +41,20 @@ const (
 	// client only experiences a longer wait.
 	midstreamRetries = 2
 	// retryBaseDelay spaces the first retry from the failed attempt; later
-	// retries double each time, up to the maxRetryAfter cap.
+	// retries double each time, up to the max backoff cap.
 	retryBaseDelay = 750 * time.Millisecond
 	// retryCompletionWindow is how much of the streamed tail is kept in the
 	// rolling window checked for a stream's completion marker.
 	retryCompletionWindow = 128
-	// maxAlwaysRetries caps retries for statuses the client must never see.
-	// They remain bounded so a permanently unhealthy upstream cannot keep a
-	// request alive forever.
-	maxAlwaysRetries = 10
-	// maxRetryAfter caps provider-supplied delays so a bad or extreme
-	// Retry-After cannot stall requests indefinitely.
-	maxRetryAfter = 30 * time.Second
+	// defaultRetryAttempts caps retries for statuses the client must never
+	// see. They remain bounded so a permanently unhealthy upstream cannot
+	// keep a request alive forever. Per-backend override:
+	// backends[].retry_attempts.
+	defaultRetryAttempts = 10
+	// defaultRetryMaxBackoff caps provider-supplied Retry-After delays and
+	// the exponential backoff so a bad or extreme header cannot stall
+	// requests indefinitely. Per-backend override: backends[].retry_max_backoff.
+	defaultRetryMaxBackoff = 30 * time.Second
 )
 
 // Retry metric phases and outcomes.
@@ -74,21 +76,21 @@ type upstreamFetch func() (*backend.Response, error)
 
 // retryPause waits out the backoff before another upstream attempt and reports
 // whether the client is still there to wait for it.
-func retryPause(ctx context.Context, attempt int) bool {
+func retryPause(ctx context.Context, attempt int, maxBackoff time.Duration) bool {
 	select {
 	case <-ctx.Done():
 		return false
-	case <-time.After(retryDelay(attempt)):
+	case <-time.After(retryDelay(attempt, maxBackoff)):
 		return true
 	}
 }
 
 // retryDelay returns the backoff before the given retry attempt: exponential
-// from retryBaseDelay, capped at maxRetryAfter so a long outage bounds each
+// from retryBaseDelay, capped at maxBackoff so a long outage bounds each
 // pause — and with it how long a client can be kept waiting. Tests run inside
 // testing/synctest bubbles, so even the longest pause elapses instantly there.
-func retryDelay(attempt int) time.Duration {
-	return min(retryBaseDelay<<attempt, maxRetryAfter)
+func retryDelay(attempt int, maxBackoff time.Duration) time.Duration {
+	return min(retryBaseDelay<<attempt, maxBackoff)
 }
 
 // errReader stands in for an upstream body whose fetch itself failed, so retry
@@ -115,9 +117,10 @@ func retryableUpstream(resp *backend.Response, err error) bool {
 }
 
 // retryAfter returns the delay requested by an upstream Retry-After header.
-// Relative second values are supported, capped at maxRetryAfter; date-valued
-// or malformed headers fall back to the normal exponential backoff.
-func retryAfter(header http.Header) (time.Duration, bool) {
+// Relative second values are supported, capped at the budget's max backoff;
+// date-valued or malformed headers fall back to the normal exponential
+// backoff.
+func retryAfter(header http.Header, maxBackoff time.Duration) (time.Duration, bool) {
 	value := strings.TrimSpace(header.Get("Retry-After"))
 	if value == "" {
 		return 0, false
@@ -127,23 +130,26 @@ func retryAfter(header http.Header) (time.Duration, bool) {
 		return 0, false
 	}
 	delay := time.Duration(seconds) * time.Second
-	return min(delay, maxRetryAfter), true
+	return min(delay, maxBackoff), true
 }
 
-// sendWithRetry runs the connection phase: a transient failure gets up to
-// maxAlwaysRetries extra attempts before its status reaches the client. Every
-// attempt — including the discarded ones — is recorded as its own upstream
-// request so uptime denominators stay honest.
+// sendWithRetry runs the connection phase: a transient failure gets up to the
+// backend's configured number of extra attempts (backends[].retry_attempts,
+// default 10) before its status reaches the client. Every attempt — including
+// the discarded ones — is recorded as its own upstream request so uptime
+// denominators stay honest.
 func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt route, fetch upstreamFetch) (*backend.Response, error) {
+	budget := s.retryBudgetFor(rt.backend.Name())
+	backendName, model := rt.backend.Name(), rt.model
 	var resp *backend.Response
 	var err error
 	attempts := 0
 	for attempt := 0; ; attempt++ {
 		resp, err = fetch()
-		if !retryableUpstream(resp, err) || attempt >= maxAlwaysRetries {
+		if !retryableUpstream(resp, err) || attempt >= budget.attempts {
 			break
 		}
-		failed := s.stats.track(rt.backend.Name(), rt.model)
+		failed := s.stats.track(backendName, model)
 		if resp != nil {
 			failed.setUpstreamStatus(resp.Status)
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorRelay))
@@ -151,21 +157,21 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 		}
 		failed.done()
 		attempts++
-		s.metrics.noteRetryAttempt(retryPhaseConnect)
+		s.metrics.noteRetryAttempt(retryPhaseConnect, backendName, model)
 		log.WithError(err).WithField("attempt", attempts+1).Warn("upstream unavailable; retrying")
 		paused := true
 		if resp != nil {
-			if delay, ok := retryAfter(resp.Header); ok && delay > retryDelay(attempt) {
+			if delay, ok := retryAfter(resp.Header, budget.maxBackoff); ok && delay > retryDelay(attempt, budget.maxBackoff) {
 				select {
 				case <-ctx.Done():
 					paused = false
 				case <-time.After(delay):
 				}
 			} else {
-				paused = retryPause(ctx, attempt)
+				paused = retryPause(ctx, attempt, budget.maxBackoff)
 			}
 		} else {
-			paused = retryPause(ctx, attempt)
+			paused = retryPause(ctx, attempt, budget.maxBackoff)
 		}
 		if !paused {
 			return nil, ctx.Err()
@@ -175,9 +181,9 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 	case attempts == 0:
 		// first attempt succeeded; nothing to classify
 	case err != nil || retryableUpstream(resp, err):
-		s.metrics.noteRetryOutcome(retryPhaseConnect, retryExhausted)
+		s.metrics.noteRetryOutcome(retryPhaseConnect, retryExhausted, backendName, model)
 	default:
-		s.metrics.noteRetryOutcome(retryPhaseConnect, retryRecovered)
+		s.metrics.noteRetryOutcome(retryPhaseConnect, retryRecovered, backendName, model)
 	}
 	return resp, err
 }
@@ -201,7 +207,8 @@ func (s *Server) retryReader(fetch upstreamFetch) io.Reader {
 // fetchResponseBody buffers a non-streaming upstream body to the end,
 // retrying while the transfer fails. Nothing has reached the client during
 // any of it, so retries only ever look like latency.
-func (s *Server) fetchResponseBody(ctx context.Context, resp *backend.Response, fetch upstreamFetch, limit int64) ([]byte, error) {
+func (s *Server) fetchResponseBody(ctx context.Context, rt route, resp *backend.Response, fetch upstreamFetch, limit int64) ([]byte, error) {
+	budget := s.retryBudgetFor(rt.backend.Name())
 	var body io.Reader = resp.Body
 	for attempt := 0; ; attempt++ {
 		data, readErr := io.ReadAll(io.LimitReader(body, limit+1))
@@ -210,15 +217,15 @@ func (s *Server) fetchResponseBody(ctx context.Context, resp *backend.Response, 
 		}
 		if readErr == nil {
 			if attempt > 0 {
-				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered)
+				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
 			}
 			return data, nil
 		}
-		if attempt >= midstreamRetries || !retryPause(ctx, attempt) {
-			s.metrics.noteRetryOutcome(retryPhaseBody, retryExhausted)
+		if attempt >= midstreamRetries || !retryPause(ctx, attempt, budget.maxBackoff) {
+			s.metrics.noteRetryOutcome(retryPhaseBody, retryExhausted, rt.backend.Name(), rt.model)
 			return nil, readErr
 		}
-		s.metrics.noteRetryAttempt(retryPhaseBody)
+		s.metrics.noteRetryAttempt(retryPhaseBody, rt.backend.Name(), rt.model)
 		s.log.WithError(readErr).WithField("attempt", attempt+1).Warn("upstream body failed before any output; retrying")
 		body = s.retryReader(fetch)
 	}
@@ -337,17 +344,20 @@ func failTranslatedStream(writer streamTranslator, message string) {
 // byte-for-byte under the common retry contract. done recognizes the wire
 // format's completion marker; surface writes the in-band failure in the
 // client's dialect once content has flowed; giveUp answers a spent retry
-// budget with a clean 502.
+// budget with a clean 502. It reports whether an in-band failure was
+// surfaced (content had already reached the client, so no other backend may
+// take the request over).
 func (s *Server) relayNativeStreaming(
 	ctx context.Context,
 	w http.ResponseWriter,
 	log logrus.FieldLogger,
+	rt route,
 	resp *backend.Response,
 	fetch upstreamFetch,
 	done func([]byte) bool,
 	surface func(w http.ResponseWriter, message string),
 	giveUp func(w http.ResponseWriter, message string),
-) {
+) bool {
 	copyUpstreamRequestID(w.Header(), resp.Header)
 	contentType := resp.Header.Get("Content-Type")
 	status := resp.Status
@@ -372,18 +382,18 @@ func (s *Server) relayNativeStreaming(
 
 		if complete {
 			if attempt > 0 {
-				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered)
+				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
 			}
-			return
+			return false
 		}
 		if relayed > 0 {
-			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced)
+			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced, rt.backend.Name(), rt.model)
 			log.WithError(streamErr).Warn("upstream stream broke after content was forwarded; surfacing an in-stream error")
 			surface(w, midstreamFailureMessage)
-			return
+			return true
 		}
-		if !s.retryOrGiveUp(ctx, w, log, streamErr, attempt, giveUp) {
-			return
+		if !s.retryOrGiveUp(ctx, w, log, rt, streamErr, attempt, giveUp) {
+			return false
 		}
 		body = s.retryReader(fetch)
 	}
@@ -399,12 +409,13 @@ func (s *Server) relayNativeBuffered(
 	ctx context.Context,
 	w http.ResponseWriter,
 	log logrus.FieldLogger,
+	rt route,
 	resp *backend.Response,
 	fetch upstreamFetch,
 	giveUp func(w http.ResponseWriter, message string),
 ) {
 	copyUpstreamRequestID(w.Header(), resp.Header)
-	data, err := s.fetchResponseBody(ctx, resp, fetch, maxTranslatedResponseBody)
+	data, err := s.fetchResponseBody(ctx, rt, resp, fetch, maxTranslatedResponseBody)
 	if err != nil {
 		message := fmt.Sprintf("upstream response could not be read: %v", err)
 		log.WithError(err).Warn("reading upstream response body failed")
@@ -448,16 +459,18 @@ func errorShapedBody(data []byte) error {
 // nothing has reached the client — the request only ever looks slower. Once
 // content has flowed, restarting upstream would duplicate it, so the break is
 // surfaced as the protocol's in-band failure instead of a silent truncation.
+// It reports whether such an in-band failure was surfaced.
 func (s *Server) relayTranslatedStreaming(
 	ctx context.Context,
 	w http.ResponseWriter,
 	log logrus.FieldLogger,
+	rt route,
 	resp *backend.Response,
 	fetch upstreamFetch,
 	env translateEnv,
 	stream func(env translateEnv, client io.Writer, flush func()) streamTranslator,
 	giveUp func(w http.ResponseWriter, message string),
-) {
+) bool {
 	var body io.Reader = resp.Body
 	for attempt := 0; ; attempt++ {
 		gate := &gatedWriter{open: func() io.Writer {
@@ -484,18 +497,18 @@ func (s *Server) relayTranslatedStreaming(
 		}
 		if streamErr == nil {
 			if attempt > 0 {
-				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered)
+				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
 			}
-			return
+			return false
 		}
 		if gate.wrote > 0 {
-			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced)
+			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced, rt.backend.Name(), rt.model)
 			log.WithError(streamErr).Warn("upstream stream broke after content was forwarded; surfacing an in-stream error")
 			failTranslatedStream(writer, midstreamFailureMessage)
-			return
+			return true
 		}
-		if !s.retryOrGiveUp(ctx, w, log, streamErr, attempt, giveUp) {
-			return
+		if !s.retryOrGiveUp(ctx, w, log, rt, streamErr, attempt, giveUp) {
+			return false
 		}
 		body = s.retryReader(fetch)
 	}
@@ -508,16 +521,18 @@ func (s *Server) retryOrGiveUp(
 	ctx context.Context,
 	w http.ResponseWriter,
 	log logrus.FieldLogger,
+	rt route,
 	streamErr error,
 	attempt int,
 	giveUp func(w http.ResponseWriter, message string),
 ) bool {
-	if attempt < midstreamRetries && retryPause(ctx, attempt) {
-		s.metrics.noteRetryAttempt(retryPhaseBody)
+	budget := s.retryBudgetFor(rt.backend.Name())
+	if attempt < midstreamRetries && retryPause(ctx, attempt, budget.maxBackoff) {
+		s.metrics.noteRetryAttempt(retryPhaseBody, rt.backend.Name(), rt.model)
 		log.WithError(streamErr).WithField("attempt", attempt+1).Warn("upstream stream failed before any output; retrying")
 		return true
 	}
-	s.metrics.noteRetryOutcome(retryPhaseBody, retryExhausted)
+	s.metrics.noteRetryOutcome(retryPhaseBody, retryExhausted, rt.backend.Name(), rt.model)
 	log.WithError(streamErr).Warn("upstream stream failed before any output")
 	message := midstreamFailureMessage
 	if streamErr != nil {

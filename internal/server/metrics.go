@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // Metrics aggregates proxy-wide Prometheus counters and latency histograms.
@@ -19,6 +20,7 @@ type Metrics struct {
 	authFailures    prometheus.Counter
 	retryAttempts   *prometheus.CounterVec
 	retryOutcomes   *prometheus.CounterVec
+	fallbacks       *prometheus.CounterVec
 	reg             *prometheus.Registry
 }
 
@@ -43,30 +45,69 @@ func newMetrics() *Metrics {
 		}),
 		retryAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "llm_proxy_upstream_retry_attempts_total",
-			Help: "Extra upstream attempts made after transient failures.",
-		}, []string{"phase"}),
+			Help: "Extra upstream attempts made after transient failures, by backend and model.",
+		}, []string{"phase", "backend", "model"}),
 		retryOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "llm_proxy_upstream_retry_outcomes_total",
-			Help: "How transient upstream failures ended.",
-		}, []string{"phase", "outcome"}),
+			Help: "How transient upstream failures ended, by backend and model.",
+		}, []string{"phase", "outcome", "backend", "model"}),
+		fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "llm_proxy_fallbacks_total",
+			Help: "Requests handed from a failing backend to a fallback backend.",
+		}, []string{"from_backend", "to_backend"}),
 		reg: prometheus.NewRegistry(),
 	}
-	m.reg.MustRegister(m.requests, m.requestDuration, m.authSuccesses, m.authFailures, m.retryAttempts, m.retryOutcomes)
+	m.reg.MustRegister(m.requests, m.requestDuration, m.authSuccesses, m.authFailures, m.retryAttempts, m.retryOutcomes, m.fallbacks)
 	return m
 }
 
 // noteRetryAttempt records one extra upstream attempt after a transient
 // failure; phase is "connect" or "body".
-func (m *Metrics) noteRetryAttempt(phase string) {
-	m.retryAttempts.WithLabelValues(phase).Inc()
+func (m *Metrics) noteRetryAttempt(phase, backend, model string) {
+	m.retryAttempts.WithLabelValues(phase, backend, model).Inc()
 }
 
 // noteRetryOutcome records how a transient upstream failure ended:
 // "recovered" (a retry succeeded), "exhausted" (retries ran out and the
 // client got an error) or "surfaced" (content had already been forwarded,
 // so the break was reported as an in-stream failure instead of replayed).
-func (m *Metrics) noteRetryOutcome(phase, outcome string) {
-	m.retryOutcomes.WithLabelValues(phase, outcome).Inc()
+func (m *Metrics) noteRetryOutcome(phase, outcome, backend, model string) {
+	m.retryOutcomes.WithLabelValues(phase, outcome, backend, model).Inc()
+}
+
+// noteFallback records one request moving from a backend that failed before
+// any output to the next backend in its fallback chain.
+func (m *Metrics) noteFallback(from, to string) {
+	m.fallbacks.WithLabelValues(from, to).Inc()
+}
+
+// sumRetryOutcomes totals the outcome counter across every backend and model;
+// tests use it to assert deltas without pinning label tuples.
+func (m *Metrics) sumRetryOutcomes(phase, outcome string) float64 {
+	var total float64
+	ch := make(chan prometheus.Metric, 16)
+	go func() {
+		m.retryOutcomes.Collect(ch)
+		close(ch)
+	}()
+	for metric := range ch {
+		sample := &dto.Metric{}
+		if err := metric.Write(sample); err != nil {
+			continue
+		}
+		matched := true
+		for _, lp := range sample.Label {
+			if (lp.GetName() == "phase" && lp.GetValue() != phase) ||
+				(lp.GetName() == "outcome" && lp.GetValue() != outcome) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			total += sample.GetCounter().GetValue()
+		}
+	}
+	return total
 }
 
 func (m *Metrics) observe(method, path string, status int, d time.Duration) {

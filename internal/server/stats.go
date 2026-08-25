@@ -1096,6 +1096,11 @@ func (st *Stats) snapshotFromBuckets() []ModelStat {
 			tps:  make([]uint64, len(tpsEdges)),
 		}
 		ms.mu.Lock()
+		// Lifetime counters already cover every event the buckets hold —
+		// record() folds each request into both — so the summary reads them
+		// directly. Buckets contribute only the latency/throughput histograms
+		// (they are not kept as lifetime fields); adding their counters too
+		// would double every total.
 		r.stat.Requests = ms.requests
 		r.stat.Successes = ms.successes
 		r.stat.InputTokens = ms.tokensIn
@@ -1104,13 +1109,6 @@ func (st *Stats) snapshotFromBuckets() []ModelStat {
 		r.stat.ToolCalls = ms.toolCalls
 		r.stat.ToolErrors = ms.toolErrors
 		for _, b := range ms.buckets {
-			r.stat.Requests += b.Requests
-			r.stat.Successes += b.Successes
-			r.stat.InputTokens += b.TokensIn
-			r.stat.OutputTokens += b.TokensOut
-			r.stat.CacheReadTokens += b.CacheRead
-			r.stat.ToolCalls += b.ToolCalls
-			r.stat.ToolErrors += b.ToolErrors
 			for i := range b.TTFTBuckets {
 				r.ttft[i] += b.TTFTBuckets[i]
 			}

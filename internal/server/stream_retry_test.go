@@ -13,13 +13,13 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/config"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // scriptedBackend plays a queue of Send outcomes; the last step repeats once
 // the queue is empty, so exhausted-retry tests need no explicit loop.
 type scriptedBackend struct {
 	mu    sync.Mutex
+	name  string
 	steps []step
 	calls int
 	kinds map[backend.Kind]bool
@@ -36,22 +36,23 @@ var _ backend.Backend = (*scriptedBackend)(nil)
 // dialect selection resolves the way msgFakeBackend's supported map does.
 func newScripted(kind backend.Kind, steps ...step) *scriptedBackend {
 	return &scriptedBackend{
+		name:  "fake",
 		steps: steps,
 		kinds: map[backend.Kind]bool{kind: true},
 	}
 }
 
-// persistentRetrySteps queues maxAlwaysRetries failures followed by a final
+// persistentRetrySteps queues defaultRetryAttempts failures followed by a final
 // successful attempt.
 func persistentRetrySteps(status int, body string, final step) []step {
-	steps := make([]step, 0, maxAlwaysRetries+1)
-	for range maxAlwaysRetries {
+	steps := make([]step, 0, defaultRetryAttempts+1)
+	for range defaultRetryAttempts {
 		steps = append(steps, step{resp: unavailableResponse(status, body)})
 	}
 	return append(steps, final)
 }
 
-func (b *scriptedBackend) Name() string { return "fake" }
+func (b *scriptedBackend) Name() string { return b.name }
 
 func (b *scriptedBackend) Models(context.Context) ([]string, error) {
 	return []string{"m1"}, nil
@@ -110,11 +111,12 @@ func (b *failingBody) Read(p []byte) (int, error) {
 func (b *failingBody) Close() error { return nil }
 
 // outcomeDelta captures a retry-outcome counter so a test can assert its own
-// increment regardless of what earlier tests already recorded.
+// increment regardless of what earlier tests already recorded. Sums across
+// every backend and model.
 func outcomeDelta(s *Server, phase, outcome string) func() float64 {
-	before := testutil.ToFloat64(s.metrics.retryOutcomes.WithLabelValues(phase, outcome))
+	before := s.metrics.sumRetryOutcomes(phase, outcome)
 	return func() float64 {
-		return testutil.ToFloat64(s.metrics.retryOutcomes.WithLabelValues(phase, outcome)) - before
+		return s.metrics.sumRetryOutcomes(phase, outcome) - before
 	}
 }
 
@@ -370,8 +372,8 @@ func TestResponsesAlwaysRetriesUnprocessableEntity(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
-		if upstream.callCount() != maxAlwaysRetries+1 {
-			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
+		if upstream.callCount() != defaultRetryAttempts+1 {
+			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), defaultRetryAttempts+1)
 		}
 		body := rec.Body.String()
 		if !strings.Contains(body, "response.completed") {
@@ -412,8 +414,8 @@ func TestResponsesAlwaysRetriesTooManyRequests(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
-		if upstream.callCount() != maxAlwaysRetries+1 {
-			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
+		if upstream.callCount() != defaultRetryAttempts+1 {
+			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), defaultRetryAttempts+1)
 		}
 		if !strings.Contains(rec.Body.String(), "response.completed") {
 			t.Fatalf("retried Responses stream incomplete:\n%s", rec.Body.String())
@@ -473,8 +475,8 @@ func TestMessagesConnectPhaseExhausted(t *testing.T) {
 		if parsed := decodeAnthropicError(t, rec); parsed.Error.Type != "api_error" {
 			t.Fatalf("expected Anthropic-shaped error, got %s", rec.Body.String())
 		}
-		if upstream.callCount() != maxAlwaysRetries+1 {
-			t.Fatalf("upstream attempts = %d, want %d (1 + maxAlwaysRetries)", upstream.callCount(), maxAlwaysRetries+1)
+		if upstream.callCount() != defaultRetryAttempts+1 {
+			t.Fatalf("upstream attempts = %d, want %d (1 + defaultRetryAttempts)", upstream.callCount(), defaultRetryAttempts+1)
 		}
 		if exhausted() < 1 {
 			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryExhausted)

@@ -251,6 +251,36 @@ answers `404` too rather than falling through to another backend.
 configuration.
 `?backend=<name>` restricts the answer to one backend's catalog.
 
+### Fallbacks
+
+A route (or backend) can name fallback backends that take over when the
+primary fails **before anything has reached the client** — transport errors,
+a spent retry budget, or a terminal 5xx. Once streaming content has flowed,
+the break is surfaced in-band instead; replaying on another backend would
+duplicate output. Client-side rejections (4xx) are relayed, not failed over.
+
+```yaml
+backends:
+  - type: opencode
+    api_key_env: OPENCODE_API_KEY
+    retry_attempts: 4          # give up on this backend sooner...
+    retry_max_backoff: 10s
+    fallbacks:                  # ...and let grok serve the request
+      - backend: grok
+        model: grok-4.5
+```
+
+Fallback entries carry an optional model rewrite (`model`); without one the
+primary's upstream model name is kept. The route entry's `fallbacks` run
+first, then the primary backend's own, capped at four backends per request
+including the primary. Fallbacks also apply to qualified IDs like
+`opencode/model`, which bypass routes entirely.
+
+Each hand-off increments `llm_proxy_fallbacks_total{from_backend,to_backend}`;
+retry metrics carry `backend` and `model` labels, so exhaustion per backend
+is directly observable (see the alerting rules shipped in the deployment
+repository).
+
 ## Configuration
 
 Configuration loads in this order: environment variables (`LLM_PROXY_`
@@ -274,12 +304,24 @@ flags are applied afterwards.
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok`).                   |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
+| `backends[].fallbacks`       | —                                    | —                        | Alternate backends (with optional model rewrites) tried when this backend fails before anything reaches the client. |
+| `backends[].retry_attempts`  | —                                    | `10`                     | Extra connection-phase attempts after a transient upstream failure.        |
+| `backends[].retry_max_backoff` | —                                  | `30s`                    | Cap on a single retry pause (exponential backoff and provider `Retry-After`). |
 | `routes.<model>.backend`     | —                                    | —                        | Backend serving this inbound model name.                                    |
 | `routes.<model>.model`       | —                                    | inbound model name       | Upstream model name sent to the backend.                                    |
+| `routes.<model>.fallbacks`   | —                                    | —                        | Fallbacks for this route, tried before the backend's own.                   |
 | `default_route.backend`      | —                                    | —                        | Backend for models that match nothing else.                                 |
 | `default_route.model`        | —                                    | inbound model name       | Upstream model rewrite applied on the default route.                        |
+| `default_route.fallbacks`    | —                                    | —                        | Fallbacks applied when the default route backend fails.                     |
 | `log_level`                  | `LLM_PROXY_LOG_LEVEL`                | `info`                   | Log verbosity.                                                              |
 | `log_format`                 | `LLM_PROXY_LOG_FORMAT`               | `text`                   | `text` or JSON logging.                                                     |
+
+Tracing is configured through the standard `OTEL_*` environment variables
+(`OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_PROTOCOL`). When none is set, tracing stays a no-op.
+With a collector configured, every request gets a span and every backend
+attempt a child span carrying `llm_proxy.backend`, `llm_proxy.model` and the
+attempt's outcome; the access log gains the matching `trace_id`.
 
 Per-backend fields have no flat environment-variable form; configure them in
 the YAML file.
@@ -326,6 +368,8 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET    | `/v1/models`                  | Merged model catalog using `<backend>/<id>` IDs |
 | GET    | `/`                           | Dashboard: status, routing, per-model stats, client setup |
 | GET    | `/api/overview`               | JSON data used by the dashboard SPA |
+| GET    | `/api/updates/ws`             | WebSocket stream of stats-change events for the dashboard |
+| GET    | `/api/updates/sse`             | Server-Sent-Events twin of the WebSocket, for transports that cannot upgrade |
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |

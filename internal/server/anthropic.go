@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -35,7 +36,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rt, ok := s.resolve(r.Context(), envelope.Model)
+	chain, ok := s.resolveChain(r.Context(), envelope.Model)
 	if !ok {
 		writeAnthropicError(w, http.StatusNotFound, "not_found_error",
 			fmt.Sprintf("model %q has no available backend", envelope.Model))
@@ -44,53 +45,46 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Errored tool results arrive one turn after the call they answer;
 	// counting them here is what makes the tool-call error rate meaningful.
-	s.stats.recordInboundToolErrors(body, rt.backend.Name(), rt.model)
+	s.stats.recordInboundToolErrors(body, chain[0].backend.Name(), chain[0].model)
 
 	log := s.log.WithFields(logrus.Fields{
 		"request_id": RequestID(r.Context()),
 		"model":      envelope.Model,
-		"backend":    rt.backend.Name(),
+		"backend":    chain[0].backend.Name(),
 	})
 
 	env := translateEnv{
 		kind:        backend.KindAnthropic,
 		body:        body,
-		model:       rt.model,
 		clientModel: envelope.Model,
 		streaming:   envelope.Stream,
 	}
-	wire, servable := resolveWire(env.kind, rt.backend, rt.model)
-	if !servable {
-		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "no translation path for backend")
-		return
-	}
-	var payload []byte
-	if wire.native {
-		rewritten, err := rewriteModel(body, rt.model)
-		if err != nil {
-			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error",
-				"request body is not valid JSON")
-			return
-		}
-		payload = rewritten
-	} else {
-		request, err := translate.ParseRequest(body)
-		if err != nil {
-			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error",
-				fmt.Sprintf("invalid Anthropic Messages request: %v", err))
-			return
-		}
-		env.thinking = wantsThinking(request)
-		payload, err = wire.path.encode(env)
-		if err != nil {
-			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error",
-				fmt.Sprintf("translating request for backend %s failed: %v", rt.backend.Name(), err))
-			return
-		}
-	}
-	s.exchange(w, r, log, rt, anthropicDialect(func(w http.ResponseWriter, resp *backend.Response) {
+	s.exchangeChain(w, r, log, chain, anthropicDialect(func(w http.ResponseWriter, resp *backend.Response) {
 		s.relayUpstreamError(w, log, resp)
-	}), wire, payload, r.Header.Clone(), env)
+	}), env, prepareAnthropicRequest)
+}
+
+// prepareAnthropicRequest encodes an Anthropic Messages body for one route's
+// backend: verbatim (model rewritten) when the backend speaks Anthropic
+// natively, translated to its wire format otherwise.
+func prepareAnthropicRequest(rt route, wire resolvedWire, env *translateEnv) ([]byte, error) {
+	if wire.native {
+		rewritten, err := rewriteModel(env.body, rt.model)
+		if err != nil {
+			return nil, errors.New("request body is not valid JSON")
+		}
+		return rewritten, nil
+	}
+	request, err := translate.ParseRequest(env.body)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Anthropic Messages request: %v", err)
+	}
+	env.thinking = wantsThinking(request)
+	payload, err := wire.path.encode(*env)
+	if err != nil {
+		return nil, fmt.Errorf("translating request for backend %s failed: %v", rt.backend.Name(), err)
+	}
+	return payload, nil
 }
 
 // wantsThinking reports whether a successfully parsed Anthropic request asked

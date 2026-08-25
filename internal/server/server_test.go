@@ -246,11 +246,13 @@ func TestCatalogServesStaleWithinCap(t *testing.T) {
 
 	cb := &countingBackend{Backend: fb}
 
-	// Inject an entry that expired 5 minutes ago: within the 10-minute cap.
+	// Inject an entry fetched 6 minutes ago (expired 5 minutes ago with the
+	// 1-minute TTL): within the 10-minute cap.
 	s.catalogs.mu.Lock()
 	s.catalogs.entries["fakeoa"] = cachedCatalog{
-		models:  []string{"stale-model"},
-		expires: time.Now().Add(-5 * time.Minute),
+		models:    []string{"stale-model"},
+		expires:   time.Now().Add(-5 * time.Minute),
+		fetchedAt: time.Now().Add(-6 * time.Minute),
 	}
 	s.catalogs.mu.Unlock()
 

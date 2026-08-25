@@ -3,6 +3,11 @@ import { useQueryClient } from '@tanstack/react-query'
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000
 const MAX_RECONNECT_DELAY_MS = 15_000
+// WebSockets need a connection the server can hijack; some paths (HTTP/2
+// through a proxy) cannot, and the dial fails with 501 forever. After this
+// many failed dials the hook switches to the SSE twin endpoint, which works
+// over every transport.
+const WS_ATTEMPTS_BEFORE_SSE = 2
 
 export function useLiveStatsUpdates() {
   const queryClient = useQueryClient()
@@ -10,9 +15,32 @@ export function useLiveStatsUpdates() {
 
   useEffect(() => {
     let socket: WebSocket | undefined
+    let eventSource: EventSource | undefined
     let reconnectTimer: number | undefined
     let retryDelay = INITIAL_RECONNECT_DELAY_MS
+    let wsFailures = 0
     let stopped = false
+
+    const onEvent = (data: unknown) => {
+      if ((data as string).startsWith('{"type":"stats-updated"}')) {
+        void queryClient.invalidateQueries({ queryKey: ['stats'] })
+        void queryClient.invalidateQueries({ queryKey: ['stats-series'] })
+        void queryClient.invalidateQueries({ queryKey: ['overview'] })
+      }
+    }
+
+    const connectSSE = () => {
+      eventSource = new EventSource('/api/updates/sse')
+      eventSource.addEventListener('open', () => {
+        retryDelay = INITIAL_RECONNECT_DELAY_MS
+        setConnected(true)
+      })
+      eventSource.addEventListener('message', (event) => onEvent(event.data))
+      eventSource.addEventListener('error', () => {
+        setConnected(false)
+        // EventSource reconnects on its own; only surface the state.
+      })
+    }
 
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -20,23 +48,23 @@ export function useLiveStatsUpdates() {
 
       socket.addEventListener('open', () => {
         retryDelay = INITIAL_RECONNECT_DELAY_MS
+        wsFailures = 0
         setConnected(true)
       })
 
-      socket.addEventListener('message', (event) => {
-        if ((event.data as string).startsWith('{"type":"stats-updated"}')) {
-          void queryClient.invalidateQueries({ queryKey: ['stats'] })
-          void queryClient.invalidateQueries({ queryKey: ['stats-series'] })
-          void queryClient.invalidateQueries({ queryKey: ['overview'] })
-        }
-      })
+      socket.addEventListener('message', (event) => onEvent(event.data))
 
       socket.addEventListener('close', () => {
         setConnected(false)
-        if (!stopped) {
-          reconnectTimer = window.setTimeout(connect, retryDelay)
-          retryDelay = Math.min(retryDelay * 2, MAX_RECONNECT_DELAY_MS)
+        if (stopped) return
+        if (eventSource) return
+        wsFailures += 1
+        if (wsFailures > WS_ATTEMPTS_BEFORE_SSE) {
+          connectSSE()
+          return
         }
+        reconnectTimer = window.setTimeout(connect, retryDelay)
+        retryDelay = Math.min(retryDelay * 2, MAX_RECONNECT_DELAY_MS)
       })
     }
 
@@ -46,6 +74,7 @@ export function useLiveStatsUpdates() {
       stopped = true
       window.clearTimeout(reconnectTimer)
       socket?.close()
+      eventSource?.close()
     }
   }, [queryClient])
 

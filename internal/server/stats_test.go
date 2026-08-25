@@ -277,11 +277,38 @@ func TestStatsRecordsUpstreamFailureAndTransportError(t *testing.T) {
 		// Both requests fail transiently, so each records the full bounded retry
 		// budget plus its final surfaced attempt. Retried attempts count as their
 		// own upstream requests so the uptime denominator stays honest.
-		if row.Requests != 2*(maxAlwaysRetries+1) || row.Successes != 0 || row.Uptime != 0 {
+		if row.Requests != 2*(defaultRetryAttempts+1) || row.Successes != 0 || row.Uptime != 0 {
 			t.Fatalf("availability = %d/%d uptime %f", row.Successes, row.Requests, row.Uptime)
 		}
 	})
 }
+func TestSnapshotWithPersistenceCountsEachRequestOnce(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	st := newStats(reg, config.StatsConfig{PersistFile: filepath.Join(t.TempDir(), "stats.json")})
+	defer func() { _ = st.Close() }()
+
+	// One successful and one failed attempt against the same backend/model.
+	ok := st.track("fake", "upstream-m1")
+	ok.setUpstreamStatus(http.StatusOK)
+	ok.done()
+	bad := st.track("fake", "upstream-m1")
+	bad.setUpstreamStatus(http.StatusServiceUnavailable)
+	bad.done()
+
+	for _, row := range st.snapshot() {
+		if row.Backend != "fake" || row.Model != "upstream-m1" {
+			continue
+		}
+		// record() folds each tracker into both the lifetime counters and the
+		// current 5-minute bucket; the summary must not sum the two.
+		if row.Requests != 2 || row.Successes != 1 {
+			t.Fatalf("requests = %d, successes = %d; want 1 success in 2 requests (no double count)", row.Requests, row.Successes)
+		}
+		return
+	}
+	t.Fatal("snapshot missing fake/upstream-m1 row")
+}
+
 func TestStatsSeriesRecordsWithoutPersistence(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	st := newStats(reg, config.StatsConfig{})

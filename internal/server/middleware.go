@@ -7,6 +7,10 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // statusRecorder captures the response status for logging and metrics.
@@ -47,8 +51,8 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.delegate
 }
 
-// withMiddleware wraps the mux with panic recovery, request IDs, access
-// logging, metrics, body limits, and API-key authentication.
+// withMiddleware wraps the mux with panic recovery, request IDs, tracing,
+// access logging, metrics, body limits, and API-key authentication.
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -56,6 +60,14 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-Id", requestID)
 		rec := &statusRecorder{delegate: w}
 		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID))
+
+		spanCtx, span := tracer.Start(r.Context(), "llm-proxy request",
+			trace.WithAttributes(
+				attribute.String("http.request.method", r.Method),
+				attribute.String("url.path", r.URL.Path),
+				attribute.String("llm_proxy.request_id", requestID),
+			))
+		r = r.WithContext(spanCtx)
 
 		defer func() {
 			if p := recover(); p != nil {
@@ -65,15 +77,22 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 					writeError(rec, r, http.StatusInternalServerError, "api_error", "internal proxy error")
 				}
 			}
-			s.metrics.observe(r.Method, r.URL.Path, rec.status, time.Since(start))
-			s.log.WithFields(map[string]any{
+			span.SetAttributes(attribute.Int("http.response.status_code", rec.status))
+			span.End()
+			fields := map[string]any{
 				"request_id": requestID,
 				"method":     r.Method,
 				"path":       r.URL.Path,
 				"status":     rec.status,
 				"bytes":      rec.bytes,
 				"duration":   time.Since(start).String(),
-			}).Info("request")
+			}
+			// Correlate the access log with the trace when one is active.
+			if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+				fields["trace_id"] = sc.TraceID().String()
+			}
+			s.metrics.observe(r.Method, r.URL.Path, rec.status, time.Since(start))
+			s.log.WithFields(fields).Info("request")
 		}()
 
 		if !isProbePath(r.URL.Path) && !s.authenticate(rec, r) {
@@ -113,6 +132,10 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	s.metrics.authSuccesses.WithLabelValues(user).Inc()
 	return true
 }
+
+// tracer is the global OTel tracer; it is a no-op unless OTEL_* environment
+// variables installed a real provider at startup.
+var tracer = otel.Tracer("llm-proxy")
 
 type requestIDKey struct{}
 

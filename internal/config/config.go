@@ -33,12 +33,33 @@ type BackendConfig struct {
 	// FreeOnly restricts the backend to zero-cost models. Only backends with
 	// published pricing (venice) honor it; others ignore the flag.
 	FreeOnly bool `mapstructure:"free_only"`
+	// Fallbacks names alternate backends (with optional model rewrites) that
+	// serve the request when this backend fails before anything has reached
+	// the client. Tried in order after the primary route's own fallbacks.
+	Fallbacks []FallbackRoute `mapstructure:"fallbacks"`
+	// RetryAttempts caps the extra connection-phase attempts made after a
+	// transient upstream failure while nothing has been forwarded. Zero means
+	// the built-in default (10).
+	RetryAttempts int `mapstructure:"retry_attempts"`
+	// RetryMaxBackoff caps a single retry pause (exponential backoff from
+	// 750ms, and provider Retry-After values). Zero means 30s.
+	RetryMaxBackoff time.Duration `mapstructure:"retry_max_backoff"`
+}
+
+// FallbackRoute is one alternate backend for a failing route: the backend
+// takes the request, with the model optionally rewritten for that backend.
+type FallbackRoute struct {
+	Backend string `mapstructure:"backend"`
+	Model   string `mapstructure:"model"`
 }
 
 // ModelRoute maps an inbound model name to backend + upstream model.
 type ModelRoute struct {
 	Backend string `mapstructure:"backend"`
 	Model   string `mapstructure:"model"`
+	// Fallbacks are tried in order when the primary backend fails before
+	// anything has reached the client.
+	Fallbacks []FallbackRoute `mapstructure:"fallbacks"`
 }
 
 // ServerConfig holds listener settings.
@@ -136,15 +157,47 @@ func (c *Config) Validate() error {
 		if !backend.Has(r.Backend) {
 			return fmt.Errorf("routes[%s]: unknown backend %q (registered: %v)", name, r.Backend, backend.Names())
 		}
+		if err := validateFallbacks(fmt.Sprintf("routes[%s]", name), r.Fallbacks, seen); err != nil {
+			return err
+		}
+	}
+	if err := validateFallbacks("default_route", c.DefaultRoute.Fallbacks, seen); err != nil {
+		return err
 	}
 	if d := c.DefaultRoute.Backend; d != "" && !seen[d] {
 		return fmt.Errorf("default_route: unknown backend %q", d)
 	}
 	for _, b := range c.Backends {
 		_ = b.Enabled
+		if err := validateFallbacks(fmt.Sprintf("backends[%s]", b.Type), b.Fallbacks, seen); err != nil {
+			return err
+		}
+		if b.RetryAttempts < 0 {
+			return fmt.Errorf("backends[%s]: retry_attempts must not be negative, got %d", b.Type, b.RetryAttempts)
+		}
+		if b.RetryMaxBackoff != 0 && b.RetryMaxBackoff < time.Second {
+			return fmt.Errorf("backends[%s]: retry_max_backoff must be at least 1s, got %v", b.Type, b.RetryMaxBackoff)
+		}
 	}
 	if c.Stats.PersistInterval != 0 && c.Stats.PersistInterval < 5*time.Second {
 		return fmt.Errorf("stats.persist_interval must be at least 5s, got %v", c.Stats.PersistInterval)
+	}
+	return nil
+}
+
+// validateFallbacks checks that every fallback names a configured backend
+// type. seen maps backend types present in this config; a fallback may point
+// at a backend type that is valid but not configured only when the registry
+// knows it, so unknown types are rejected here and missing ones at request
+// time.
+func validateFallbacks(where string, fallbacks []FallbackRoute, seen map[string]bool) error {
+	for _, f := range fallbacks {
+		if !backend.Has(f.Backend) {
+			return fmt.Errorf("%s: fallbacks: unknown backend %q (registered: %v)", where, f.Backend, backend.Names())
+		}
+		if !seen[f.Backend] {
+			return fmt.Errorf("%s: fallbacks: backend %q is not configured", where, f.Backend)
+		}
 	}
 	return nil
 }

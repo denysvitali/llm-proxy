@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/translate"
@@ -267,13 +269,114 @@ func emitResponsesStreamFailure(w http.ResponseWriter, message string) {
 	}
 }
 
+// exchangeOutcome says how one backend attempt ended, so the fallback chain
+// knows whether another backend may still take the request over.
+type exchangeOutcome int
+
+const (
+	// exchangeOK: the backend served the request to completion.
+	exchangeOK exchangeOutcome = iota
+	// exchangeRetryable: the backend failed before anything reached the
+	// client (transport error, terminal 5xx, or a spent body-phase retry
+	// budget), so a fallback can replay the request invisibly.
+	exchangeRetryable
+	// exchangeSurfaced: content had already flowed when the upstream broke;
+	// the failure was surfaced as the client protocol's in-band error and
+	// replaying on another backend would duplicate output.
+	exchangeSurfaced
+	// exchangeRejected: a non-retryable upstream rejection was relayed to the
+	// client verbatim (typically a 4xx the fallback would repeat).
+	exchangeRejected
+)
+
+// exchangeOutcomeName renders an outcome for span attributes.
+func exchangeOutcomeName(outcome exchangeOutcome) string {
+	switch outcome {
+	case exchangeOK:
+		return "ok"
+	case exchangeRetryable:
+		return "retryable"
+	case exchangeSurfaced:
+		return "surfaced"
+	case exchangeRejected:
+		return "rejected"
+	default:
+		return "unknown"
+	}
+}
+
+// kindName labels an inbound API in client-facing error messages.
+func kindName(kind backend.Kind) string {
+	switch kind {
+	case backend.KindAnthropic:
+		return "Anthropic Messages"
+	case backend.KindOpenAIChat:
+		return "Chat Completions"
+	case backend.KindOpenAIResponses:
+		return "Responses"
+	default:
+		return string(kind)
+	}
+}
+
+// exchangeChain walks a resolved route chain: each backend gets the request
+// (encoded per its wire format by prepare) until one serves it. A backend
+// that fails or cannot encode before anything reaches the client hands the
+// request to the next fallback; the last backend's failure is written to the
+// client exactly as a single-backend proxy would have.
+func (s *Server) exchangeChain(
+	w http.ResponseWriter,
+	r *http.Request,
+	log logrus.FieldLogger,
+	chain []route,
+	dialect clientDialect,
+	env translateEnv,
+	prepare func(rt route, wire resolvedWire, env *translateEnv) ([]byte, error),
+) {
+	for i := range chain {
+		rt := chain[i]
+		final := i == len(chain)-1
+		routeLog := log.WithField("backend", rt.backend.Name())
+		wire, servable := resolveWire(env.kind, rt.backend, rt.model)
+		if !servable {
+			if final {
+				dialect.writeError(w, http.StatusBadRequest, "invalid_request_error",
+					fmt.Sprintf("backend %s does not support the %s API", rt.backend.Name(), kindName(env.kind)))
+				return
+			}
+			routeLog.Warn("backend cannot serve this API; trying next fallback")
+			continue
+		}
+		routeEnv := env
+		routeEnv.model = rt.model
+		payload, err := prepare(rt, wire, &routeEnv)
+		if err != nil {
+			if final {
+				dialect.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+				return
+			}
+			routeLog.WithError(err).Warn("encoding request for backend failed; trying next fallback")
+			continue
+		}
+		outcome := s.exchange(w, r, routeLog, rt, dialect, wire, payload, r.Header.Clone(), routeEnv, final)
+		if outcome != exchangeRetryable || final {
+			return
+		}
+		s.metrics.noteFallback(rt.backend.Name(), chain[i+1].backend.Name())
+		routeLog.WithField("fallback", chain[i+1].backend.Name()).
+			Warn("backend failed before any output reached the client; falling back")
+	}
+}
+
 // exchange dispatches one prepared request: sends upstream on the chosen
 // wire format with transient-failure retries (native requests pass through
 // with only the model rewritten), sniffs every upstream body for usage
 // stats, and relays success bodies to the client — verbatim when native,
 // translated otherwise, streaming or buffered as the client asked. Broken
 // upstream bodies retry while nothing has reached the client; once content
-// has flowed they surface as the protocol's in-band failure.
+// has flowed they surface as the protocol's in-band failure. final marks the
+// last backend of a fallback chain: only it may write failure responses,
+// earlier ones report exchangeRetryable so the chain can move on.
 func (s *Server) exchange(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -284,9 +387,23 @@ func (s *Server) exchange(
 	payload []byte,
 	header http.Header,
 	env translateEnv,
-) {
+	final bool,
+) (outcome exchangeOutcome) {
 	tr := s.stats.track(rt.backend.Name(), rt.model)
 	defer tr.done()
+
+	// One child span per backend attempt, so a fallback chain shows up as
+	// siblings under the request span with each backend's outcome.
+	spanCtx, span := tracer.Start(r.Context(), "upstream "+rt.backend.Name(),
+		trace.WithAttributes(
+			attribute.String("llm_proxy.backend", rt.backend.Name()),
+			attribute.String("llm_proxy.model", rt.model),
+		))
+	defer func() {
+		span.SetAttributes(attribute.String("llm_proxy.outcome", exchangeOutcomeName(outcome)))
+		span.End()
+	}()
+	r = r.WithContext(spanCtx)
 
 	wireFormat := env.kind
 	if !wire.native && wire.path != nil {
@@ -324,34 +441,65 @@ func (s *Server) exchange(
 
 	resp, err := s.sendWithRetry(r.Context(), log, rt, fetch)
 	if err != nil {
+		if r.Context().Err() != nil {
+			// The client stopped waiting; there is nobody to answer.
+			return exchangeRetryable
+		}
 		log.WithError(err).Warn("backend send failed")
+		if !final {
+			return exchangeRetryable
+		}
 		dialect.writeError(w, http.StatusBadGateway, "api_error", "backend request failed")
-		return
+		return exchangeRetryable
 	}
 	tr.setUpstreamStatus(resp.Status)
 
 	if resp.Status < 200 || resp.Status >= 300 {
+		if resp.Status >= 500 && !final {
+			// A server-side failure the client must not see while a fallback
+			// remains; drain so the connection can be reused.
+			log.WithField("upstream_status", resp.Status).Warn("upstream server error; falling back")
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorRelay))
+			_ = resp.Body.Close()
+			return exchangeRetryable
+		}
 		dialect.relayError(w, resp)
-		return
+		return exchangeRejected
 	}
 
+	// giveUp answers a spent body-phase retry budget. Unless this is the
+	// chain's last backend the failure is recorded as retryable instead of
+	// written, so the chain can hand the request to the next backend.
+	retryable := false
 	giveUp := func(w http.ResponseWriter, message string) {
+		if !final {
+			retryable = true
+			log.Warn("upstream body retries spent before any output; giving up on backend")
+			return
+		}
 		dialect.writeError(w, http.StatusBadGateway, "api_error", message)
 	}
 
 	switch {
 	case wire.native && env.streaming:
-		s.relayNativeStreaming(r.Context(), w, log, resp, fetch, streamDoneChecker(wireFormat), dialect.surfaceStream, giveUp)
+		if surfaced := s.relayNativeStreaming(r.Context(), w, log, rt, resp, fetch, streamDoneChecker(wireFormat), dialect.surfaceStream, giveUp); surfaced {
+			return exchangeSurfaced
+		}
 	case wire.native:
-		s.relayNativeBuffered(r.Context(), w, log, resp, fetch, giveUp)
+		s.relayNativeBuffered(r.Context(), w, log, rt, resp, fetch, giveUp)
 	case env.streaming:
-		s.relayTranslatedStreaming(r.Context(), w, log, resp, fetch, env, wire.path.stream, giveUp)
+		if surfaced := s.relayTranslatedStreaming(r.Context(), w, log, rt, resp, fetch, env, wire.path.stream, giveUp); surfaced {
+			return exchangeSurfaced
+		}
 	default:
-		data, err := s.fetchResponseBody(r.Context(), resp, fetch, maxTranslatedResponseBody)
+		data, err := s.fetchResponseBody(r.Context(), rt, resp, fetch, maxTranslatedResponseBody)
 		if err != nil {
 			log.WithError(err).Warn("reading upstream response body failed")
 			giveUp(w, fmt.Sprintf("upstream response could not be read: %v", err))
-			return
+			if retryable {
+				return exchangeRetryable
+			}
+			return exchangeOK
 		}
 		out, err := wire.path.decode(env, data)
 		if err != nil {
@@ -360,12 +508,19 @@ func (s *Server) exchange(
 				log.WithError(err).Warn("upstream answered success with an error body")
 				dialect.writeError(w, http.StatusBadGateway, "api_error",
 					fmt.Sprintf("upstream returned an error: %v", upstreamErr))
-				return
+				return exchangeRejected
 			}
 			log.WithError(err).Warn("translating upstream response failed")
 			giveUp(w, "upstream returned an unreadable response")
-			return
+			if retryable {
+				return exchangeRetryable
+			}
+			return exchangeOK
 		}
 		writeJSON(w, http.StatusOK, json.RawMessage(out))
 	}
+	if retryable {
+		return exchangeRetryable
+	}
+	return exchangeOK
 }

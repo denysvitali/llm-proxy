@@ -310,7 +310,7 @@ func TestBackendByType(t *testing.T) {
 		t.Errorf("BackendByType(\"venice\") = (%+v, %v)", got, ok)
 	}
 	got, ok = cfg.BackendByType("opencode")
-	if ok || got != (BackendConfig{}) {
+	if ok || got.Type != "" {
 		t.Errorf("BackendByType(\"opencode\") = (%+v, %v), want miss", got, ok)
 	}
 }

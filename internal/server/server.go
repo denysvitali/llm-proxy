@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"sort"
 	"strings"
@@ -99,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("GET /api/grok/usage", s.handleGrokUsage)
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
+	mux.HandleFunc("GET /api/updates/sse", s.handleUpdatesSSE)
 	mux.HandleFunc("GET /login", s.grokLoginPage)
 	mux.HandleFunc("POST /login", s.grokLogin)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -116,20 +118,24 @@ type route struct {
 	model   string
 }
 
-// resolve maps an inbound model name to a backend + upstream model.
+// resolveWithFallbacks maps an inbound model name to a backend + upstream
+// model, and reports the fallback entries attached to the route entry that
+// matched (explicit route or default route; qualified IDs and catalog
+// matches carry none of their own).
+//
 // A "<backend>/<model>" ID has highest precedence: it addresses one backend
 // directly, bypassing routes, catalogs and DefaultRoute (split at the first
 // "/", so nested upstream names like "nousresearch/hermes-4-70b" on backend
 // "nous" work). Otherwise: explicit Routes entry, then live catalogs of
 // enabled backends in config order, then DefaultRoute. ok=false means no
 // route exists; callers answer 404 (model not found).
-func (s *Server) resolve(ctx context.Context, model string) (route, bool) {
+func (s *Server) resolveWithFallbacks(ctx context.Context, model string) (route, []config.FallbackRoute, bool) {
 	if prefix, rest, found := strings.Cut(model, "/"); found && rest != "" {
 		if b, known := s.byName[prefix]; known {
 			if !s.enabled(prefix) {
-				return route{}, false
+				return route{}, nil, false
 			}
-			return route{backend: b, model: rest}, true
+			return route{backend: b, model: rest}, nil, true
 		}
 	}
 	if r, ok := s.cfg.Routes[model]; ok {
@@ -138,7 +144,7 @@ func (s *Server) resolve(ctx context.Context, model string) (route, bool) {
 			if upstream == "" {
 				upstream = model
 			}
-			return route{backend: b, model: upstream}, true
+			return route{backend: b, model: upstream}, r.Fallbacks, true
 		}
 	}
 	for _, b := range s.backends {
@@ -151,7 +157,7 @@ func (s *Server) resolve(ctx context.Context, model string) (route, bool) {
 			continue
 		}
 		if hasModel(models, model) {
-			return route{backend: b, model: model}, true
+			return route{backend: b, model: model}, nil, true
 		}
 	}
 	if d := s.cfg.DefaultRoute; d.Backend != "" {
@@ -160,10 +166,75 @@ func (s *Server) resolve(ctx context.Context, model string) (route, bool) {
 			if upstream == "" {
 				upstream = model
 			}
-			return route{backend: b, model: upstream}, true
+			return route{backend: b, model: upstream}, d.Fallbacks, true
 		}
 	}
-	return route{}, false
+	return route{}, nil, false
+}
+
+// maxRouteChain bounds how many backends one request may visit: the primary
+// route plus up to three fallbacks.
+const maxRouteChain = 4
+
+// resolveChain resolves the primary route and appends the fallbacks that
+// apply to it: those on the matched route entry first, then those configured
+// on the primary backend itself (so qualified IDs like "opencode/model" can
+// fail over too). Fallbacks naming unknown, disabled or repeated backends are
+// skipped; an empty model rewrite keeps the primary's upstream model.
+func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool) {
+	primary, fallbacks, ok := s.resolveWithFallbacks(ctx, model)
+	if !ok {
+		return nil, false
+	}
+	chain := []route{primary}
+	if bc, ok := s.cfg.BackendByType(primary.backend.Name()); ok {
+		fallbacks = append(fallbacks, bc.Fallbacks...)
+	}
+	for _, f := range fallbacks {
+		if len(chain) >= maxRouteChain {
+			break
+		}
+		b, known := s.byName[f.Backend]
+		if !known || !s.enabled(f.Backend) {
+			continue
+		}
+		duplicate := false
+		for _, rt := range chain {
+			if rt.backend.Name() == b.Name() {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		upstream := f.Model
+		if upstream == "" {
+			upstream = primary.model
+		}
+		chain = append(chain, route{backend: b, model: upstream})
+	}
+	return chain, true
+}
+
+// retryBudget is the retry policy for one backend, resolved from config with
+// defaults filled in.
+type retryBudget struct {
+	attempts   int           // extra connection-phase attempts after a transient failure
+	maxBackoff time.Duration // cap on any single retry pause
+}
+
+func (s *Server) retryBudgetFor(backendName string) retryBudget {
+	b := retryBudget{attempts: defaultRetryAttempts, maxBackoff: defaultRetryMaxBackoff}
+	if bc, ok := s.cfg.BackendByType(backendName); ok {
+		if bc.RetryAttempts > 0 {
+			b.attempts = bc.RetryAttempts
+		}
+		if bc.RetryMaxBackoff > 0 {
+			b.maxBackoff = bc.RetryMaxBackoff
+		}
+	}
+	return b
 }
 
 func (s *Server) enabled(name string) bool {
@@ -206,8 +277,10 @@ func isDatedSnapshotSuffix(s string) bool {
 }
 
 type cachedCatalog struct {
-	models  []string
-	expires time.Time
+	models    []string
+	expires   time.Time
+	fetchedAt time.Time
+	lastWarn  time.Time
 }
 
 const (
@@ -218,6 +291,10 @@ const (
 	// the TTL). Beyond it the refresh error propagates so a permanently
 	// broken catalog endpoint does not go unnoticed.
 	catalogMaxStaleness = 10 * catalogTTL
+	// catalogStaleWarnInterval throttles the "serving stale catalog" warning
+	// to one line per backend per interval; without it every request past the
+	// TTL logs while the endpoint is failing.
+	catalogStaleWarnInterval = 5 * time.Minute
 )
 
 // catalogCache memoizes backend model lists for catalogTTL so request routing
@@ -247,11 +324,20 @@ func (s *Server) catalog(ctx context.Context, b backend.Backend) ([]string, erro
 	if err != nil {
 		if ok {
 			// Age is measured from when the entry was last refreshed.
-			age := now.Sub(cached.expires.Add(-s.catalogs.ttl))
+			age := now.Sub(cached.fetchedAt)
 			if age < catalogMaxStaleness {
-				s.log.WithField("backend", b.Name()).
-					WithField("age", age.Round(time.Second)).
-					Warn("serving stale model catalog; backend /models is failing")
+				if now.Sub(cached.lastWarn) >= catalogStaleWarnInterval {
+					cached.lastWarn = now
+					s.catalogs.mu.Lock()
+					if existing, still := s.catalogs.entries[b.Name()]; still {
+						existing.lastWarn = now
+						s.catalogs.entries[b.Name()] = existing
+					}
+					s.catalogs.mu.Unlock()
+					s.log.WithField("backend", b.Name()).
+						WithField("age", age.Round(time.Second)).
+						Warn("serving stale model catalog; backend /models is failing")
+				}
 				return cached.models, nil
 			}
 			s.log.WithField("backend", b.Name()).
@@ -262,9 +348,23 @@ func (s *Server) catalog(ctx context.Context, b backend.Backend) ([]string, erro
 	}
 
 	s.catalogs.mu.Lock()
-	s.catalogs.entries[b.Name()] = cachedCatalog{models: models, expires: now.Add(s.catalogs.ttl)}
+	s.catalogs.entries[b.Name()] = cachedCatalog{
+		models:    models,
+		expires:   now.Add(catalogJitter(s.catalogs.ttl)),
+		fetchedAt: now,
+	}
 	s.catalogs.mu.Unlock()
 	return models, nil
+}
+
+// catalogJitter stretches a TTL by up to ±10% so several backends refreshed
+// around the same moment do not re-fetch in lockstep forever after.
+func catalogJitter(ttl time.Duration) time.Duration {
+	spread := ttl / 10
+	if spread <= 0 {
+		return ttl
+	}
+	return ttl + time.Duration(rand.Int64N(int64(2*spread)+1)) - spread
 }
 
 // rewriteModel replaces only the top-level "model" string value of a JSON
