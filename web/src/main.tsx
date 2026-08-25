@@ -12,7 +12,6 @@ import App from './App'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchInterval: 10_000,
       placeholderData: (prev: unknown) => prev,
     },
   },

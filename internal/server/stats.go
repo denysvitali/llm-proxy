@@ -36,6 +36,8 @@ type Stats struct {
 	calls    *prometheus.CounterVec   // {backend,model}: tool calls observed in upstream responses
 	errs     *prometheus.CounterVec   // {backend,model}: errored tool results seen in inbound requests
 
+	updates *updateHub
+
 	mu     sync.RWMutex // protects models
 	models map[string]*modelStats
 	cfg    config.StatsConfig
@@ -88,8 +90,9 @@ func newStats(reg *prometheus.Registry, cfg config.StatsConfig) *Stats {
 			Name: "llm_proxy_model_tool_errors_total",
 			Help: "Errored tool results (is_error) seen in later inbound requests.",
 		}, []string{"backend", "model"}),
-		models: make(map[string]*modelStats),
-		cfg:    cfg,
+		models:  make(map[string]*modelStats),
+		cfg:     cfg,
+		updates: newUpdateHub(),
 	}
 	reg.MustRegister(st.requests, st.ttft, st.e2e, st.tokens, st.through, st.calls, st.errs)
 	if st.cfg.PersistFile != "" && st.cfg.PersistInterval > 0 {
@@ -151,6 +154,7 @@ func (t *tracker) done() {
 
 	if t.status == statusError {
 		t.st.record(t.labels[0], t.labels[1], t.status, 0, 0, 0, t.rep)
+		t.st.updates.notify()
 		return // no latency distribution for requests without an upstream response
 	}
 	var ttft, e2e, throughput float64
@@ -170,6 +174,7 @@ func (t *tracker) done() {
 		}
 	}
 	t.st.record(t.labels[0], t.labels[1], t.status, ttft, e2e, throughput, t.rep)
+	t.st.updates.notify()
 }
 
 // recordInboundToolErrors attributes errored tool results carried by an
@@ -781,6 +786,7 @@ func (st *Stats) record(backend, model, status string, ttft, e2e, throughput flo
 	ms.mu.Unlock()
 
 	st.maybeEvict(ms)
+	st.updates.notify()
 }
 
 // recordToolErrors attributes errored tool results to the current bucket of
@@ -797,6 +803,7 @@ func (st *Stats) recordToolErrors(backend, model string, n int64) {
 	b := ms.bucketForLocked(time.Now().Unix() / 300)
 	b.ToolErrors += uint64(n)
 	ms.mu.Unlock()
+	st.updates.notify()
 }
 
 func (st *Stats) modelFor(key string) *modelStats {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   Box,
+  Badge,
   Card,
   Code,
   Group,
@@ -25,6 +26,7 @@ import { BarChart, LineChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { fetchOverview, fetchStats, fetchStatsSeries } from '../api'
+import { useLiveStatsUpdates } from '../useLiveUpdates'
 import type { ModelStat, SeriesPoint } from '../api'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
@@ -35,6 +37,7 @@ import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMi
 import { Fade } from '../App'
 
 export default function OverviewPage() {
+  const liveConnected = useLiveStatsUpdates()
   const statsQ = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
   const ovQ = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
   const [range, setRange] = useState('24h')
@@ -42,7 +45,6 @@ export default function OverviewPage() {
     queryKey: ['stats-series', range],
     queryFn: () => fetchStatsSeries(range),
     placeholderData: keepPreviousData,
-    refetchInterval: 30_000,
   })
 
   const models = statsQ.data?.models ?? []
@@ -109,6 +111,9 @@ export default function OverviewPage() {
                 {seriesQ.isError ? 'History unavailable' : `${requestCount.toLocaleString('en-US')} requests in range`}
               </Text>
             </div>
+            <Badge variant="light" color={liveConnected ? 'teal' : 'orange'} size="sm">
+              {liveConnected ? 'Live' : 'Reconnecting'}
+            </Badge>
             <SegmentedControl
               value={range}
               onChange={setRange}

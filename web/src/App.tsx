@@ -16,6 +16,7 @@ import { IconDeviceDesktop, IconMoonStars, IconSun } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { fetchOverview } from './api'
+import { useLiveStatsUpdates } from './useLiveUpdates'
 import { NAV } from './nav'
 import OverviewPage from './pages/Overview'
 import ModelsPage from './pages/Models'
@@ -65,24 +66,25 @@ export default function App() {
 
 function HeaderBrand() {
   const { data: ov } = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const connected = useLiveStatsUpdates()
   return (
     <NavLink to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
       <Group gap={8} wrap="nowrap">
-      <Box
-        style={{
-          width: 26,
-          height: 26,
-          borderRadius: 7,
-          background: 'linear-gradient(135deg, var(--mantine-color-blue-5), var(--mantine-color-blue-7))',
-          display: 'grid',
-          placeItems: 'center',
-          flexShrink: 0,
-        }}
-      >
-        <Text fw={800} c="white" fz={14} lh={1}>
-          λ
-        </Text>
-      </Box>
+        <Box
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 7,
+            background: 'linear-gradient(135deg, var(--mantine-color-blue-5), var(--mantine-color-blue-7))',
+            display: 'grid',
+            placeItems: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <Text fw={800} c="white" fz={14} lh={1}>
+            λ
+          </Text>
+        </Box>
       <Title
         order={4}
         mb={0}
@@ -101,6 +103,11 @@ function HeaderBrand() {
             v{ov.version}
           </Badge>
         )}
+        <Tooltip label={connected ? 'Real-time updates connected' : 'Reconnecting to real-time updates'}>
+          <Badge variant="light" color={connected ? 'teal' : 'orange'} size="sm" aria-label="Live update status">
+            {connected ? 'Live' : 'Offline'}
+          </Badge>
+        </Tooltip>
       </Group>
     </NavLink>
   )
@@ -208,7 +215,7 @@ function ColorSchemeToggle() {
 function FooterNote() {
   return (
     <Text ta="center" size="xs" c="dimmed" mt="xl">
-      Auto-refreshes every 10s &middot; JSON APIs:{' '}
+      Real-time updates over WebSocket &middot; JSON APIs:{' '}
       <a href="/stats">/stats</a> &middot; <a href="/api/overview">/api/overview</a> &middot;{' '}
       <a href="/metrics">/metrics</a>
     </Text>

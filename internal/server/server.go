@@ -28,6 +28,7 @@ type Server struct {
 	auth     *auth.Store // nil disables client authentication
 	backends []backend.Backend
 	byName   map[string]backend.Backend
+	updates  *updateHub
 	metrics  *Metrics
 	stats    *Stats
 	grokAuth *grokbackend.Manager
@@ -56,7 +57,9 @@ func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, ba
 	}
 	cfg.Defaults()
 	metrics := newMetrics()
+	updates := newUpdateHub()
 	stats := newStats(metrics.reg, cfg.Stats)
+	stats.updates = updates
 	if err := stats.load(cfg.Stats.PersistFile); err != nil {
 		log.WithError(err).Warn("stats persistence load failed; starting with empty stats")
 	}
@@ -66,6 +69,7 @@ func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, ba
 		auth:     store,
 		backends: backends,
 		byName:   byName,
+		updates:  updates,
 		metrics:  metrics,
 		stats:    stats,
 		grokAuth: grokAuth,
@@ -84,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("GET /api/stats", s.handleStatsSeries)
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
+	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
 	mux.HandleFunc("GET /login", s.grokLoginPage)
 	mux.HandleFunc("POST /login", s.grokLogin)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -432,5 +437,6 @@ func (s *Server) sortedRoutes() []string {
 
 // Close shuts down the stats persistence layer, flushing once more.
 func (s *Server) Close() error {
+	s.updates.close()
 	return s.stats.Close()
 }
