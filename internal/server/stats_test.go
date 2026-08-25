@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -259,28 +260,28 @@ func (b *slowOnceBackend) Send(ctx context.Context, req *backend.Request) (*back
 }
 
 func TestStatsRecordsUpstreamFailureAndTransportError(t *testing.T) {
-	zeroRetryBackoff(t)
-	fb := &msgFakeBackend{
-		supported: map[backend.Kind]bool{backend.KindAnthropic: true},
-		status:    http.StatusBadGateway,
-		body:      `{"error":{"message":"upstream down"}}`,
-	}
-	s := newMsgServer(t, fb, nil)
-	postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[]}`)
+	synctest.Test(t, func(t *testing.T) {
+		fb := &msgFakeBackend{
+			supported: map[backend.Kind]bool{backend.KindAnthropic: true},
+			status:    http.StatusBadGateway,
+			body:      `{"error":{"message":"upstream down"}}`,
+		}
+		s := newMsgServer(t, fb, nil)
+		postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[]}`)
 
-	fb.sendErr = errFakeSend{}
-	postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[]}`)
+		fb.sendErr = errFakeSend{}
+		postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[]}`)
 
-	stats := getStatsModels(t, s)
-	row := stats[0]
-	// Both requests fail transiently, so each records the full bounded retry
-	// budget plus its final surfaced attempt. Retried attempts count as their
-	// own upstream requests so the uptime denominator stays honest.
-	if row.Requests != 2*(maxAlwaysRetries+1) || row.Successes != 0 || row.Uptime != 0 {
-		t.Fatalf("availability = %d/%d uptime %f", row.Successes, row.Requests, row.Uptime)
-	}
+		stats := getStatsModels(t, s)
+		row := stats[0]
+		// Both requests fail transiently, so each records the full bounded retry
+		// budget plus its final surfaced attempt. Retried attempts count as their
+		// own upstream requests so the uptime denominator stays honest.
+		if row.Requests != 2*(maxAlwaysRetries+1) || row.Successes != 0 || row.Uptime != 0 {
+			t.Fatalf("availability = %d/%d uptime %f", row.Successes, row.Requests, row.Uptime)
+		}
+	})
 }
-
 func TestStatsSeriesRecordsWithoutPersistence(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	st := newStats(reg, config.StatsConfig{})

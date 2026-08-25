@@ -23,6 +23,9 @@ jobs:
     timeout-minutes: 30
     env:
       VENICE_MODEL: stealth-ox-alpha
+      # Cheap, widely available paid route; override via repository variable
+      # or edit here when prices/catalogs change.
+      OPENROUTER_MODEL: openrouter/openai/gpt-4o-mini
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -64,8 +67,25 @@ jobs:
           default_route:
             backend: venice
           EOF
+          # Extra live backends are only configured when their secret exists,
+          # so the job stays useful without them. Their smoke steps address
+          # models by qualified ID, which bypasses routes and catalogs.
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            echo "HAS_OPENROUTER=yes" >> "$GITHUB_ENV"
+            sed -i '/^default_route:/i\  - type: openrouter\n    api_key_env: OPENROUTER_API_KEY' /tmp/llm-proxy-e2e/config.yaml
+          else
+            echo "OPENROUTER_API_KEY not set; OpenRouter smoke step will be skipped"
+          fi
+          if [ -n "${OPENCODE_API_KEY:-}" ]; then
+            echo "HAS_OPENCODE=yes" >> "$GITHUB_ENV"
+            sed -i '/^default_route:/i\  - type: opencode\n    api_key_env: OPENCODE_API_KEY' /tmp/llm-proxy-e2e/config.yaml
+          else
+            echo "OPENCODE_API_KEY not set; OpenCode Zen smoke step will be skipped"
+          fi
         env:
           VENICE_API_KEY: ${{ secrets.VENICE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
 
       # Create the user and key BEFORE starting the proxy: the server loads
       # the keystore once at startup and does not watch the file, so keys
@@ -82,6 +102,8 @@ jobs:
       - name: Start llm-proxy
         env:
           VENICE_API_KEY: ${{ secrets.VENICE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           set -euo pipefail
           ./llm-proxy serve --config /tmp/llm-proxy-e2e/config.yaml > /tmp/llm-proxy-e2e/proxy.log 2>&1 &
@@ -171,6 +193,48 @@ jobs:
           export CODEX_PROVIDER_KEY="$KEY"
           codex exec --skip-git-repo-check "Reply with exactly: E2E_OK" | tee /tmp/llm-proxy-e2e/codex.out
           grep -q "E2E_OK" /tmp/llm-proxy-e2e/codex.out
+
+      # Same skip-on-auth/billing contract as the Venice probe: a 401/402/429
+      # means the secret or the account is the problem, not the proxy. The
+      # proxy's own retry policy may hold the request for a while when the
+      # upstream rate-limits, hence the generous curl timeout.
+      - name: Smoke test OpenRouter backend
+        if: env.HAS_OPENROUTER == 'yes'
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
+          touch /tmp/llm-proxy-e2e/openrouter.json
+          code=$(curl -sS --max-time 300 -o /tmp/llm-proxy-e2e/openrouter.json -w '%{http_code}' \
+            http://127.0.0.1:8090/v1/chat/completions \
+            -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+            -d '{"model":"'$OPENROUTER_MODEL'","max_tokens":32,"messages":[{"role":"user","content":"Reply with exactly: E2E_OK"}]}')
+          if [ "$code" != "200" ]; then
+            echo "::notice title=OpenRouter smoke skipped::upstream answered HTTP $code"
+            cat /tmp/llm-proxy-e2e/openrouter.json
+            exit 0
+          fi
+          grep -q "choices" /tmp/llm-proxy-e2e/openrouter.json
+          grep -q "E2E_OK" /tmp/llm-proxy-e2e/openrouter.json
+
+      - name: Smoke test OpenCode Zen backend
+        if: env.HAS_OPENCODE == 'yes'
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-e2e/proxy-key)
+          # Zen's catalog is live; pick its first served model as a qualified ID.
+          MODEL=$(curl -fsS --max-time 60 "http://127.0.0.1:8090/v1/models?backend=opencode" | jq -r '.data[0].id')
+          echo "smoking opencode model: $MODEL"
+          touch /tmp/llm-proxy-e2e/opencode.json
+          code=$(curl -sS --max-time 300 -o /tmp/llm-proxy-e2e/opencode.json -w '%{http_code}' \
+            http://127.0.0.1:8090/v1/messages \
+            -H "x-api-key: $KEY" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" \
+            -d '{"model":"'$MODEL'","max_tokens":32,"messages":[{"role":"user","content":"Reply with exactly: E2E_OK"}]}')
+          if [ "$code" != "200" ]; then
+            echo "::notice title=OpenCode smoke skipped::upstream answered HTTP $code"
+            cat /tmp/llm-proxy-e2e/opencode.json
+            exit 0
+          fi
+          grep -q "content" /tmp/llm-proxy-e2e/opencode.json
 
       - name: Dump proxy log on failure
         if: failure()

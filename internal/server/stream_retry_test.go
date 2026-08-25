@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -117,15 +118,6 @@ func outcomeDelta(s *Server, phase, outcome string) func() float64 {
 	}
 }
 
-// zeroRetryBackoff disables exponential sleeps so persistent-retry coverage
-// can exercise the full attempt budget without slowing the suite.
-func zeroRetryBackoff(t *testing.T) {
-	t.Helper()
-	original := testRetryDelayScale
-	testRetryDelayScale = 0
-	t.Cleanup(func() { testRetryDelayScale = original })
-}
-
 const anthropicStreamRequest = `{"model":"m1","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 
 const fullAnthropicSSE = "event: message_start\n" +
@@ -174,33 +166,35 @@ const fullResponsesSSE = "event: response.created\n" +
 // retries while nothing has reached the client, so the turn just looks
 // slower.
 func TestMessagesRetriesCleanEmptyStream(t *testing.T) {
-	upstream := newScripted(backend.KindOpenAIChat,
-		step{resp: sseResponse("text/event-stream", "")},
-		step{resp: sseResponse("text/event-stream", fullChatSSE)},
-	)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIChat,
+			step{resp: sseResponse("text/event-stream", "")},
+			step{resp: sseResponse("text/event-stream", fullChatSSE)},
+		)
+		s := newMsgServerWith(t, upstream)
 
-	recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
+		recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
 
-	rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
-	}
-	body := rec.Body.String()
-	for _, want := range []string{"event: message_start", "event: content_block_delta", "event: message_stop"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("retried stream missing %q:\n%s", want, body)
+		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
-	}
-	if strings.Contains(body, "event: error") {
-		t.Fatalf("a retried break must stay invisible to the client:\n%s", body)
-	}
-	if recovered() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
-	}
+		if upstream.callCount() != 2 {
+			t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+		}
+		body := rec.Body.String()
+		for _, want := range []string{"event: message_start", "event: content_block_delta", "event: message_stop"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("retried stream missing %q:\n%s", want, body)
+			}
+		}
+		if strings.Contains(body, "event: error") {
+			t.Fatalf("a retried break must stay invisible to the client:\n%s", body)
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
+		}
+	})
 }
 
 // TestMessagesRetriesBrokenNativeStreamBeforeCommit covers an upstream that
@@ -208,31 +202,33 @@ func TestMessagesRetriesCleanEmptyStream(t *testing.T) {
 // Anthropic stream. Nothing has been forwarded, so the proxy retries
 // transparently instead of letting the turn die.
 func TestMessagesRetriesBrokenNativeStreamBeforeCommit(t *testing.T) {
-	upstream := newScripted(backend.KindAnthropic,
-		step{resp: sseResponse("text/event-stream", "")},
-		step{resp: sseResponse("text/event-stream", fullAnthropicSSE)},
-	)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindAnthropic,
+			step{resp: sseResponse("text/event-stream", "")},
+			step{resp: sseResponse("text/event-stream", fullAnthropicSSE)},
+		)
+		s := newMsgServerWith(t, upstream)
 
-	recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
+		recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
 
-	rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `"type":"message_stop"`) {
-		t.Fatalf("retried native stream missing message_stop:\n%s", body)
-	}
-	if strings.Contains(body, "event: error") {
-		t.Fatalf("a retried break must stay invisible to the client:\n%s", body)
-	}
-	if recovered() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
-	}
+		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != 2 {
+			t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"type":"message_stop"`) {
+			t.Fatalf("retried native stream missing message_stop:\n%s", body)
+		}
+		if strings.Contains(body, "event: error") {
+			t.Fatalf("a retried break must stay invisible to the client:\n%s", body)
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
+		}
+	})
 }
 
 // TestMessagesSurfacesNativeBreakAfterContent feeds a native Anthropic
@@ -293,96 +289,101 @@ func TestMessagesSurfacesTranslatedBreakAfterContent(t *testing.T) {
 // path: an upstream body that breaks mid-read is re-fetched while nothing
 // has reached the client.
 func TestMessagesRetriesBufferedBodyBreak(t *testing.T) {
-	upstream := newScripted(backend.KindOpenAIChat,
-		step{resp: &backend.Response{
-			Status: http.StatusOK,
-			Header: http.Header{},
-			Body:   io.NopCloser(&failingBody{prefix: `{"choices":[{"message":{"role":"assistant","content":"hi"`}),
-		}},
-		step{resp: &backend.Response{
-			Status: http.StatusOK,
-			Header: http.Header{},
-			Body: io.NopCloser(strings.NewReader(
-				`{"id":"c1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
-		}},
-	)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIChat,
+			step{resp: &backend.Response{
+				Status: http.StatusOK,
+				Header: http.Header{},
+				Body:   io.NopCloser(&failingBody{prefix: `{"choices":[{"message":{"role":"assistant","content":"hi"`}),
+			}},
+			step{resp: &backend.Response{
+				Status: http.StatusOK,
+				Header: http.Header{},
+				Body: io.NopCloser(strings.NewReader(
+					`{"id":"c1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+			}},
+		)
+		s := newMsgServerWith(t, upstream)
 
-	recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
+		recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
 
-	rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
-	}
-	if !strings.Contains(rec.Body.String(), `"text":"hi"`) {
-		t.Fatalf("converted body missing content: %s", rec.Body.String())
-	}
-	if recovered() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
-	}
+		rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != 2 {
+			t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+		}
+		if !strings.Contains(rec.Body.String(), `"text":"hi"`) {
+			t.Fatalf("converted body missing content: %s", rec.Body.String())
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
+		}
+	})
 }
 
 // TestMessagesRetriesConnectPhase covers a transient 503 before any response
 // exists: one extra Send, then success.
 func TestMessagesRetriesConnectPhase(t *testing.T) {
-	upstream := newScripted(backend.KindOpenAIChat,
-		step{resp: &backend.Response{Status: http.StatusServiceUnavailable, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("down"))}},
-		step{resp: sseResponse("text/event-stream", fullChatSSE)},
-	)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIChat,
+			step{resp: &backend.Response{Status: http.StatusServiceUnavailable, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("down"))}},
+			step{resp: sseResponse("text/event-stream", fullChatSSE)},
+		)
+		s := newMsgServerWith(t, upstream)
 
-	recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
+		recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
 
-	rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
-	}
-	if !strings.Contains(rec.Body.String(), "event: message_stop") {
-		t.Fatalf("retried stream incomplete:\n%s", rec.Body.String())
-	}
-	if recovered() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
-	}
+		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != 2 {
+			t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+		}
+		if !strings.Contains(rec.Body.String(), "event: message_stop") {
+			t.Fatalf("retried stream incomplete:\n%s", rec.Body.String())
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+		}
+	})
 }
 
 // TestResponsesAlwaysRetriesUnprocessableEntity covers providers that use 422
 // as a persistent overload signal. Codex otherwise treats that status as fatal
 // even though no response bytes have been forwarded yet.
 func TestResponsesAlwaysRetriesUnprocessableEntity(t *testing.T) {
-	zeroRetryBackoff(t)
-	upstream := newScripted(backend.KindOpenAIResponses,
-		persistentRetrySteps(
-			http.StatusUnprocessableEntity,
-			`{"error":{"message":"temporarily unavailable"}}`,
-			step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
-		)...)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIResponses,
+			persistentRetrySteps(
+				http.StatusUnprocessableEntity,
+				`{"error":{"message":"temporarily unavailable"}}`,
+				step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+			)...)
+		s := newMsgServerWith(t, upstream)
 
-	recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
+		recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
 
-	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if upstream.callCount() != maxAlwaysRetries+1 {
-		t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "response.completed") {
-		t.Fatalf("retried Responses stream incomplete:\n%s", body)
-	}
-	if strings.Contains(body, "422") || strings.Contains(body, "temporarily unavailable") {
-		t.Fatalf("pre-output 422 should remain invisible to the client:\n%s", body)
-	}
-	if recovered() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
-	}
+		rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != maxAlwaysRetries+1 {
+			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "response.completed") {
+			t.Fatalf("retried Responses stream incomplete:\n%s", body)
+		}
+		if strings.Contains(body, "422") || strings.Contains(body, "temporarily unavailable") {
+			t.Fatalf("pre-output 422 should remain invisible to the client:\n%s", body)
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+		}
+	})
 }
 
 // unavailableResponse builds a JSON error response for a retryable status.
@@ -397,85 +398,88 @@ func unavailableResponse(status int, body string) *backend.Response {
 // TestResponsesAlwaysRetriesTooManyRequests ensures rate-limit failures are
 // hidden from clients across every provider-supplied attempt.
 func TestResponsesAlwaysRetriesTooManyRequests(t *testing.T) {
-	zeroRetryBackoff(t)
-	upstream := newScripted(backend.KindOpenAIResponses, persistentRetrySteps(
-		http.StatusTooManyRequests,
-		`{"error":{"message":"rate limited"}}`,
-		step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
-	)...)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIResponses, persistentRetrySteps(
+			http.StatusTooManyRequests,
+			`{"error":{"message":"rate limited"}}`,
+			step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+		)...)
+		s := newMsgServerWith(t, upstream)
 
-	recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
+		recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
 
-	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if upstream.callCount() != maxAlwaysRetries+1 {
-		t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
-	}
-	if !strings.Contains(rec.Body.String(), "response.completed") {
-		t.Fatalf("retried Responses stream incomplete:\n%s", rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "rate limited") {
-		t.Fatalf("pre-output rate-limit failure should remain invisible:\n%s", rec.Body.String())
-	}
-	if recovered() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
-	}
+		rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != maxAlwaysRetries+1 {
+			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), maxAlwaysRetries+1)
+		}
+		if !strings.Contains(rec.Body.String(), "response.completed") {
+			t.Fatalf("retried Responses stream incomplete:\n%s", rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "rate limited") {
+			t.Fatalf("pre-output rate-limit failure should remain invisible:\n%s", rec.Body.String())
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+		}
+	})
 }
 
 // TestResponsesRetriesTooManyRequestsHonorsRetryAfter ensures provider rate-
 // limit guidance is respected without allowing an unbounded client wait.
 func TestResponsesRetriesTooManyRequestsHonorsRetryAfter(t *testing.T) {
-	before := time.Now()
-	zeroRetryBackoff(t)
-	upstream := newScripted(backend.KindOpenAIResponses,
-		step{resp: &backend.Response{
-			Status: http.StatusTooManyRequests,
-			Header: http.Header{"Retry-After": []string{"1"}},
-			Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
-		}},
-		step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
-	)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		before := time.Now()
+		upstream := newScripted(backend.KindOpenAIResponses,
+			step{resp: &backend.Response{
+				Status: http.StatusTooManyRequests,
+				Header: http.Header{"Retry-After": []string{"1"}},
+				Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+			}},
+			step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+		)
+		s := newMsgServerWith(t, upstream)
 
-	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if elapsed := time.Since(before); elapsed < time.Second {
-		t.Fatalf("retry after = %s, want at least the requested second", elapsed)
-	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
-	}
+		rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if elapsed := time.Since(before); elapsed < time.Second {
+			t.Fatalf("retry after = %s, want at least the requested second", elapsed)
+		}
+		if upstream.callCount() != 2 {
+			t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+		}
+	})
 }
 
 // TestMessagesConnectPhaseExhausted answers 503 forever; after the retry
 // budget the client sees the upstream status relayed in its own dialect.
 func TestMessagesConnectPhaseExhausted(t *testing.T) {
-	zeroRetryBackoff(t)
-	upstream := newScripted(backend.KindOpenAIChat,
-		step{resp: &backend.Response{Status: http.StatusServiceUnavailable, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"down"}}`))}},
-	)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIChat,
+			step{resp: &backend.Response{Status: http.StatusServiceUnavailable, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"down"}}`))}},
+		)
+		s := newMsgServerWith(t, upstream)
 
-	exhausted := outcomeDelta(s, retryPhaseConnect, retryExhausted)
+		exhausted := outcomeDelta(s, retryPhaseConnect, retryExhausted)
 
-	rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if parsed := decodeAnthropicError(t, rec); parsed.Error.Type != "api_error" {
-		t.Fatalf("expected Anthropic-shaped error, got %s", rec.Body.String())
-	}
-	if upstream.callCount() != maxAlwaysRetries+1 {
-		t.Fatalf("upstream attempts = %d, want %d (1 + maxAlwaysRetries)", upstream.callCount(), maxAlwaysRetries+1)
-	}
-	if exhausted() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryExhausted)
-	}
+		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if parsed := decodeAnthropicError(t, rec); parsed.Error.Type != "api_error" {
+			t.Fatalf("expected Anthropic-shaped error, got %s", rec.Body.String())
+		}
+		if upstream.callCount() != maxAlwaysRetries+1 {
+			t.Fatalf("upstream attempts = %d, want %d (1 + maxAlwaysRetries)", upstream.callCount(), maxAlwaysRetries+1)
+		}
+		if exhausted() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryExhausted)
+		}
+	})
 }
 
 // TestResponsesEndpointSurfacesBreakAfterContent checks the Responses
@@ -535,31 +539,33 @@ func TestResponsesAcceptsLargeTerminalEvent(t *testing.T) {
 // Responses bytes have reached the client, rather than becoming an empty
 // response.completed event.
 func TestResponsesRetriesTranslatedNetworkError(t *testing.T) {
-	upstream := newScripted(backend.KindOpenAIChat,
-		step{resp: sseResponse("text/event-stream", networkErrorChatSSE)},
-		step{resp: sseResponse("text/event-stream", fullChatSSE)},
-	)
-	s := newMsgServerWith(t, upstream)
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIChat,
+			step{resp: sseResponse("text/event-stream", networkErrorChatSSE)},
+			step{resp: sseResponse("text/event-stream", fullChatSSE)},
+		)
+		s := newMsgServerWith(t, upstream)
 
-	recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
+		recovered := outcomeDelta(s, retryPhaseBody, retryRecovered)
 
-	rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if upstream.callCount() != 2 {
-		t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "response.completed") || !strings.Contains(body, `"delta":"hi"`) {
-		t.Fatalf("retried Responses stream incomplete: %s", body)
-	}
-	if strings.Contains(body, "response.failed") {
-		t.Fatalf("pre-output upstream failure should remain invisible: %s", body)
-	}
-	if recovered() < 1 {
-		t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
-	}
+		rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != 2 {
+			t.Fatalf("upstream attempts = %d, want 2", upstream.callCount())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "response.completed") || !strings.Contains(body, `"delta":"hi"`) {
+			t.Fatalf("retried Responses stream incomplete: %s", body)
+		}
+		if strings.Contains(body, "response.failed") {
+			t.Fatalf("pre-output upstream failure should remain invisible: %s", body)
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseBody, retryRecovered)
+		}
+	})
 }
 
 // TestResponsesSurfacesTranslatedNetworkErrorAfterContent ensures a provider

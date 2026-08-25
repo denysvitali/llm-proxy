@@ -85,17 +85,11 @@ func retryPause(ctx context.Context, attempt int) bool {
 
 // retryDelay returns the backoff before the given retry attempt: exponential
 // from retryBaseDelay, capped at maxRetryAfter so a long outage bounds each
-// pause — and with it how long a client can be kept waiting.
+// pause — and with it how long a client can be kept waiting. Tests run inside
+// testing/synctest bubbles, so even the longest pause elapses instantly there.
 func retryDelay(attempt int) time.Duration {
-	if testRetryDelayScale == 0 {
-		return 0
-	}
-	return time.Duration(float64(min(retryBaseDelay<<attempt, maxRetryAfter)) * testRetryDelayScale)
+	return min(retryBaseDelay<<attempt, maxRetryAfter)
 }
-
-// testRetryDelayScale is zeroed by focused retry tests so persistent-status
-// coverage does not spend minutes sleeping through exponential backoffs.
-var testRetryDelayScale = 1.0
 
 // errReader stands in for an upstream body whose fetch itself failed, so retry
 // loops can treat "could not fetch" like any other mid-transfer break.

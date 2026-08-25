@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/config"
@@ -476,61 +477,61 @@ func TestResponsesUnknownModel404(t *testing.T) {
 }
 
 func TestChatCompletionsUpstreamErrorRelayed(t *testing.T) {
-	zeroRetryBackoff(t)
-	upstreamErr := `{"error":{"message":"overloaded upstream","type":"server_error","code":null}}`
-	fb := &fakeOABackend{
-		name:   "fakeoa",
-		status: http.StatusServiceUnavailable,
-		header: http.Header{
-			"Content-Type": []string{"application/json"},
-			"X-Request-Id": []string{"req-up-42"},
-		},
-		body: upstreamErr,
-	}
-	s := newOATestServer(t, fb, map[string]config.ModelRoute{
-		"gpt-e": {Backend: "fakeoa"},
+	synctest.Test(t, func(t *testing.T) {
+		upstreamErr := `{"error":{"message":"overloaded upstream","type":"server_error","code":null}}`
+		fb := &fakeOABackend{
+			name:   "fakeoa",
+			status: http.StatusServiceUnavailable,
+			header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"X-Request-Id": []string{"req-up-42"},
+			},
+			body: upstreamErr,
+		}
+		s := newOATestServer(t, fb, map[string]config.ModelRoute{
+			"gpt-e": {Backend: "fakeoa"},
+		})
+
+		rec := postOpenAI(t, s, "/v1/chat/completions",
+			`{"model":"gpt-e","messages":[{"role":"user","content":"hi"}]}`)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+		}
+		if got := strings.TrimSuffix(rec.Body.String(), "\n"); got != upstreamErr {
+			t.Errorf("relayed body = %q, want upstream body %q", got, upstreamErr)
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", ct)
+		}
+		if id := rec.Header().Get("X-Request-Id"); id != "req-up-42" {
+			t.Errorf("X-Request-Id = %q, want req-up-42", id)
+		}
 	})
-
-	rec := postOpenAI(t, s, "/v1/chat/completions",
-		`{"model":"gpt-e","messages":[{"role":"user","content":"hi"}]}`)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
-	}
-	if got := strings.TrimSuffix(rec.Body.String(), "\n"); got != upstreamErr {
-		t.Errorf("relayed body = %q, want upstream body %q", got, upstreamErr)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	if id := rec.Header().Get("X-Request-Id"); id != "req-up-42" {
-		t.Errorf("X-Request-Id = %q, want req-up-42", id)
-	}
 }
-
 func TestChatCompletionsUpstreamEmptyErrorSynthesized(t *testing.T) {
-	zeroRetryBackoff(t)
-	fb := &fakeOABackend{
-		name:   "fakeoa",
-		status: http.StatusServiceUnavailable,
-		body:   "",
-	}
-	s := newOATestServer(t, fb, map[string]config.ModelRoute{
-		"gpt-e": {Backend: "fakeoa"},
+	synctest.Test(t, func(t *testing.T) {
+		fb := &fakeOABackend{
+			name:   "fakeoa",
+			status: http.StatusServiceUnavailable,
+			body:   "",
+		}
+		s := newOATestServer(t, fb, map[string]config.ModelRoute{
+			"gpt-e": {Backend: "fakeoa"},
+		})
+
+		rec := postOpenAI(t, s, "/v1/responses", `{"model":"gpt-e","input":"hi"}`)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+		}
+		var body openAIErrorBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode error body: %v", err)
+		}
+		if body.Error.Type != "api_error" {
+			t.Errorf("type = %q, want api_error", body.Error.Type)
+		}
 	})
-
-	rec := postOpenAI(t, s, "/v1/responses", `{"model":"gpt-e","input":"hi"}`)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
-	}
-	var body openAIErrorBody
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode error body: %v", err)
-	}
-	if body.Error.Type != "api_error" {
-		t.Errorf("type = %q, want api_error", body.Error.Type)
-	}
 }
-
 func TestChatCompletionsGarbageEnvelope(t *testing.T) {
 	fb := &fakeOABackend{name: "fakeoa"}
 	s := newOATestServer(t, fb, nil)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/sirupsen/logrus"
 
@@ -430,32 +431,33 @@ func TestMessagesUpstreamErrorRelay(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			zeroRetryBackoff(t)
-			fb := &msgFakeBackend{
-				supported:   map[backend.Kind]bool{backend.KindAnthropic: true},
-				status:      tc.status,
-				contentType: tc.contentType,
-				body:        tc.upstream,
-			}
-			s := newMsgServer(t, fb, nil)
+			synctest.Test(t, func(t *testing.T) {
+				fb := &msgFakeBackend{
+					supported:   map[backend.Kind]bool{backend.KindAnthropic: true},
+					status:      tc.status,
+					contentType: tc.contentType,
+					body:        tc.upstream,
+				}
+				s := newMsgServer(t, fb, nil)
 
-			rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("status = %d, want %d, body = %s", rec.Code, tc.wantStatus, rec.Body.String())
-			}
-			if tc.upstream != "" {
-				if rec.Body.String() != tc.upstream {
-					t.Errorf("body = %q, want verbatim %q", rec.Body.String(), tc.upstream)
+				rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
+				if rec.Code != tc.wantStatus {
+					t.Fatalf("status = %d, want %d, body = %s", rec.Code, tc.wantStatus, rec.Body.String())
 				}
-				if ct := rec.Header().Get("Content-Type"); ct != tc.contentType {
-					t.Errorf("content-type = %q, want %q", ct, tc.contentType)
+				if tc.upstream != "" {
+					if rec.Body.String() != tc.upstream {
+						t.Errorf("body = %q, want verbatim %q", rec.Body.String(), tc.upstream)
+					}
+					if ct := rec.Header().Get("Content-Type"); ct != tc.contentType {
+						t.Errorf("content-type = %q, want %q", ct, tc.contentType)
+					}
+					return
 				}
-				return
-			}
-			parsed := decodeAnthropicError(t, rec)
-			if parsed.Type != "error" || parsed.Error.Type != tc.wantErrType {
-				t.Errorf("error shape = %+v, want type=error / %s", parsed, tc.wantErrType)
-			}
+				parsed := decodeAnthropicError(t, rec)
+				if parsed.Type != "error" || parsed.Error.Type != tc.wantErrType {
+					t.Errorf("error shape = %+v, want type=error / %s", parsed, tc.wantErrType)
+				}
+			})
 		})
 	}
 }
