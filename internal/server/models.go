@@ -52,11 +52,10 @@ func (s *Server) enabledBackends() []backend.Backend {
 }
 
 // handleModels serves GET /v1/models with the merged catalogs of all enabled
-// backends. Every entry is also listed in its qualified "<backend>/<id>"
-// form — the ID clients can use on any endpoint to pin one backend. Bare IDs
-// are listed only when unique across backends (ambiguous ones exist solely
-// in qualified form). One failing backend is logged and skipped; when every
-// enabled backend fails the answer is 502.
+// backends. Every entry uses the canonical qualified "<backend>/<id>" form,
+// which clients can use on any endpoint to pin one backend. One failing
+// backend is logged and skipped; when every enabled backend fails the answer
+// is 502.
 // ?backend=<name> restricts the answer to a single backend.
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if name := strings.TrimSpace(r.URL.Query().Get("backend")); name != "" {
@@ -85,15 +84,11 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bare := make(map[string]int)
+	total := 0
 	for _, c := range lists {
-		for _, id := range c.models {
-			if id != "" {
-				bare[id]++
-			}
-		}
+		total += len(c.models)
 	}
-	data := make([]modelEntry, 0, 2*len(bare))
+	data := make([]modelEntry, 0, total)
 	seen := make(map[string]bool)
 	add := func(id, owner string) {
 		if id == "" || seen[id] {
@@ -105,9 +100,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	for _, c := range lists {
 		for _, id := range c.models {
 			add(c.name+"/"+id, c.name)
-			if bare[id] == 1 {
-				add(id, c.name)
-			}
 		}
 	}
 	sort.Slice(data, func(i, j int) bool { return data[i].ID < data[j].ID })
@@ -134,7 +126,7 @@ func (s *Server) handleBackendModels(w http.ResponseWriter, r *http.Request, nam
 		if id == "" {
 			continue
 		}
-		data = append(data, modelEntry{ID: id, Object: "model", OwnedBy: name})
+		data = append(data, modelEntry{ID: name + "/" + id, Object: "model", OwnedBy: name})
 	}
 	sort.Slice(data, func(i, j int) bool { return data[i].ID < data[j].ID })
 	writeJSON(w, http.StatusOK, modelList{Object: "list", Data: data})

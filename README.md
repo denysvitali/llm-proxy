@@ -244,9 +244,9 @@ Every inbound request carries a model name, which resolves in this order:
 Unroutable models answer `404`; a qualified ID naming a disabled backend
 answers `404` too rather than falling through to another backend.
 
-`GET /v1/models` lists every enabled backend's catalog both bare and in its
-qualified `<backend>/<id>` form (bare IDs only when unambiguous across
-backends), so clients can copy an ID straight into their configuration.
+`GET /v1/models` lists every enabled backend's catalog in the qualified
+`<backend>/<id>` form, so clients can copy an ID straight into their
+configuration.
 `?backend=<name>` restricts the answer to one backend's catalog.
 
 ## Configuration
@@ -318,7 +318,7 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | POST   | `/v1/messages/count_tokens`   | Anthropic token counting                       |
 | POST   | `/v1/chat/completions`        | OpenAI Chat Completions API (any backend)      |
 | POST   | `/v1/responses`               | OpenAI Responses API (any backend)             |
-| GET    | `/v1/models`                  | Merged model catalog, bare + qualified `<backend>/<id>` IDs |
+| GET    | `/v1/models`                  | Merged model catalog using `<backend>/<id>` IDs |
 | GET    | `/`                           | Dashboard: status, routing, per-model stats, client setup |
 | GET    | `/api/overview`               | JSON data used by the dashboard SPA |
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |

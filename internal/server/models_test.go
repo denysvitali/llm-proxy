@@ -97,18 +97,14 @@ func TestHandleModelsMergesAndSorts(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	// Qualified "<backend>/<id>" entries always appear; bare IDs only when
-	// unambiguous, so "shared-model" (both backends) exists in qualified
-	// form only.
+	// Every catalog ID is exposed in its unambiguously provider-qualified form.
 	want := modelList{
 		Object: "list",
 		Data: []modelEntry{
-			{ID: "alpha", Object: "model", OwnedBy: "opencode"},
 			{ID: "opencode/alpha", Object: "model", OwnedBy: "opencode"},
 			{ID: "opencode/shared-model", Object: "model", OwnedBy: "opencode"},
 			{ID: "venice/shared-model", Object: "model", OwnedBy: "venice"},
 			{ID: "venice/zephyr", Object: "model", OwnedBy: "venice"},
-			{ID: "zephyr", Object: "model", OwnedBy: "venice"},
 		},
 	}
 	if !reflect.DeepEqual(list, want) {
@@ -131,7 +127,6 @@ func TestHandleModelsToleratesBackendFailure(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	want := modelList{Object: "list", Data: []modelEntry{
-		{ID: "venice-only", Object: "model", OwnedBy: "venice"},
 		{ID: "venice/venice-only", Object: "model", OwnedBy: "venice"},
 	}}
 	if !reflect.DeepEqual(list, want) {
@@ -181,8 +176,8 @@ func TestHandleModelsBackendFilter(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	want := modelList{Object: "list", Data: []modelEntry{
-		{ID: "oc-a", Object: "model", OwnedBy: "opencode"},
-		{ID: "oc-b", Object: "model", OwnedBy: "opencode"},
+		{ID: "opencode/oc-a", Object: "model", OwnedBy: "opencode"},
+		{ID: "opencode/oc-b", Object: "model", OwnedBy: "opencode"},
 	}}
 	if !reflect.DeepEqual(list, want) {
 		t.Errorf("filtered list mismatch:\n got %+v\nwant %+v", list, want)

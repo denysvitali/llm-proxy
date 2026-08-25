@@ -126,8 +126,8 @@ func assertOverview(t *testing.T, page map[string]any, s *Server, requestHost st
 		t.Errorf("venice backend = %#v", first)
 	}
 	models, ok := first["models"].([]any)
-	if !ok || len(models) != 2 || models[0] != "venice-large" || models[1] != "venice-small" {
-		t.Errorf("venice models = %#v, want sorted catalog entries", first["models"])
+	if !ok || len(models) != 2 || models[0] != "venice/venice-large" || models[1] != "venice/venice-small" {
+		t.Errorf("venice models = %#v, want sorted provider-qualified entries", first["models"])
 	}
 
 	second, ok := backends[1].(map[string]any)
@@ -149,7 +149,7 @@ func assertOverview(t *testing.T, page map[string]any, s *Server, requestHost st
 
 	claudeSnippet, ok := page["claudeSnippet"].(string)
 	if !ok || !strings.Contains(claudeSnippet,
-		"ANTHROPIC_BASE_URL=http://"+requestHost+" ANTHROPIC_AUTH_TOKEN=<key> claude --model venice-large") {
+		"ANTHROPIC_BASE_URL=http://"+requestHost+" ANTHROPIC_AUTH_TOKEN=<key> claude --model venice/venice-large") {
 		t.Errorf("claudeSnippet = %v", page["claudeSnippet"])
 	}
 	codexSnippet, ok := page["codexSnippet"].(string)

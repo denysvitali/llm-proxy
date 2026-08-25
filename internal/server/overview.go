@@ -100,7 +100,10 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 				entry.CatalogOK = false
 			} else {
 				entry.CatalogOK = true
-				entry.Models = models
+				entry.Models = make([]string, 0, len(models))
+				for _, model := range models {
+					entry.Models = append(entry.Models, bc.Type+"/"+model)
+				}
 			}
 		}
 		page.Backends = append(page.Backends, entry)
