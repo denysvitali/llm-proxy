@@ -75,7 +75,7 @@ func TestSend(t *testing.T) {
 						t.Errorf("%s = %q, want %q", check.header, got, check.want)
 					}
 				}
-				fmt.Fprint(w, responseBody)
+				_, _ = fmt.Fprint(w, responseBody)
 			}))
 			defer server.Close()
 
@@ -137,7 +137,7 @@ func TestModels(t *testing.T) {
 			t.Errorf("Authorization = %q, want bearer token", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"id":"vendor/model"},{"id":""},{"id":"other/model"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"id":"vendor/model"},{"id":""},{"id":"other/model"}]}`)
 	}))
 	defer server.Close()
 
@@ -155,7 +155,7 @@ func TestModelsHTTPErrors(t *testing.T) {
 	const payload = `{"error":{"message":"invalid key"}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, payload)
+		_, _ = fmt.Fprint(w, payload)
 	}))
 	defer server.Close()
 
