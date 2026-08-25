@@ -166,6 +166,20 @@ func TestFlattenNamespaceToolsLeavesOrdinaryRequestUnchanged(t *testing.T) {
 	}
 }
 
+func TestFlattenNamespaceToolsRemovesUnsupportedWebSearchFlag(t *testing.T) {
+	input := []byte(`{"model":"grok-4.6","tools":[{"type":"web_search","external_web_access":true}]}`)
+	got, err := flattenNamespaceTools(input)
+	if err != nil {
+		t.Fatalf("flattenNamespaceTools: %v", err)
+	}
+	if strings.Contains(string(got), "external_web_access") {
+		t.Fatalf("unsupported flag remains in request: %s", got)
+	}
+	if !strings.Contains(string(got), `"type":"web_search"`) {
+		t.Fatalf("web_search tool was lost: %s", got)
+	}
+}
+
 func TestSendEmptyToken(t *testing.T) {
 	reached := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

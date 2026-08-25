@@ -127,6 +127,23 @@ func flattenNamespaceTools(body []byte) ([]byte, error) {
 		changed = true
 		flattened = append(flattened, header.Tools...)
 	}
+	for i, raw := range flattened {
+		var tool map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &tool); err != nil {
+			return nil, fmt.Errorf("decode flattened tool: %w", err)
+		}
+		// Codex adds this flag to web_search. Grok supports web_search itself,
+		// but rejects the OpenAI-only flag as an unknown argument.
+		if _, ok := tool["external_web_access"]; ok {
+			delete(tool, "external_web_access")
+			encoded, err := json.Marshal(tool)
+			if err != nil {
+				return nil, err
+			}
+			flattened[i] = encoded
+			changed = true
+		}
+	}
 	if !changed {
 		return body, nil
 	}
