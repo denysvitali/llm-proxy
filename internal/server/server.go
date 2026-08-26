@@ -68,7 +68,11 @@ func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, ba
 	updates := newUpdateHub()
 	stats := newStats(metrics.reg, cfg.Stats)
 	stats.updates = updates
-	if err := stats.load(cfg.Stats.PersistFile); err != nil {
+	if stats.redisInitErr != nil {
+		log.WithError(stats.redisInitErr).Warn("shared stats initialization failed; using process-local stats")
+	} else if stats.redis != nil {
+		stats.redis.startUpdates(updates.notify)
+	} else if err := stats.load(cfg.Stats.PersistFile); err != nil {
 		log.WithError(err).Warn("stats persistence load failed; starting with empty stats")
 	}
 	return &Server{

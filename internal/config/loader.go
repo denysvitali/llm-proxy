@@ -25,6 +25,8 @@ func Load() (*Config, error) {
 	// key was absent from the config file.
 	v.SetDefault("server.listen", "127.0.0.1:8090")
 	v.SetDefault("server.max_body_bytes", 16<<20)
+	v.SetDefault("stats.redis_url", "")
+	v.SetDefault("stats.redis_key_prefix", "llm-proxy:stats:")
 	if home, err := os.UserHomeDir(); err == nil {
 		v.SetDefault("stats.persist_file", filepath.Join(home, ".local", "state", "llm-proxy", "stats.json"))
 	}

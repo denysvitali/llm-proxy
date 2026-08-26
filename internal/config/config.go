@@ -83,6 +83,11 @@ type StatsConfig struct {
 	PersistInterval time.Duration `mapstructure:"persist_interval"`
 	// RetentionDays drops buckets older than this (0 = keep forever).
 	RetentionDays int `mapstructure:"retention_days"`
+	// RedisURL enables shared stats and dashboard update notifications. Empty
+	// keeps the process-local stats implementation.
+	RedisURL string `mapstructure:"redis_url"`
+	// RedisKeyPrefix namespaces this proxy's keys in the shared Redis service.
+	RedisKeyPrefix string `mapstructure:"redis_key_prefix"`
 }
 
 // Config is the whole configuration document.
@@ -126,6 +131,9 @@ func (c *Config) Defaults() {
 	}
 	if c.LogFormat == "" {
 		c.LogFormat = "text"
+	}
+	if c.Stats.RedisURL != "" && c.Stats.RedisKeyPrefix == "" {
+		c.Stats.RedisKeyPrefix = "llm-proxy:stats:"
 	}
 	if c.Routes == nil {
 		c.Routes = map[string]ModelRoute{}

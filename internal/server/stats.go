@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +45,9 @@ type Stats struct {
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
+
+	redis        *redisStats
+	redisInitErr error
 }
 
 // Token-type label values for llm_proxy_model_tokens_total.
@@ -58,6 +62,11 @@ const (
 const statusError = "error"
 
 func newStats(reg *prometheus.Registry, cfg config.StatsConfig) *Stats {
+	if cfg.RedisURL != "" {
+		// Redis is the shared source of truth. Keeping a local JSON writer active
+		// would make the file a competing, incomplete history in an HA rollout.
+		cfg.PersistFile = ""
+	}
 	st := &Stats{
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "llm_proxy_model_requests_total",
@@ -93,6 +102,9 @@ func newStats(reg *prometheus.Registry, cfg config.StatsConfig) *Stats {
 		models:  make(map[string]*modelStats),
 		cfg:     cfg,
 		updates: newUpdateHub(),
+	}
+	if cfg.RedisURL != "" {
+		st.redis, st.redisInitErr = newRedisStats(cfg.RedisURL, cfg.RedisKeyPrefix)
 	}
 	reg.MustRegister(st.requests, st.ttft, st.e2e, st.tokens, st.through, st.calls, st.errs)
 	if st.cfg.PersistFile != "" && st.cfg.PersistInterval > 0 {
@@ -541,6 +553,13 @@ type Percentiles struct {
 // sums all retained buckets ("all recorded history"); otherwise it falls back
 // to the Prometheus-backed counters (current behavior, no regression).
 func (st *Stats) snapshot() []ModelStat {
+	if st.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if snapshot, err := st.redis.snapshot(ctx, st.cfg.RetentionDays); err == nil {
+			return snapshot
+		}
+	}
 	if st.cfg.PersistFile == "" {
 		return st.snapshotFromPrometheus()
 	}
@@ -781,7 +800,17 @@ func (st *Stats) record(backend, model, status string, ttft, e2e, throughput flo
 	ms.mu.Unlock()
 
 	st.maybeEvict(ms)
+	st.recordRedis(backend, model, status, ttft, e2e, throughput, rep)
 	st.updates.notify()
+}
+
+func (st *Stats) recordRedis(backend, model, status string, ttft, e2e, throughput float64, rep usageReport) {
+	if st.redis == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = st.redis.record(ctx, backend, model, status, ttft, e2e, throughput, rep, st.cfg.RetentionDays)
 }
 
 // recordToolErrors attributes errored tool results to the current bucket of
@@ -797,6 +826,11 @@ func (st *Stats) recordToolErrors(backend, model string, n int64) {
 	b := ms.bucketForLocked(time.Now().Unix() / 300)
 	b.ToolErrors += uint64(n)
 	ms.mu.Unlock()
+	if st.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = st.redis.recordToolErrors(ctx, backend, model, n, st.cfg.RetentionDays)
+		cancel()
+	}
 	st.updates.notify()
 }
 
@@ -866,13 +900,15 @@ func (st *Stats) startPersist() {
 
 // Close stops the background persistence goroutine and flushes once.
 func (st *Stats) Close() error {
-	if st.stopCh == nil {
-		return nil
+	if st.stopCh != nil {
+		st.stopOnce.Do(func() {
+			close(st.stopCh)
+		})
+		st.persist()
 	}
-	st.stopOnce.Do(func() {
-		close(st.stopCh)
-	})
-	st.persist()
+	if st.redis != nil {
+		st.redis.close()
+	}
 	return nil
 }
 
@@ -1201,6 +1237,13 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 // by backend and model. Empty selectors mean "all"; this is the shared core
 // for fleet, provider, and model histories.
 func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName string) (scopedSeriesSet, []string, error) {
+	if st.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if series, models, err := st.seriesAtScopeRedis(ctx, rng, now, backendName, modelName); err == nil {
+			return series, models, nil
+		}
+	}
 	dur, ok := seriesRangeBuckets[rng]
 	if !ok {
 		return scopedSeriesSet{}, nil, fmt.Errorf("unknown range %q; supported ranges: 1h, 6h, 24h, 7d", rng)

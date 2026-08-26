@@ -323,6 +323,8 @@ flags are applied afterwards.
 | `stats.persist_file`         | `LLM_PROXY_STATS_PERSIST_FILE`       | `~/.local/state/llm-proxy/stats.json` | JSON snapshot backing dashboard history. Empty disables persistence and time-range charts. |
 | `stats.persist_interval`     | `LLM_PROXY_STATS_PERSIST_INTERVAL`   | `1m` when persistence is enabled | How often stats are flushed to `stats.persist_file`. |
 | `stats.retention_days`       | `LLM_PROXY_STATS_RETENTION_DAYS`     | `7` when persistence is enabled | Bucket retention period; `0` keeps history indefinitely. |
+| `stats.redis_url`            | `LLM_PROXY_STATS_REDIS_URL`          | *(empty)*              | Redis/Valkey URL for shared stats and cross-instance dashboard notifications. When set, this replaces local JSON stats persistence. |
+| `stats.redis_key_prefix`     | `LLM_PROXY_STATS_REDIS_KEY_PREFIX`   | `llm-proxy:stats:`     | Prefix used to isolate this proxy's stats keys and Pub/Sub channel in a shared Redis/Valkey instance. |
 | `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
 | `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
@@ -348,6 +350,14 @@ Tracing is configured through the standard `OTEL_*` environment variables
 With a collector configured, every request gets a span and every backend
 attempt a child span carrying `llm_proxy.backend`, `llm_proxy.model` and the
 attempt's outcome; the access log gains the matching `trace_id`.
+
+For an HA deployment, configure every proxy instance with the same
+`stats.redis_url` and `stats.redis_key_prefix`. Redis/Valkey becomes the
+shared source for dashboard counters, latency histograms, time series, and
+cross-instance live-update notifications. Prometheus metrics remain
+per-instance and should continue to be scraped from every replica. If Redis is
+not configured or becomes unavailable, the proxy continues serving requests
+and dashboard reads fall back to process-local metrics.
 
 Per-backend fields have no flat environment-variable form; configure them in
 the YAML file.
