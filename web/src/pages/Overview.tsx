@@ -33,7 +33,7 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import { fetchGrokUsage, fetchOverview, fetchStats, fetchStatsSeries } from '../api'
 import { useLiveStatsUpdates } from '../useLiveUpdates'
 import type { GrokUsage, ModelStat, SeriesPoint } from '../api'
-import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
+import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
 import { SegmentedControl } from '@mantine/core'
 import StatTile from '../components/StatTile'
@@ -222,8 +222,8 @@ export default function OverviewPage() {
               />
               <StatTile
                 label="Tool error rate"
-                value={fmtPct(toolCalls ? toolErrors / toolCalls : 0)}
-                hint="errored / calls"
+                value={fmtPct(clampRate(toolCalls ? toolErrors / toolCalls : 0))}
+                hint={`${fmtInt(toolErrors)} errored · ${fmtInt(toolCalls)} calls`}
                 icon={<IconAlertTriangle size={16} />}
                 accent={toolErrors > 0 ? 'red' : 'gray'}
               />
