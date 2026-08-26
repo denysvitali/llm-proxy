@@ -23,6 +23,7 @@ dashboard; Grok has no upstream API-key setting.
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
 | `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
+| `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
@@ -84,6 +85,22 @@ backends:
 The catalog includes every model visible to the key, so use a qualified route
 such as `openrouter/vendor/model` when a bare ID would be ambiguous across
 backends.
+
+### OpenCode Go
+
+[OpenCode Go](https://opencode.ai/docs/go/) is a low-cost subscription with
+model-specific endpoints. Configure it with the API key from OpenCode Zen:
+
+```yaml
+backends:
+  - type: opencode-go
+    api_key_env: OPENCODE_API_KEY
+```
+
+The proxy fetches Go's live model catalog from
+`https://opencode.ai/zen/go/v1/models`. Go models use the qualified
+`opencode-go/<model-id>` form. The proxy sends each model to its documented
+native endpoint and translates client requests when the client API differs.
 
 ## Install
 
@@ -307,7 +324,7 @@ flags are applied afterwards.
 | `stats.persist_interval`     | `LLM_PROXY_STATS_PERSIST_INTERVAL`   | `1m` when persistence is enabled | How often stats are flushed to `stats.persist_file`. |
 | `stats.retention_days`       | `LLM_PROXY_STATS_RETENTION_DAYS`     | `7` when persistence is enabled | Bucket retention period; `0` keeps history indefinitely. |
 | `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `grok`, `nous`, `openrouter`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key (not supported for `grok`). |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok`).                   |

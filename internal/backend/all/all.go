@@ -9,6 +9,7 @@ import (
 	_ "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/nous"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/opencode"
+	_ "github.com/denysvitali/llm-proxy/internal/backend/opencodego"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/openrouter"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/venice"
 )
