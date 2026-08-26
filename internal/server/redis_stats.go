@@ -324,8 +324,8 @@ func (st *Stats) seriesAtScopeRedis(ctx context.Context, rng string, now time.Ti
 	start := end.Add(-time.Duration(n) * dur)
 
 	type aggregate struct {
-		requests, successes, tokensIn, tokensOut, toolCalls uint64
-		ttft, e2e, tps                                      []uint64
+		requests, successes, tokensIn, tokensOut, toolCalls, toolErrors uint64
+		ttft, e2e, tps                                                  []uint64
 	}
 	aggs := make([]*aggregate, n)
 	for i := range aggs {
@@ -368,6 +368,7 @@ func (st *Stats) seriesAtScopeRedis(ctx context.Context, rng string, now time.Ti
 			a.tokensIn += b.TokensIn
 			a.tokensOut += b.TokensOut
 			a.toolCalls += b.ToolCalls
+			a.toolErrors += b.ToolErrors
 			for i := range b.TTFTBuckets {
 				a.ttft[i] += b.TTFTBuckets[i]
 				a.e2e[i] += b.E2EBuckets[i]
@@ -395,6 +396,7 @@ func (st *Stats) seriesAtScopeRedis(ctx context.Context, rng string, now time.Ti
 		TokensIn:      make([]point, 0, n),
 		TokensOut:     make([]point, 0, n),
 		ToolCalls:     make([]point, 0, n),
+		ToolErrors:    make([]point, 0, n),
 	}
 	for i := range aggs {
 		ts := start.Add(time.Duration(i) * dur).Format(time.RFC3339)
@@ -404,6 +406,7 @@ func (st *Stats) seriesAtScopeRedis(ctx context.Context, rng string, now time.Ti
 		series.TokensIn = append(series.TokensIn, point{TS: ts, Value: float64(a.tokensIn)})
 		series.TokensOut = append(series.TokensOut, point{TS: ts, Value: float64(a.tokensOut)})
 		series.ToolCalls = append(series.ToolCalls, point{TS: ts, Value: float64(a.toolCalls)})
+		series.ToolErrors = append(series.ToolErrors, point{TS: ts, Value: float64(a.toolErrors)})
 		series.TTFTP50 = append(series.TTFTP50, point{TS: ts, Value: histogramQuantile(0.5, ttftEdges, a.ttft, 0)})
 		series.E2EP50 = append(series.E2EP50, point{TS: ts, Value: histogramQuantile(0.5, e2eEdges, a.e2e, 0)})
 		series.ThroughputP50 = append(series.ThroughputP50, point{TS: ts, Value: histogramQuantile(0.5, tpsEdges, a.tps, 0)})

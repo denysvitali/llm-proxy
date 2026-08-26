@@ -192,9 +192,13 @@ func (t *tracker) done() {
 // recordInboundToolErrors attributes errored tool results carried by an
 // inbound request body to the resolved backend/model. This is what makes the
 // tool-call error rate meaningful: the error surfaces one turn after the
-// tool call itself.
+// tool call itself. Only blocks in the LAST message are counted: agent loops
+// replay the full history each turn, so earlier messages are re-sends whose
+// errors were already counted on the turn they first appeared. Counting the
+// whole body would multiply one real error by the number of subsequent turns
+// (3 errors replayed over 10 turns → a "3000%" error rate).
 func (st *Stats) recordInboundToolErrors(body []byte, backendName, model string) {
-	if n := countErroredToolResults(body); n > 0 {
+	if n := countErroredToolResults(body, true); n > 0 {
 		st.errs.WithLabelValues(backendName, model).Add(float64(n))
 		st.recordToolErrors(backendName, model, int64(n))
 	}
@@ -202,8 +206,11 @@ func (st *Stats) recordInboundToolErrors(body []byte, backendName, model string)
 
 // countErroredToolResults counts Anthropic tool_result blocks flagged
 // is_error in an inbound request body. Only Anthropic-shaped requests carry
-// an explicit error flag; OpenAI tool results are plain content.
-func countErroredToolResults(body []byte) int {
+// an explicit error flag; OpenAI tool results are plain content. With
+// lastMessageOnly, only the final message is scanned — inbound agent-loop
+// requests replay prior turns, so scanning everything would recount errors
+// that already surfaced.
+func countErroredToolResults(body []byte, lastMessageOnly bool) int {
 	var probe struct {
 		Messages []struct {
 			Content json.RawMessage `json:"content"`
@@ -212,8 +219,12 @@ func countErroredToolResults(body []byte) int {
 	if json.Unmarshal(body, &probe) != nil {
 		return 0
 	}
+	messages := probe.Messages
+	if lastMessageOnly && len(messages) > 0 {
+		messages = messages[len(messages)-1:]
+	}
 	n := 0
-	for _, msg := range probe.Messages {
+	for _, msg := range messages {
 		var blocks []struct {
 			Type    string `json:"type"`
 			IsError bool   `json:"is_error"`
@@ -1197,6 +1208,7 @@ type seriesSet struct {
 	TokensIn      []point `json:"tokens_in"`
 	TokensOut     []point `json:"tokens_out"`
 	ToolCalls     []point `json:"tool_calls"`
+	ToolErrors    []point `json:"tool_errors"`
 }
 
 // scopedSeriesSet carries the same fleet-wide series, restricted to one
@@ -1255,6 +1267,7 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 
 	type agg struct {
 		requests, successes, tokensIn, tokensOut, cacheRead, toolCalls uint64
+		toolErrors                                                     uint64
 		ttft, e2e, tps                                                 []uint64
 	}
 	aggs := make([]*agg, n)
@@ -1295,6 +1308,7 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 			a.tokensOut += b.TokensOut
 			a.cacheRead += b.CacheRead
 			a.toolCalls += b.ToolCalls
+			a.toolErrors += b.ToolErrors
 			for i := range b.TTFTBuckets {
 				a.ttft[i] += b.TTFTBuckets[i]
 			}
@@ -1326,6 +1340,7 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 		TokensIn:      make([]point, 0, n),
 		TokensOut:     make([]point, 0, n),
 		ToolCalls:     make([]point, 0, n),
+		ToolErrors:    make([]point, 0, n),
 	}
 	for i := 0; i < n; i++ {
 		ts := start.Add(time.Duration(i) * dur).Format(time.RFC3339)
@@ -1335,6 +1350,7 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 		series.TokensIn = append(series.TokensIn, point{TS: ts, Value: float64(a.tokensIn)})
 		series.TokensOut = append(series.TokensOut, point{TS: ts, Value: float64(a.tokensOut)})
 		series.ToolCalls = append(series.ToolCalls, point{TS: ts, Value: float64(a.toolCalls)})
+		series.ToolErrors = append(series.ToolErrors, point{TS: ts, Value: float64(a.toolErrors)})
 		series.TTFTP50 = append(series.TTFTP50, point{TS: ts, Value: histogramQuantile(0.5, ttftEdges, a.ttft, 0)})
 		series.E2EP50 = append(series.E2EP50, point{TS: ts, Value: histogramQuantile(0.5, e2eEdges, a.e2e, 0)})
 		series.ThroughputP50 = append(series.ThroughputP50, point{TS: ts, Value: histogramQuantile(0.5, tpsEdges, a.tps, 0)})

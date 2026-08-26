@@ -104,12 +104,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, fmt.Errorf("request to Grok failed: %w", err)
 	}
-	bodyReader := io.ReadCloser(resp.Body)
 	// Normalize every Responses response, not only namespace-tool responses.
 	// Grok-compatible gateways may encode integer tool arguments as floats;
 	// Codex validates the argument string against the MCP schema and rejects
 	// values such as 63889.0 for an i32 field.
-	bodyReader = restoreNamespaceCalls(resp.Body, namespaces, req.Streaming)
+	bodyReader := restoreNamespaceCalls(resp.Body, namespaces, req.Streaming)
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: bodyReader}, nil
 }
 

@@ -142,11 +142,28 @@ func TestCountErroredToolResults(t *testing.T) {
 		{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true},
 			{"type":"tool_result","tool_use_id":"t2"},
 			{"type":"text","text":"also saw an error"}]}]}`
-	if n := countErroredToolResults([]byte(body)); n != 1 {
+	if n := countErroredToolResults([]byte(body), false); n != 1 {
 		t.Fatalf("n = %d, want 1", n)
 	}
-	if n := countErroredToolResults([]byte(`{"messages":[{"role":"user","content":"plain"}]}`)); n != 0 {
+	if n := countErroredToolResults([]byte(`{"messages":[{"role":"user","content":"plain"}]}`), false); n != 0 {
 		t.Fatalf("string content counted: %d", n)
+	}
+}
+
+// An agent loop replays its full history every turn; the same errored
+// tool_result must be counted only on the turn it first appears (the turn
+// whose last message carries it), not once per subsequent turn.
+func TestCountErroredToolResultsLastMessageOnly(t *testing.T) {
+	body := `{"model":"m","messages":[
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true}]},
+		{"role":"assistant","content":[{"type":"text","text":"retrying"}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true},
+			{"type":"tool_result","tool_use_id":"t2","is_error":true}]}]}`
+	if n := countErroredToolResults([]byte(body), true); n != 2 {
+		t.Fatalf("n = %d, want 2 (last message only)", n)
+	}
+	if n := countErroredToolResults([]byte(body), false); n != 3 {
+		t.Fatalf("n = %d, want 3 (all messages)", n)
 	}
 }
 
