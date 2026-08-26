@@ -186,10 +186,63 @@ func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool)
 	if !ok {
 		return nil, false
 	}
-	chain := []route{primary}
 	if bc, ok := s.cfg.BackendByType(primary.backend.Name()); ok {
 		fallbacks = append(fallbacks, bc.Fallbacks...)
 	}
+	// A qualified ID pins one backend, so that backend's live catalog is
+	// authoritative for what the pin may request. A model the catalog no
+	// longer lists must not be forwarded: the upstream's own rejection
+	// (e.g. Zen's 401 "Model x is not supported") reads as an auth failure
+	// to clients, which retry it instead of failing fast. Drop the primary
+	// and let its fallback chain serve the request instead; with none
+	// configured the caller answers 404 like any unroutable model. A
+	// catalog that cannot be fetched stays fail-open so a broken /models
+	// endpoint cannot 404 known-good models.
+	if upstream, pinned := qualifiedPin(model, primary.backend.Name()); pinned &&
+		s.catalogLacksModel(ctx, primary.backend, upstream) {
+		chain := s.appendFallbacks(nil, fallbacks, upstream)
+		if len(chain) == 0 {
+			return nil, false
+		}
+		// The pinned backend was skipped by the catalog check rather than
+		// failing mid-request, but the request still moved away from it —
+		// count the hand-off so fallbacks_total keeps one meaning: requests
+		// the primary did not serve.
+		s.metrics.fallbacks.WithLabelValues(primary.backend.Name(), chain[0].backend.Name()).Inc()
+		return chain, true
+	}
+	return s.appendFallbacks([]route{primary}, fallbacks, primary.model), true
+}
+
+// qualifiedPin reports whether model is a qualified "<backend>/<model>" ID
+// that pinned backendName (split at the first slash, mirroring
+// resolveWithFallbacks), and returns the upstream model remainder.
+func qualifiedPin(model, backendName string) (string, bool) {
+	prefix, rest, found := strings.Cut(model, "/")
+	if !found || rest == "" || prefix != backendName {
+		return "", false
+	}
+	return rest, true
+}
+
+// catalogLacksModel reports whether the backend's live catalog loaded,
+// lists anything at all, and does not list model. Fetch errors and empty
+// catalogs report false so callers stay fail-open: an unreachable or
+// auth-gated /models endpoint (which can legitimately answer an empty list)
+// must not 404 models the backend actually serves.
+func (s *Server) catalogLacksModel(ctx context.Context, b backend.Backend, model string) bool {
+	models, err := s.catalog(ctx, b)
+	if err != nil || len(models) == 0 {
+		return false
+	}
+	return !hasModel(models, model)
+}
+
+// appendFallbacks appends the fallback entries that can serve the request to
+// chain: unknown, disabled and duplicate backends are skipped, the
+// maxRouteChain cap holds, and an empty model rewrite keeps the primary's
+// upstream model.
+func (s *Server) appendFallbacks(chain []route, fallbacks []config.FallbackRoute, primaryModel string) []route {
 	for _, f := range fallbacks {
 		if len(chain) >= maxRouteChain {
 			break
@@ -210,11 +263,11 @@ func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool)
 		}
 		upstream := f.Model
 		if upstream == "" {
-			upstream = primary.model
+			upstream = primaryModel
 		}
 		chain = append(chain, route{backend: b, model: upstream})
 	}
-	return chain, true
+	return chain
 }
 
 // retryBudget is the retry policy for one backend, resolved from config with

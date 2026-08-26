@@ -151,9 +151,41 @@ func TestBackendFallbackAppliesToQualifiedID(t *testing.T) {
 			}, nil)
 
 		rec := postMsg(t, s, "/v1/messages",
-			`{"model":"fake/upstream-m1","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+			`{"model":"fake/m1","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if got := testutil.ToFloat64(s.metrics.fallbacks.WithLabelValues("fake", "second")); got != 1 {
+			t.Fatalf("fallback metric = %v, want 1", got)
+		}
+	})
+}
+
+// TestBackendFallbackSkipsQualifiedModelMissingFromCatalog: a qualified ID
+// the pinned backend's catalog no longer lists never reaches that backend —
+// no wasted upstream round trip, no relayed 4xx — and the configured
+// fallback serves the request directly.
+func TestBackendFallbackSkipsQualifiedModelMissingFromCatalog(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		primary := newNamedScripted("fake", backend.KindOpenAIChat,
+			step{resp: unavailableResponse(http.StatusServiceUnavailable, `{"error":{"message":"down"}}`)})
+		secondary := newNamedScripted("second", backend.KindOpenAIChat,
+			step{resp: sseResponse("text/event-stream", fullChatSSE)})
+		s := newFallbackServer(t, primary, secondary,
+			config.BackendConfig{
+				Type:      "fake",
+				APIKey:    "k",
+				Fallbacks: []config.FallbackRoute{{Backend: "second", Model: "rewrite-m1"}},
+			}, nil)
+
+		// scriptedBackend's catalog lists only "m1", so fake/gone is a miss.
+		rec := postMsg(t, s, "/v1/messages",
+			`{"model":"fake/gone","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if primary.callCount() != 0 {
+			t.Fatalf("primary attempts = %d, want 0 (catalog miss must skip the pinned backend)", primary.callCount())
 		}
 		if got := testutil.ToFloat64(s.metrics.fallbacks.WithLabelValues("fake", "second")); got != 1 {
 			t.Fatalf("fallback metric = %v, want 1", got)

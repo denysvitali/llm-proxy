@@ -234,7 +234,14 @@ Every inbound request carries a model name, which resolves in this order:
    nested upstream names work: `nous/nousresearch/hermes-4-70b` routes to the
    `nous` backend with model `nousresearch/hermes-4-70b`. This lets a client
    be configured once with the proxy hostname and select per-request which
-   backend serves it.
+   backend serves it. The pinned backend's live catalog is authoritative: a
+   qualified ID the catalog no longer lists is not forwarded (the upstream's
+   own rejection would relay as a misleading 4xx — e.g. a removed model
+   surfacing as a 401 auth failure clients keep retrying); the backend's
+   fallback chain serves it instead, and with none configured the request
+   answers `404` like any unroutable model. A catalog that cannot be fetched,
+   or answers an empty list, fails open and the request is forwarded as
+   before.
 1. **Explicit routes** — an exact match in `routes`.
 2. **Backend catalogs** — the enabled backends' live model lists, consulted in
    configuration order; first catalog containing the model wins. Catalogs are
@@ -274,7 +281,9 @@ Fallback entries carry an optional model rewrite (`model`); without one the
 primary's upstream model name is kept. The route entry's `fallbacks` run
 first, then the primary backend's own, capped at four backends per request
 including the primary. Fallbacks also apply to qualified IDs like
-`opencode/model`, which bypass routes entirely.
+`opencode/model`, which bypass routes entirely — both when the pinned backend
+fails mid-request and when its catalog no longer lists the model (the primary
+is skipped without a round trip).
 
 Each hand-off increments `llm_proxy_fallbacks_total{from_backend,to_backend}`;
 retry metrics carry `backend` and `model` labels, so exhaustion per backend

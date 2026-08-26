@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,7 +104,7 @@ func msgQuietLogger() *logrus.Logger {
 // newMsgServer builds an auth-free Server around fb. Routes map m1 to the
 // fake backend under upstream model "upstream-m1"; DefaultRoute points at the
 // fake backend unless mutate clears it.
-func newMsgServer(t *testing.T, fb *msgFakeBackend, mutate func(*config.Config)) *Server {
+func newMsgServer(t *testing.T, fb backend.Backend, mutate func(*config.Config)) *Server {
 	t.Helper()
 	cfg := &config.Config{
 		Backends:     []config.BackendConfig{{Type: "fake", APIKey: "k"}},
@@ -185,6 +186,82 @@ func TestMessagesUnknownModelNoDefault(t *testing.T) {
 	}
 	if !strings.Contains(parsed.Error.Message, "nope-model") {
 		t.Errorf("message = %q, want it to name the model", parsed.Error.Message)
+	}
+}
+
+// A qualified "<backend>/<model>" ID whose pinned backend's live catalog no
+// longer lists the model must 404 locally instead of forwarding: relaying the
+// upstream's own rejection (production shape: Zen's 401 "Model
+// x-preview-f-free is not supported") makes clients retry it as a transient
+// auth failure.
+func TestMessagesQualifiedModelMissingFromCatalog(t *testing.T) {
+	fb := &msgFakeBackend{
+		supported: map[backend.Kind]bool{backend.KindAnthropic: true},
+		models:    []string{"catalog-only-model"},
+		status:    http.StatusOK,
+	}
+	// DefaultRoute stays configured: a qualified ID pins its backend, so a
+	// catalog miss must not silently fall through to the default backend.
+	s := newMsgServer(t, fb, nil)
+
+	rec := postMsg(t, s, "/v1/messages", `{"model":"fake/gone-model","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
+	}
+	parsed := decodeAnthropicError(t, rec)
+	if parsed.Type != "error" || parsed.Error.Type != "not_found_error" {
+		t.Errorf("error shape = %+v, want not_found_error", parsed)
+	}
+	if !strings.Contains(parsed.Error.Message, "fake/gone-model") {
+		t.Errorf("message = %q, want it to name the model", parsed.Error.Message)
+	}
+	if fb.sendCount != 0 {
+		t.Errorf("upstream hits = %d, want 0 (catalog miss must not forward)", fb.sendCount)
+	}
+}
+
+// The qualified form of a catalog entry keeps routing to the pinned backend
+// with the prefix stripped — the catalog check must not break working pins.
+func TestMessagesQualifiedModelInCatalogForwards(t *testing.T) {
+	fb := &msgFakeBackend{
+		supported: map[backend.Kind]bool{backend.KindAnthropic: true},
+		models:    []string{"catalog-only-model"},
+		status:    http.StatusOK,
+	}
+	s := newMsgServer(t, fb, nil)
+
+	rec := postMsg(t, s, "/v1/messages", `{"model":"fake/catalog-only-model","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, model, _, _ := fb.captured(); model != "catalog-only-model" {
+		t.Errorf("upstream model = %q, want catalog-only-model (prefix stripped)", model)
+	}
+}
+
+// A catalog that cannot be fetched stays fail-open: qualified IDs forward as
+// before so a broken /models endpoint cannot 404 known-good models.
+type catalogErrorBackend struct {
+	*msgFakeBackend
+}
+
+func (catalogErrorBackend) Models(context.Context) ([]string, error) {
+	return nil, errors.New("catalog endpoint down")
+}
+
+func TestMessagesQualifiedModelCatalogErrorFailsOpen(t *testing.T) {
+	fb := &msgFakeBackend{
+		supported: map[backend.Kind]bool{backend.KindAnthropic: true},
+		status:    http.StatusOK,
+	}
+	s := newMsgServer(t, catalogErrorBackend{fb}, nil)
+
+	rec := postMsg(t, s, "/v1/messages", `{"model":"fake/any-model","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (catalog error must fail open), body = %s", rec.Code, rec.Body.String())
+	}
+	if fb.sendCount != 1 {
+		t.Errorf("upstream hits = %d, want 1", fb.sendCount)
 	}
 }
 
