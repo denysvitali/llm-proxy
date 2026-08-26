@@ -19,6 +19,13 @@ export function fmtPct(ratio: number, digits = 1): string {
   return `${(ratio * 100).toFixed(digits)}%`
 }
 
+// Tool errors and their calls are recorded a turn apart, so the raw ratio can
+// briefly exceed 1 across a bucket boundary; a percentage over 100% is never
+// a true state, so rates derived from mismatched counters clamp to [0, 1].
+export function clampRate(ratio: number): number {
+  return Number.isFinite(ratio) ? Math.min(Math.max(ratio, 0), 1) : 0
+}
+
 export function fmtTps(v: number): string {
   if (!Number.isFinite(v) || v <= 0) return '—'
   return v < 10 ? v.toFixed(1) : v.toFixed(0)

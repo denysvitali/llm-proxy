@@ -44,6 +44,7 @@ export interface StatsSeries {
   tokens_in: SeriesPoint[]
   tokens_out: SeriesPoint[]
   tool_calls: SeriesPoint[]
+  tool_errors: SeriesPoint[]
 }
 
 export interface StatsSeriesResponse {

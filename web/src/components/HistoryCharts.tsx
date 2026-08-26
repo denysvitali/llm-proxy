@@ -37,6 +37,13 @@ function formatAxisTime(value: string) {
   })
 }
 
+// Axis ticks must never read "—": a zero tick is the baseline itself, and
+// formatters like fmtSec render 0 as an em-dash ("no data"), which on an
+// axis reads as a broken chart. Wrap any formatter for axis use.
+function axisFormatter(format: HistoryFormatter) {
+  return (value: number) => (Number.isFinite(value) && value !== 0 ? format(value) : '0')
+}
+
 function ChartTooltip({
   payload,
   timestamp,
@@ -76,11 +83,13 @@ export function HistoryLineChart({
   description,
   data,
   series,
+  height = 132,
 }: {
   title: string
   description: string
   data: HistoryChartData[]
   series: HistorySeries[]
+  height?: number
 }) {
   const pal = useChartPalette()
   const coloredSeries = series.map((item, index) => ({
@@ -90,26 +99,31 @@ export function HistoryLineChart({
   const hasData = data.some((point) =>
     coloredSeries.some((item) => Number(point[item.name] ?? 0) !== 0),
   )
+  // A single series is named by its title — no legend box. With two or more,
+  // the legend carries identity so the reader never has to match by color.
+  const withLegend = coloredSeries.length > 1
 
   return (
     <Box>
       <Text size="sm" fw={650} lh={1.25}>{title}</Text>
       <Text size="xs" c="dimmed" mt={1} mb={10} lh={1.3}>{description}</Text>
       {!hasData ? (
-        <Box h={150} style={{ display: 'grid', placeItems: 'center' }}>
+        <Box h={height} style={{ display: 'grid', placeItems: 'center' }}>
           <Text size="sm" c="dimmed" ta="center">
             No traffic in this range
           </Text>
         </Box>
       ) : (
         <LineChart
-          h={132}
+          h={height}
           data={data}
           dataKey="time"
           curveType="linear"
           connectNulls
+          withLegend={withLegend}
+          legendProps={{ verticalAlign: 'bottom', position: 'left' } as never}
           series={coloredSeries.map(({ name, label, color }) => ({ name, label, color }))}
-          valueFormatter={(value) => coloredSeries[0].formatter(Number(value))}
+          valueFormatter={axisFormatter(coloredSeries[0].formatter)}
           tooltipProps={{
             content: ({ active, payload, label }) =>
               active && payload?.length ? (
@@ -122,7 +136,12 @@ export function HistoryLineChart({
             axisLine: false,
             minTickGap: 24,
           }}
-          yAxisProps={{ tickLine: false, axisLine: false, width: 42 }}
+          yAxisProps={{
+            tickLine: false,
+            axisLine: false,
+            width: 42,
+            tickFormatter: axisFormatter(coloredSeries[0].formatter),
+          }}
           gridAxis="y"
           tooltipAnimationDuration={150}
           dotProps={{ r: 2, strokeWidth: 0 }}
@@ -139,12 +158,14 @@ export function HistoryBarChart({
   points,
   formatter = fmtInt,
   color,
+  height = 112,
 }: {
   title: string
   description: string
   points: SeriesPoint[]
   formatter?: HistoryFormatter
   color?: string
+  height?: number
 }) {
   const pal = useChartPalette()
   const barSeries: HistorySeries = { name: 'value', label: title, formatter }
@@ -157,16 +178,16 @@ export function HistoryBarChart({
       <Text size="sm" fw={650} lh={1.25}>{title}</Text>
       <Text size="xs" c="dimmed" mt={1} mb={10} lh={1.3}>{description}</Text>
       {data.every((point) => point.value === 0) ? (
-        <Box h={130} style={{ display: 'grid', placeItems: 'center' }}>
+        <Box h={height} style={{ display: 'grid', placeItems: 'center' }}>
           <Text size="sm" c="dimmed" ta="center">No traffic in this range</Text>
         </Box>
       ) : (
         <BarChart
-          h={112}
+          h={height}
           data={data}
           dataKey="time"
           series={[{ name: 'value', label: title, color: color ?? pal.series[2] }]}
-          valueFormatter={formatter}
+          valueFormatter={axisFormatter(formatter)}
           tooltipProps={{
             content: ({ active, payload, label }) => {
               if (!active || !payload?.length) return null
@@ -185,7 +206,12 @@ export function HistoryBarChart({
             axisLine: false,
             minTickGap: 24,
           }}
-          yAxisProps={{ tickLine: false, axisLine: false, width: 42 }}
+          yAxisProps={{
+            tickLine: false,
+            axisLine: false,
+            width: 42,
+            tickFormatter: axisFormatter(formatter),
+          }}
           barProps={{ radius: [3, 3, 0, 0], maxBarSize: 18 }}
           gridAxis="y"
         />

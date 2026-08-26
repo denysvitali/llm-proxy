@@ -26,8 +26,8 @@ import { IconArrowsSort, IconInboxOff, IconSearch, IconSearchOff } from '@tabler
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { fetchBackendStatsSeries, fetchStats } from '../api'
 import type { ModelStat, StatsSeries } from '../api'
-import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
-import { useChartPalette } from '../palette'
+import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
+import { status, useChartPalette } from '../palette'
 import UptimeBadge from '../components/UptimeBadge'
 import PercentileBars from '../components/PercentileBars'
 import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
@@ -271,7 +271,7 @@ export default function ModelsPage() {
                     <Num td={fmtTps(m.throughput_tps.p50)} title={`p90 ${fmtTps(m.throughput_tps.p90)} · p99 ${fmtTps(m.throughput_tps.p99)}`} />
                     <Num td={fmtPct(m.cache_rate)} />
                     <Num td={fmtInt(m.tool_calls)} />
-                    <Num td={fmtPct(m.tool_error_rate)} />
+                    <Num td={fmtPct(clampRate(m.tool_error_rate))} title={`${fmtInt(m.tool_errors)} errored · ${fmtInt(m.tool_calls)} calls`} />
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -347,7 +347,7 @@ function ModelCard({
         <Metric label="E2E" value={fmtSec(m.e2e_seconds.p50)} />
         <Metric label="tok/s" value={fmtTps(m.throughput_tps.p50)} />
         <Metric label="Cache" value={fmtPct(m.cache_rate)} />
-        <Metric label="Tool err" value={fmtPct(m.tool_error_rate)} />
+        <Metric label="Tool err" value={fmtPct(clampRate(m.tool_error_rate))} />
       </SimpleGrid>
       {/* Slim token-mix strip: cache share is visible at a glance without
             reading any number. Hidden until tokens exist to avoid noise. */}
@@ -442,6 +442,10 @@ function ModelDetail({
   // comparable; throughput keeps its own scale (different unit).
   const latMax = Math.max(stat.ttft_seconds.p99, stat.e2e_seconds.p99)
   const successRate = stat.requests > 0 ? stat.successes / stat.requests : 0
+  // Errors surface a turn after their call, so the raw counters can disagree
+  // briefly (errors recorded in a later bucket than the call they answer);
+  // clamp so a percentage never claims >100%.
+  const toolErrRate = clampRate(stat.tool_error_rate)
 
   return (
     <Stack gap={18}>
@@ -467,7 +471,12 @@ function ModelDetail({
           <DetailStat label="Requests" value={fmtInt(stat.requests)} hint={`${fmtPct(successRate)} succeeded`} />
           <DetailStat label="Latency p50" value={fmtSec(stat.e2e_seconds.p50)} hint={`TTFT ${fmtSec(stat.ttft_seconds.p50)}`} />
           <DetailStat label="Throughput" value={fmtTps(stat.throughput_tps.p50)} hint={`p90 ${fmtTps(stat.throughput_tps.p90)}`} />
-          <DetailStat label="Tool errors" value={fmtPct(stat.tool_error_rate)} hint={`${fmtInt(stat.tool_errors)} calls`} />
+          <DetailStat
+            label="Tool errors"
+            value={fmtPct(toolErrRate)}
+            hint={`${fmtInt(stat.tool_errors)} errored · ${fmtInt(stat.tool_calls)} calls`}
+            color={stat.tool_errors > 0 ? status.critical : undefined}
+          />
         </SimpleGrid>
       </Paper>
 
@@ -491,14 +500,18 @@ function ModelDetail({
 
       <DetailSection title="Traffic">
         <HistoryBarChart
-          title="Successful requests"
-          description="Count per interval"
+          title="Requests"
+          description="Upstream calls per interval"
           points={series?.requests ?? []}
         />
-        <HistoryBarChart
-          title="Tool calls"
-          description="Observed calls per interval"
-          points={series?.tool_calls ?? []}
+        <HistoryLineChart
+          title="Tool calls vs errors"
+          description="Calls issued and errored results, per interval"
+          data={historyData([series?.tool_calls, series?.tool_errors])}
+          series={[
+            { name: 'series0', label: 'Calls', formatter: historyFormatters.count },
+            { name: 'series1', label: 'Errors', formatter: historyFormatters.count },
+          ]}
         />
         <HistoryLineChart
           title="Token volume"
@@ -543,11 +556,21 @@ function ModelDetail({
   )
 }
 
-function DetailStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function DetailStat({
+  label,
+  value,
+  hint,
+  color,
+}: {
+  label: string
+  value: string
+  hint?: string
+  color?: string
+}) {
   return (
     <Box>
       <Text size="xs" c="dimmed" fw={600}>{label}</Text>
-      <Text fz={20} fw={700} lh={1.15} mt={2} style={{ fontVariantNumeric: 'tabular-nums' }}>
+      <Text fz={20} fw={700} lh={1.15} mt={2} c={color} style={{ fontVariantNumeric: 'tabular-nums' }}>
         {value}
       </Text>
       {hint && (
