@@ -105,9 +105,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, fmt.Errorf("request to Grok failed: %w", err)
 	}
 	bodyReader := io.ReadCloser(resp.Body)
-	if len(namespaces) > 0 {
-		bodyReader = restoreNamespaceCalls(resp.Body, namespaces, req.Streaming)
-	}
+	// Normalize every Responses response, not only namespace-tool responses.
+	// Grok-compatible gateways may encode integer tool arguments as floats;
+	// Codex validates the argument string against the MCP schema and rejects
+	// values such as 63889.0 for an i32 field.
+	bodyReader = restoreNamespaceCalls(resp.Body, namespaces, req.Streaming)
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: bodyReader}, nil
 }
 
@@ -294,10 +296,11 @@ func restoreNamespaceCalls(upstream io.ReadCloser, tools []namespaceTool, stream
 }
 
 func restoreNamespaceStream(writer io.Writer, upstream io.Reader, tools []namespaceTool) error {
-	scanner := bufio.NewScanner(upstream)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	reader := bufio.NewReaderSize(upstream, 64*1024)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		hasNewline := len(line) > 0 && line[len(line)-1] == '\n'
+		line = bytes.TrimSuffix(line, []byte{'\n'})
 		if bytes.HasPrefix(line, []byte("data:")) {
 			prefixLen := len("data:")
 			for prefixLen < len(line) && (line[prefixLen] == ' ' || line[prefixLen] == '\t') {
@@ -308,14 +311,23 @@ func restoreNamespaceStream(writer io.Writer, upstream io.Reader, tools []namesp
 				line = append(append([]byte(nil), line[:prefixLen]...), restoreNamespaceJSON(payload, tools)...)
 			}
 		}
-		if _, err := writer.Write(append(line, '\n')); err != nil {
+		if hasNewline {
+			line = append(line, '\n')
+		}
+		if _, err := writer.Write(line); err != nil {
 			return err
 		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
 	}
-	return scanner.Err()
 }
 
 func restoreNamespaceJSON(data []byte, tools []namespaceTool) []byte {
+	data = translate.NormalizeResponsesToolArguments(data)
 	var value any
 	if json.Unmarshal(data, &value) != nil {
 		return data
