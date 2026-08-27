@@ -618,22 +618,22 @@ func sseDataPayloads(data []byte) [][]byte {
 // ModelStat is one backend/model row of the stats summary. Latency fields
 // are seconds, throughput tokens/second.
 type ModelStat struct {
-	Backend          string         `json:"backend"`
-	Model            string         `json:"model"`
-	Requests         uint64         `json:"requests"`
-	Successes        uint64         `json:"successes"`
-	Uptime           float64        `json:"uptime"` // successful / total requests
-	TTFT             Percentiles    `json:"ttft_seconds"`
-	E2E              Percentiles    `json:"e2e_seconds"`
-	Throughput       Percentiles    `json:"throughput_tps"`
-	InputTokens      uint64         `json:"input_tokens"`
-	OutputTokens     uint64         `json:"output_tokens"`
-	CacheReadTokens  uint64         `json:"cache_read_tokens"`
-	CacheWriteTokens uint64         `json:"cache_write_tokens"`
-	CacheRate        float64        `json:"cache_rate"` // cached input / total input
-	ToolCalls        uint64         `json:"tool_calls"`
-	ToolErrors       uint64         `json:"tool_errors"`
-	ToolErrorRate    float64        `json:"tool_error_rate"`
+	Backend          string            `json:"backend"`
+	Model            string            `json:"model"`
+	Requests         uint64            `json:"requests"`
+	Successes        uint64            `json:"successes"`
+	Uptime           float64           `json:"uptime"` // successful / total requests
+	TTFT             Percentiles       `json:"ttft_seconds"`
+	E2E              Percentiles       `json:"e2e_seconds"`
+	Throughput       Percentiles       `json:"throughput_tps"`
+	InputTokens      uint64            `json:"input_tokens"`
+	OutputTokens     uint64            `json:"output_tokens"`
+	CacheReadTokens  uint64            `json:"cache_read_tokens"`
+	CacheWriteTokens uint64            `json:"cache_write_tokens"`
+	CacheRate        float64           `json:"cache_rate"` // cached input / total input
+	ToolCalls        uint64            `json:"tool_calls"`
+	ToolErrors       uint64            `json:"tool_errors"`
+	ToolErrorRate    float64           `json:"tool_error_rate"`
 	StatusCodes      map[string]uint64 `json:"status_codes,omitempty"` // non-2xx replies by HTTP status
 }
 
@@ -916,18 +916,18 @@ var tpsEdges = []float64{1, 2, 5, 10, 20, 50, 100, 200, 500, math.Inf(1)}
 
 // bucket holds the counters and fixed-edge histograms for one 5-minute window.
 type bucket struct {
-	WindowStart       time.Time          `json:"window_start"`
-	Requests          uint64             `json:"requests"`
-	Successes         uint64             `json:"successes"`
-	TTFTBuckets       []uint64           `json:"ttft_buckets"`
-	E2EBuckets        []uint64           `json:"e2e_buckets"`
-	ThroughputBuckets []uint64           `json:"throughput_buckets"`
-	TokensIn          uint64             `json:"tokens_in"`
-	TokensOut         uint64             `json:"tokens_out"`
-	CacheRead         uint64             `json:"cache_read"`
-	ToolCalls         uint64             `json:"tool_calls"`
-	ToolErrors        uint64             `json:"tool_errors"`
-	StatusCodes       map[string]uint64  `json:"status_codes,omitempty"` // non-2xx replies by HTTP status
+	WindowStart       time.Time         `json:"window_start"`
+	Requests          uint64            `json:"requests"`
+	Successes         uint64            `json:"successes"`
+	TTFTBuckets       []uint64          `json:"ttft_buckets"`
+	E2EBuckets        []uint64          `json:"e2e_buckets"`
+	ThroughputBuckets []uint64          `json:"throughput_buckets"`
+	TokensIn          uint64            `json:"tokens_in"`
+	TokensOut         uint64            `json:"tokens_out"`
+	CacheRead         uint64            `json:"cache_read"`
+	ToolCalls         uint64            `json:"tool_calls"`
+	ToolErrors        uint64            `json:"tool_errors"`
+	StatusCodes       map[string]uint64 `json:"status_codes,omitempty"` // non-2xx replies by HTTP status
 }
 
 // modelStats holds the cumulative counters and 5-minute bucket ring for one
@@ -1120,15 +1120,15 @@ type statsSnapshot struct {
 }
 
 type modelSnapshot struct {
-	Requests   uint64          `json:"requests"`
-	Successes  uint64          `json:"successes"`
-	TokensIn   uint64          `json:"tokens_in"`
-	TokensOut  uint64          `json:"tokens_out"`
-	CacheRead  uint64          `json:"cache_read"`
-	ToolCalls  uint64          `json:"tool_calls"`
-	ToolErrors uint64          `json:"tool_errors"`
+	Requests   uint64            `json:"requests"`
+	Successes  uint64            `json:"successes"`
+	TokensIn   uint64            `json:"tokens_in"`
+	TokensOut  uint64            `json:"tokens_out"`
+	CacheRead  uint64            `json:"cache_read"`
+	ToolCalls  uint64            `json:"tool_calls"`
+	ToolErrors uint64            `json:"tool_errors"`
 	Statuses   map[string]uint64 `json:"status_codes,omitempty"`
-	Buckets    []bucket        `json:"buckets"`
+	Buckets    []bucket          `json:"buckets"`
 }
 
 func (st *Stats) snapshotForPersist() *statsSnapshot {
