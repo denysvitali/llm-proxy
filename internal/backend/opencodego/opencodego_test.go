@@ -175,3 +175,29 @@ func TestReadError(t *testing.T) {
 		t.Fatalf("ReadError = %+v, want status/body", err)
 	}
 }
+
+func TestSendStripsAdditionalToolsOnResponses(t *testing.T) {
+	c, rec := newRecordingClient(t, http.StatusOK, `{}`)
+	body := []byte(`{
+		"model":"grok-4.6",
+		"input":[
+			{"type":"additional_tools","tools":[{"type":"web_search"}]},
+			{"type":"message","role":"user","content":"hello"}
+		]
+	}`)
+	resp, err := c.Send(t.Context(), &backend.Request{
+		Kind:    backend.KindOpenAIResponses,
+		Model:   "grok-4.6",
+		RawBody: body,
+	})
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if strings.Contains(string(rec.body), `"additional_tools"`) {
+		t.Fatalf("additional_tools was forwarded: %s", rec.body)
+	}
+	if !strings.Contains(string(rec.body), `"hello"`) {
+		t.Fatalf("user message missing after normalize: %s", rec.body)
+	}
+}

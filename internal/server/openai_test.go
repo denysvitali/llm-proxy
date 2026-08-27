@@ -13,6 +13,7 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/config"
+	"github.com/sirupsen/logrus"
 )
 
 // fakeOABackend is an OpenAI-endpoints test double. Named to avoid colliding
@@ -563,5 +564,60 @@ func TestResponsesGarbageEnvelope(t *testing.T) {
 	}
 	if body.Error.Type != "invalid_request_error" {
 		t.Errorf("type = %q, want invalid_request_error", body.Error.Type)
+	}
+}
+
+type logCapture struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (h *logCapture) Levels() []logrus.Level { return logrus.AllLevels }
+
+func (h *logCapture) Fire(entry *logrus.Entry) error {
+	h.mu.Lock()
+	h.messages = append(h.messages, entry.Message)
+	h.mu.Unlock()
+	return nil
+}
+
+func (h *logCapture) logged() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.messages...)
+}
+
+func TestResponsesTranslationFailureIsLoggedLoudly(t *testing.T) {
+	fb := &fakeOABackend{
+		name:  "fakeoa",
+		kinds: map[backend.Kind]bool{backend.KindOpenAIChat: true},
+		body:  `{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"ok"}}]}`,
+	}
+	hook := &logCapture{}
+	log := logrus.New()
+	log.SetOutput(io.Discard)
+	log.AddHook(hook)
+	isolatePrometheus(t)
+	s := New(&config.Config{
+		Backends: []config.BackendConfig{{Type: fb.name}},
+		Routes:   map[string]config.ModelRoute{"gpt-c": {Backend: "fakeoa", Model: "upstream-c"}},
+	}, log, nil, []backend.Backend{fb})
+
+	rec := postOpenAI(t, s, "/v1/responses", `{"model":"gpt-c","input":[{"type":"item_reference","id":"x"}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	found := false
+	for _, msg := range hook.logged() {
+		if strings.Contains(msg, "cannot encode request for backend; rejecting request") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("translation failure was not logged loudly; got %q", hook.logged())
+	}
+	if fb.lastRequest() != nil {
+		t.Fatal("unsupported input still reached the backend")
 	}
 }

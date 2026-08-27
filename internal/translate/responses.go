@@ -118,7 +118,8 @@ type responsesInputItem struct {
 	Namespace string          `json:"namespace,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments string          `json:"arguments,omitempty"`
-	Output    string          `json:"output,omitempty"`
+	Input     string          `json:"input,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
 }
 
 type responsesInputContent struct {
@@ -295,7 +296,7 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 			items = append(items, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: block.ToolUseID,
-				Output: toolResultText(block),
+				Output: encodeResponsesText(toolResultText(block)),
 			})
 		case "thinking", "redacted_thinking":
 			// Reasoning traces are provider-specific and are not replayed upstream.
@@ -535,7 +536,7 @@ func ChatToResponses(body []byte, model string) ([]byte, error) {
 			inputItems = append(inputItems, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: message.ToolCallID,
-				Output: chatContentText(message.Content),
+				Output: encodeResponsesText(chatContentText(message.Content)),
 			})
 		default:
 			inputItems = append(inputItems, chatUserItems(message)...)
@@ -773,4 +774,65 @@ func ChatFromResponses(body []byte, model string) ([]byte, error) {
 			TotalTokens:      total,
 		},
 	})
+}
+
+// encodeResponsesText stores a tool-result string as a JSON string payload,
+// matching the Responses API's string form of function_call_output.output.
+func encodeResponsesText(text string) json.RawMessage {
+	if text == "" {
+		return nil
+	}
+	return mustMarshal(text)
+}
+
+// itemOutputText flattens function_call_output.output, which the Responses
+// API allows as either a string or an array of content parts.
+func itemOutputText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	if text, ok := plainString(raw); ok {
+		return text
+	}
+	var parts []responsesInputContent
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return string(raw)
+	}
+	var builder strings.Builder
+	for _, part := range parts {
+		piece := part.Text
+		if piece == "" {
+			piece = part.ImageURL
+		}
+		if strings.TrimSpace(piece) == "" {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString(piece)
+	}
+	return builder.String()
+}
+
+// itemArguments returns the JSON-string arguments for a function/custom tool
+// call. Custom tools send the payload as "input" instead of "arguments".
+func itemArguments(item responsesInputItem) string {
+	if item.Arguments != "" {
+		return item.Arguments
+	}
+	return item.Input
+}
+
+// ignoreResponsesInputType reports history items that carry no conversation
+// content for translated or strict-compatible upstreams. reasoning is
+// provider-specific; additional_tools is a Codex-internal Responses-Lite
+// item that OpenAI-compatible backends reject.
+func ignoreResponsesInputType(typ string) bool {
+	switch typ {
+	case "reasoning", "additional_tools":
+		return true
+	default:
+		return false
+	}
 }

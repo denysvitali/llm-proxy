@@ -57,7 +57,7 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 			if msg != nil {
 				converted.Messages = append(converted.Messages, *msg)
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
 			// Assistant-initiated tool call in the conversation history.
 			name := item.Name
 			if item.Namespace != "" {
@@ -69,21 +69,22 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 					Type:  "tool_use",
 					ID:    item.CallID,
 					Name:  name,
-					Input: argumentsJSON(item.Arguments),
+					Input: argumentsJSON(itemArguments(item)),
 				}}),
 			})
-		case "function_call_output":
+		case "function_call_output", "custom_tool_call_output":
 			converted.Messages = append(converted.Messages, AnthropicMessage{
 				Role: "user",
 				Content: mustMarshal([]anthropicBlock{{
 					Type:      "tool_result",
 					ToolUseID: item.CallID,
-					Content:   mustMarshal(item.Output),
+					Content:   mustMarshal(itemOutputText(item.Output)),
 				}}),
 			})
-		case "reasoning":
-			// Reasoning traces are provider-specific and are not replayed.
 		default:
+			if ignoreResponsesInputType(item.Type) {
+				continue
+			}
 			return nil, fmt.Errorf("input item %d: unsupported type %q", i, item.Type)
 		}
 	}

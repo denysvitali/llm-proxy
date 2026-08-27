@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 const (
@@ -122,9 +123,17 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, fmt.Errorf("opencode-go backend does not support kind %q for model %q", req.Kind, req.Model)
 	}
 
+	body := req.RawBody
+	if req.Kind == backend.KindOpenAIResponses && len(body) > 0 {
+		normalized, err := translate.NormalizeResponsesRequest(body)
+		if err != nil {
+			return nil, fmt.Errorf("normalize OpenCode Go Responses request: %w", err)
+		}
+		body = normalized
+	}
 	var reader io.Reader
-	if req.RawBody != nil {
-		reader = bytes.NewReader(req.RawBody)
+	if body != nil {
+		reader = bytes.NewReader(body)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, reader)
 	if err != nil {

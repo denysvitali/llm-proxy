@@ -54,6 +54,37 @@ func TestResponsesToAnthropic(t *testing.T) {
 	}
 }
 
+func TestResponsesToAnthropicArrayToolOutputAndAdditionalTools(t *testing.T) {
+	body := []byte(`{
+		"input":[
+			{"type":"additional_tools","tools":[{"type":"web_search"}]},
+			{"type":"message","role":"user","content":"hi"},
+			{"type":"function_call","call_id":"c1","name":"lookup","arguments":"{\"q\":\"x\"}"},
+			{"type":"function_call_output","call_id":"c1","output":[
+				{"type":"input_text","text":"first"},
+				{"type":"input_text","text":"second"}
+			]}
+		]
+	}`)
+	out, err := ResponsesToAnthropic(body, "upstream-r")
+	if err != nil {
+		t.Fatalf("ResponsesToAnthropic: %v", err)
+	}
+	got := decodeJSON(t, out)
+	messages := jarray(t, got["messages"], "messages")
+	if len(messages) != 3 {
+		t.Fatalf("messages = %d, want 3 (additional_tools dropped)", len(messages))
+	}
+	resultMsg := jmap(t, messages[2], "")
+	resultBlock := jmap(t, jarray(t, resultMsg["content"], "content")[0], "")
+	if resultBlock["type"] != "tool_result" || resultBlock["tool_use_id"] != "c1" {
+		t.Errorf("tool_result block = %v", resultBlock)
+	}
+	if resultBlock["content"] != "first\nsecond" {
+		t.Errorf("flattened output = %#v, want first\\nsecond", resultBlock["content"])
+	}
+}
+
 func TestResponsesToAnthropicStringInput(t *testing.T) {
 	out, err := ResponsesToAnthropic([]byte(`{"model":"m","input":"hi"}`), "u")
 	if err != nil {

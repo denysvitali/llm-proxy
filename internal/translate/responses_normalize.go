@@ -8,8 +8,9 @@ import (
 
 // NormalizeResponsesRequest adapts valid Responses input for strict compatible
 // upstreams without changing the request's meaning. Prompt-role messages are
-// folded into instructions, and a null reasoning content field is removed
-// while opaque provider state and unknown fields remain byte-for-byte values.
+// folded into instructions, Codex-internal additional_tools items are dropped,
+// and a null reasoning content field is removed while opaque provider state
+// and unknown fields remain byte-for-byte values.
 func NormalizeResponsesRequest(body []byte) ([]byte, error) {
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
@@ -35,6 +36,10 @@ func NormalizeResponsesRequest(body []byte) ([]byte, error) {
 		}
 		if err := json.Unmarshal(encoded, &header); err != nil {
 			return nil, fmt.Errorf("decode input item %d: %w", index, err)
+		}
+		if header.Type == "additional_tools" {
+			changed = true
+			continue
 		}
 		if header.Type == "message" && isPromptRole(header.Role) {
 			if text := itemText(header); text != "" {

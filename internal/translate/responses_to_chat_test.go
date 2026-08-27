@@ -194,6 +194,43 @@ func TestResponsesToChatRejectsEmptyAndUnknown(t *testing.T) {
 	}
 }
 
+func TestResponsesToChatArrayToolOutputAndAdditionalTools(t *testing.T) {
+	in := []byte(`{
+		"input": [
+			{"type":"additional_tools","tools":[{"type":"web_search"}]},
+			{"type":"message","role":"user","content":"use the tool"},
+			{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"a.go\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":[
+				{"type":"input_text","text":"package main"},
+				{"type":"input_text","text":"func main() {}"}
+			]},
+			{"type":"custom_tool_call","call_id":"call_2","name":"shell","input":"ls"},
+			{"type":"custom_tool_call_output","call_id":"call_2","output":[{"type":"input_text","text":"a.go"}]}
+		]
+	}`)
+	out, err := ResponsesToChat(in, "stealth-mock")
+	if err != nil {
+		t.Fatalf("ResponsesToChat: %v", err)
+	}
+	var got openAIRequest
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode translated request: %v", err)
+	}
+	if len(got.Messages) != 5 {
+		t.Fatalf("messages = %d, want 5 (additional_tools dropped)", len(got.Messages))
+	}
+	if got.Messages[2].Role != "tool" || got.Messages[2].Content != "package main\nfunc main() {}" {
+		t.Errorf("array function_call_output became %+v", got.Messages[2])
+	}
+	if got.Messages[3].Role != "assistant" || len(got.Messages[3].ToolCalls) != 1 ||
+		got.Messages[3].ToolCalls[0].Function.Arguments != "ls" {
+		t.Errorf("custom_tool_call became %+v", got.Messages[3])
+	}
+	if got.Messages[4].Role != "tool" || got.Messages[4].Content != "a.go" {
+		t.Errorf("custom_tool_call_output became %+v", got.Messages[4])
+	}
+}
+
 func TestResponsesFromChatResponse(t *testing.T) {
 	in := []byte(`{
 		"id": "chatcmpl-1",

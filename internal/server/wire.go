@@ -348,11 +348,12 @@ func (s *Server) exchangeChain(
 		wire, servable := resolveWire(env.kind, rt.backend, rt.model)
 		if !servable {
 			if final {
+				routeLog.Error("backend does not support this API; rejecting request")
 				dialect.writeError(w, http.StatusBadRequest, "invalid_request_error",
 					fmt.Sprintf("backend %s does not support the %s API", rt.backend.Name(), kindName(env.kind)))
 				return
 			}
-			routeLog.Warn("backend cannot serve this API; trying next fallback")
+			routeLog.Error("backend cannot serve this API; trying next fallback")
 			continue
 		}
 		routeEnv := env
@@ -360,10 +361,11 @@ func (s *Server) exchangeChain(
 		payload, err := prepare(rt, wire, &routeEnv)
 		if err != nil {
 			if final {
+				routeLog.WithError(err).Error("cannot encode request for backend; rejecting request")
 				dialect.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 				return
 			}
-			routeLog.WithError(err).Warn("encoding request for backend failed; trying next fallback")
+			routeLog.WithError(err).Error("cannot encode request for backend; trying next fallback")
 			continue
 		}
 		outcome := s.exchange(w, r, routeLog, rt, dialect, wire, payload, r.Header.Clone(), routeEnv, final)

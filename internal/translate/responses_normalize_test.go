@@ -85,3 +85,40 @@ func TestNormalizeResponsesRequestKeepsStructuredInstructions(t *testing.T) {
 		t.Fatalf("null reasoning content remains: %s", got)
 	}
 }
+
+func TestNormalizeResponsesRequestDropsAdditionalToolsAndKeepsArrayOutput(t *testing.T) {
+	input := []byte(`{
+		"model":"upstream-model",
+		"input":[
+			{"type":"additional_tools","tools":[{"type":"web_search"}]},
+			{"type":"function_call_output","call_id":"call_1","output":[
+				{"type":"input_text","text":"file contents"}
+			]},
+			{"type":"message","role":"user","content":"hello"}
+		]
+	}`)
+	got, err := NormalizeResponsesRequest(input)
+	if err != nil {
+		t.Fatalf("NormalizeResponsesRequest: %v", err)
+	}
+	var request struct {
+		Input []map[string]json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(got, &request); err != nil {
+		t.Fatalf("decode normalized request: %v", err)
+	}
+	if len(request.Input) != 2 {
+		t.Fatalf("input items = %d, want function_call_output + user", len(request.Input))
+	}
+	var typ string
+	_ = json.Unmarshal(request.Input[0]["type"], &typ)
+	if typ != "function_call_output" {
+		t.Fatalf("first remaining item type = %q", typ)
+	}
+	if !bytes.Contains(request.Input[0]["output"], []byte(`"file contents"`)) {
+		t.Errorf("array output was rewritten: %s", request.Input[0]["output"])
+	}
+	if bytes.Contains(got, []byte(`"additional_tools"`)) {
+		t.Fatalf("additional_tools remains: %s", got)
+	}
+}

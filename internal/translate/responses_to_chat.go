@@ -60,7 +60,7 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 			if msg != nil {
 				converted.Messages = append(converted.Messages, *msg)
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
 			// Assistant-initiated tool call in the conversation history.
 			name := item.Name
 			if item.Namespace != "" {
@@ -74,18 +74,19 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 					Function: struct {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
-					}{Name: name, Arguments: item.Arguments},
+					}{Name: name, Arguments: itemArguments(item)},
 				}},
 			})
-		case "function_call_output":
+		case "function_call_output", "custom_tool_call_output":
 			converted.Messages = append(converted.Messages, openAIMessage{
 				Role:       "tool",
-				Content:    item.Output,
+				Content:    itemOutputText(item.Output),
 				ToolCallID: item.CallID,
 			})
-		case "reasoning":
-			// Reasoning traces are provider-specific and are not replayed.
 		default:
+			if ignoreResponsesInputType(item.Type) {
+				continue
+			}
 			return nil, fmt.Errorf("input item %d: unsupported type %q", i, item.Type)
 		}
 	}
