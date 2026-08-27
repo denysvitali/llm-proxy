@@ -293,6 +293,13 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/llm-proxy-mock
           python3 scripts/e2e/mock_upstream.py 9911 > /tmp/llm-proxy-mock/mock.log 2>&1 &
+          # Wait for the mock's catalog endpoint before the proxy's first
+          # catalog fetch, or /v1/models races to a 502.
+          for i in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:9911/v1/models > /dev/null; then break; fi
+            sleep 0.2
+          done
+          curl -fsS http://127.0.0.1:9911/v1/models > /dev/null
           cat > /tmp/llm-proxy-mock/config.yaml <<EOF
           server:
             listen: 127.0.0.1:8090
