@@ -1,30 +1,34 @@
 // Chart palettes validated with the dataviz palette validator
-// (contrast/CVD checks) against both surfaces. Do not tweak by eye.
+// (lightness band, chroma, CVD ΔE, normal-vision floor, contrast) against the
+// Apple design surfaces: #f5f5f7 light and true-black #000000 dark. Do not
+// tweak by eye — re-run the validator for the surface you touch.
 
 export const categorical = {
-  light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100'],
-  dark: ['#3987e5', '#d95926', '#199e70', '#c98500'],
+  light: ['#0071e3', '#0f9d68', '#d9480f', '#bf5af2'],
+  dark: ['#3b96e8', '#2ba268', '#c67c0a', '#9d5ce0'],
 } as const
 
 // Ordinal one-hue ramp for ordered percentiles (p50 -> p99, light -> dark).
+// Third step leans indigo on dark: CVD separation within one hue collapses on
+// black, so the ramp bends hue slightly while staying monotone in lightness.
 export const ordinal = {
-  light: ['#86b6ef', '#2a78d6', '#104281'],
-  dark: ['#6da7ec', '#256abf', '#184f95'],
+  light: ['#6ba9ec', '#3579cf', '#1e5aa8'],
+  dark: ['#4a9bf5', '#2f7ad6', '#2062b8'],
 } as const
 
 // Single hue for magnitude bars (requests by model).
 export const magnitude = {
-  light: '#2a78d6',
-  dark: '#3987e5',
+  light: '#0071e3',
+  dark: '#3b96e8',
 } as const
 
-// Reserved status colors — identical in both modes, always paired with an
-// icon + label so state is never color-alone.
+// Reserved status colors — iOS system green/amber/orange/red. Always paired
+// with an icon + label so state is never color-alone.
 export const status = {
-  good: '#0ca30c',
-  warning: '#fab219',
-  serious: '#ec835a',
-  critical: '#d03b3b',
+  good: '#30d158',
+  warning: '#ffd60a',
+  serious: '#ff9f0a',
+  critical: '#ff453a',
 } as const
 
 export const seriesNames = ['input', 'output', 'cache read', 'cache write'] as const

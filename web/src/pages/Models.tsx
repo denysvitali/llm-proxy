@@ -569,8 +569,15 @@ function DetailStat({
 }) {
   return (
     <Box>
-      <Text size="xs" c="dimmed" fw={600}>{label}</Text>
-      <Text fz={20} fw={700} lh={1.15} mt={2} c={color} style={{ fontVariantNumeric: 'tabular-nums' }}>
+      <Text size="xs" c="dimmed" fw={600} style={{ letterSpacing: '0.03em' }}>{label}</Text>
+      <Text
+        fz={20}
+        fw={700}
+        lh={1.15}
+        mt={2}
+        c={color}
+        style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}
+      >
         {value}
       </Text>
       {hint && (
@@ -583,7 +590,7 @@ function DetailStat({
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Paper withBorder radius="lg" p="md">
-      <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb="md" style={{ letterSpacing: '0.04em' }}>
+      <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb="md" style={{ letterSpacing: '0.06em' }}>
         {title}
       </Text>
       <Stack gap="lg">{children}</Stack>

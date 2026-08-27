@@ -1,70 +1,150 @@
 /* App-level chrome that sits under Mantine's tokens. Loaded after
-   @mantine/core styles so these win where they overlap. */
+   @mantine/core styles so these win where they overlap.
+
+   Design language: Apple HIG. Dark mode is true black (#000) — surfaces
+   lighten as content stacks (iOS-style), never a gray slab. Light mode is
+   the #F5F5F7 marketing canvas with white cards. Everything else is
+   hairlines, restraint, and SF-type hierarchy. */
 
 [data-mantine-color-scheme='light'] {
   color-scheme: light;
+  /* Header pill-nav: iOS segmented control materials. */
+  --segmented-track: rgba(120, 120, 128, 0.12);
+  --segmented-thumb: #ffffff;
+  --segmented-thumb-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.1),
+    0 0 0 0.5px rgba(0, 0, 0, 0.04);
 }
 
 [data-mantine-color-scheme='dark'] {
   color-scheme: dark;
+  --segmented-track: rgba(255, 255, 255, 0.07);
+  --segmented-thumb: rgba(255, 255, 255, 0.14);
+  --segmented-thumb-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.5),
+    0 0 0 0.5px rgba(255, 255, 255, 0.06);
 }
 
+html,
 body {
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
-/* Subtle tinted app background so cards read as raised surfaces. */
+/* ---------------------------------------------------------------------------
+   Canvases
+
+   Light: Apple's #F5F5F7 with two barely-there tints so the page doesn't read
+   as dead gray. Dark: TRUE BLACK with a single cool halo at the top — the
+   same trick iOS uses for large-title screens. */
+
 [data-mantine-color-scheme='light'] body {
   background:
-    radial-gradient(1200px 600px at 100% -10%, #eaf0ff 0%, rgba(234, 240, 255, 0) 55%),
-    radial-gradient(900px 500px at -10% 0%, #eef7f2 0%, rgba(238, 247, 242, 0) 50%),
-    var(--mantine-color-gray-0);
+    radial-gradient(1100px 500px at 85% -10%, rgba(0, 113, 227, 0.055) 0%, rgba(0, 113, 227, 0) 55%),
+    radial-gradient(900px 480px at 0% 0%, rgba(52, 199, 89, 0.04) 0%, rgba(52, 199, 89, 0) 50%),
+    #f5f5f7;
 }
 
 [data-mantine-color-scheme='dark'] body {
   background:
-    radial-gradient(1100px 600px at 100% -10%, #14203f 0%, rgba(20, 32, 63, 0) 55%),
-    var(--mantine-color-dark-8, #0d0e12);
+    radial-gradient(1100px 520px at 88% -12%, rgba(10, 132, 255, 0.09) 0%, rgba(10, 132, 255, 0) 55%),
+    #000;
 }
 
-/* Sticky, frosted header. */
-.mantine-AppShell-header {
-  backdrop-filter: saturate(1.4) blur(10px);
-  background-color: color-mix(in srgb, var(--mantine-color-body) 78%, transparent);
+/* ---------------------------------------------------------------------------
+   Frosted chrome (header, footer, drawer) — backdrop blur over content,
+   saturate for the vividness iOS adds to its material. */
+
+.mantine-AppShell-header,
+.mantine-AppShell-footer {
+  backdrop-filter: saturate(1.8) blur(20px);
+  -webkit-backdrop-filter: saturate(1.8) blur(20px);
+  background-color: color-mix(in srgb, var(--mantine-color-body) 72%, transparent);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+[data-mantine-color-scheme='dark'] .mantine-AppShell-footer {
+  background-color: rgba(0, 0, 0, 0.68);
+}
+
+/* Hairline separators, iOS style: faint on light, fainter on black. */
+[data-mantine-color-scheme='light'] .mantine-AppShell-header,
+[data-mantine-color-scheme='light'] .mantine-AppShell-footer {
+  box-shadow: 0 0.5px 0 rgba(0, 0, 0, 0.15);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+[data-mantine-color-scheme='dark'] .mantine-AppShell-footer {
+  box-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.14);
 }
 
 .mantine-AppShell-footer {
-  backdrop-filter: saturate(1.4) blur(10px);
-  background-color: color-mix(in srgb, var(--mantine-color-body) 82%, transparent);
+  padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
-/* Cards lift slightly on hover when they're interactive. */
+/* ---------------------------------------------------------------------------
+   Cards & raised surfaces
+
+   On black, borders must be *lighter* than the surface, never darker. Light
+   cards keep Apple's soft diffuse shadow. */
+
+[data-mantine-color-scheme='light'] .mantine-Card-root,
+[data-mantine-color-scheme='light'] .mantine-Paper-root {
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.03),
+    0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-Card-root,
+[data-mantine-color-scheme='dark'] .mantine-Paper-root {
+  background-color: var(--mantine-color-dark-7);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+/* Tooltips float above everything — on black they need a real surface, not
+   another black layer. Dark tooltips use Apple's elevated gray. */
+[data-mantine-color-scheme='dark'] .mantine-Tooltip-tooltip {
+  background-color: var(--mantine-color-dark-6);
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  color: var(--mantine-color-dark-0);
+}
+
+/* ---------------------------------------------------------------------------
+   Interactive cards: Apple's subtle press + hover, no shadow dance. */
+
 a,
 .mantine-UnstyledButton-root {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Interactive cards lift on hover (pointer devices only). */
 @media (hover: hover) {
   .mantine-Card-root[style*='cursor: pointer'] {
-    transition: transform 120ms ease, box-shadow 120ms ease;
+    transition: transform 160ms cubic-bezier(0.25, 0.1, 0.25, 1),
+      background-color 160ms ease;
   }
   .mantine-Card-root[style*='cursor: pointer']:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--mantine-shadow-md);
+    transform: scale(1.008);
+    background-color: color-mix(in srgb, var(--mantine-color-brand-8) 4%, var(--mantine-color-dark-7));
+  }
+  [data-mantine-color-scheme='light'] .mantine-Card-root[style*='cursor: pointer']:hover {
+    background-color: #fbfbfd;
+  }
+  .mantine-Card-root[style*='cursor: pointer']:active {
+    transform: scale(0.985);
   }
 }
 
-/* Respect notched-phone safe areas on the bottom tab bar. */
-.mantine-AppShell-footer {
-  padding-bottom: env(safe-area-inset-bottom, 0);
-}
+/* ---------------------------------------------------------------------------
+   Drawer: iOS sheet. Full-width header, generous title, hairline under it. */
 
-/* Keep drawer metrics aligned and make the close affordance less cramped on
-   narrow phones without reducing the touch target. */
 .mantine-Drawer-content {
   overscroll-behavior: contain;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-Drawer-content {
+  background-color: var(--mantine-color-dark-8);
+  border-left: 0.5px solid rgba(255, 255, 255, 0.1);
 }
 
 .mantine-Drawer-header {
@@ -79,7 +159,43 @@ a,
   border-radius: var(--mantine-radius-sm);
 }
 
-/* Setup snippet block: readable on both schemes. */
+/* ---------------------------------------------------------------------------
+   Segmented controls (time range, color scheme): iOS capsule styling. */
+
+.mantine-SegmentedControl-root {
+  background: color-mix(in srgb, var(--mantine-color-default-border) 45%, transparent);
+  padding: 2px;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-SegmentedControl-root {
+  background: rgba(255, 255, 255, 0.08);
+  border: 0.5px solid rgba(255, 255, 255, 0.07);
+}
+
+.mantine-SegmentedControl-indicator {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px rgba(0, 0, 0, 0.04);
+}
+
+/* ---------------------------------------------------------------------------
+   Mantine charts: grid/axis/tick dressing so charts feel etched into the
+   surface instead of drawn on top of it. */
+
+[data-mantine-color-scheme='light'] {
+  --chart-grid-color: rgba(0, 0, 0, 0.08);
+  --chart-cursor-fill: rgba(0, 0, 0, 0.04);
+}
+
+[data-mantine-color-scheme='dark'] {
+  --chart-grid-color: rgba(255, 255, 255, 0.1);
+  --chart-cursor-fill: rgba(255, 255, 255, 0.06);
+}
+
+/* ---------------------------------------------------------------------------
+   Setup snippet block: dark code surface in both schemes, like Apple's
+   documentation code blocks. */
+
 .snippet-block {
   margin: 0;
   padding: 14px 16px;
@@ -87,7 +203,7 @@ a,
   font-size: 0.82rem;
   line-height: 1.55;
   font-family: var(--mantine-font-family-monospace);
-  background: light-dark(var(--mantine-color-gray-9), var(--mantine-color-dark-8));
-  color: #e8eaed;
+  background: #161619;
+  color: #e8e8ed;
   border-radius: 0 0 var(--mantine-radius-lg) var(--mantine-radius-lg);
 }
