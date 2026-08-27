@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -319,6 +320,13 @@ func kindName(kind backend.Kind) string {
 	}
 }
 
+// nocloseReader adapts a bytes.Reader as a response body whose Close is a
+// no-op, so captured upstream error bodies can be relayed after the original
+// connection was already closed without double-close noise.
+type nocloseReader struct{ io.Reader }
+
+func (r *nocloseReader) Close() error { return nil }
+
 // exchangeChain walks a resolved route chain: each backend gets the request
 // (encoded per its wire format by prepare) until one serves it. A backend
 // that fails or cannot encode before anything reaches the client hands the
@@ -427,7 +435,7 @@ func (s *Server) exchange(
 			return nil, err
 		}
 		sse := env.streaming || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
-		sn := newSniffer(resp.Body, tr, sse)
+		sn := newSniffer(resp.Body, tr, sse, resp.Status)
 		resp.Body = sn
 		sniffers = append(sniffers, sn)
 		return resp, nil
@@ -441,6 +449,7 @@ func (s *Server) exchange(
 
 	resp, err := s.sendWithRetry(r.Context(), log, rt, fetch)
 	if err != nil {
+		tr.noteTransportError(err)
 		if r.Context().Err() != nil {
 			// The client stopped waiting; there is nobody to answer.
 			return exchangeRetryable
@@ -455,12 +464,17 @@ func (s *Server) exchange(
 	tr.setUpstreamStatus(resp.Status)
 
 	if resp.Status < 200 || resp.Status >= 300 {
+		// Capture the error body once for the stats feed, then hand the relay
+		// a fresh reader over the same bytes — the dialect relays re-read the
+		// body to forward it to the client.
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorRelay))
+		_ = resp.Body.Close()
+		tr.noteUpstreamError(errBody)
+		resp.Body = &nocloseReader{Reader: bytes.NewReader(errBody)}
 		if resp.Status >= 500 && !final {
 			// A server-side failure the client must not see while a fallback
-			// remains; drain so the connection can be reused.
+			// remains.
 			log.WithField("upstream_status", resp.Status).Warn("upstream server error; falling back")
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorRelay))
-			_ = resp.Body.Close()
 			return exchangeRetryable
 		}
 		dialect.relayError(w, resp)

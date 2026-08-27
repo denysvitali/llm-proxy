@@ -152,8 +152,11 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 		failed := s.stats.track(backendName, model)
 		if resp != nil {
 			failed.setUpstreamStatus(resp.Status)
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorRelay))
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorRelay))
 			_ = resp.Body.Close()
+			failed.noteUpstreamError(body)
+		} else if err != nil {
+			failed.noteTransportError(err)
 		}
 		failed.done()
 		attempts++

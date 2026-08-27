@@ -75,8 +75,9 @@ func (r *redisStats) close() {
 }
 
 // record atomically adds one completed upstream attempt and its latency
-// observations to the shared model hash.
-func (r *redisStats) record(ctx context.Context, backend, model, status string, ttft, e2e, throughput float64, rep usageReport, retentionDays int) error {
+// observations to the shared model hash. success is whether the request
+// actually served the client (2xx without an error body).
+func (r *redisStats) record(ctx context.Context, backend, model string, success bool, ttft, e2e, throughput float64, rep usageReport, retentionDays int) error {
 	modelName := backend + "\x00" + model
 	win := time.Now().Unix() / 300
 	bucket := fmt.Sprintf("bucket:%d:", win)
@@ -94,11 +95,11 @@ func (r *redisStats) record(ctx context.Context, backend, model, status string, 
 			pipe.HIncrBy(ctx, r.modelKey(modelName), field, value)
 		}
 	}
-	if strings.HasPrefix(status, "2") {
+	if success {
 		pipe.HIncrBy(ctx, r.modelKey(modelName), "successes", 1)
 	}
 	pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"requests", 1)
-	if strings.HasPrefix(status, "2") {
+	if success {
 		pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"successes", 1)
 	}
 	for field, value := range map[string]int64{
@@ -120,6 +121,26 @@ func (r *redisStats) record(ctx context.Context, backend, model, status string, 
 	if throughput > 0 {
 		pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"tps:"+strconv.Itoa(histIndex(tpsEdges, throughput)), 1)
 	}
+	if retentionDays > 0 {
+		pipe.Expire(ctx, r.modelKey(modelName), time.Duration(retentionDays+1)*24*time.Hour)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	_, err := r.client.Publish(ctx, r.updatesKey(), "stats-updated").Result()
+	return err
+}
+
+// recordStatus adds one non-2xx upstream reply to the shared model hash:
+// a lifetime counter per HTTP status plus the same counter in the current
+// 5-minute bucket so both /stats and the time series can report it.
+func (r *redisStats) recordStatus(ctx context.Context, backend, model, status string, retentionDays int) error {
+	modelName := backend + "\x00" + model
+	win := time.Now().Unix() / 300
+	pipe := r.client.TxPipeline()
+	pipe.SAdd(ctx, r.modelsKey(), modelName)
+	pipe.HIncrBy(ctx, r.modelKey(modelName), "status:"+status, 1)
+	pipe.HIncrBy(ctx, r.modelKey(modelName), fmt.Sprintf("bucket:%d:status:%s", win, status), 1)
 	if retentionDays > 0 {
 		pipe.Expire(ctx, r.modelKey(modelName), time.Duration(retentionDays+1)*24*time.Hour)
 	}
@@ -212,6 +233,14 @@ func redisBuckets(fields map[string]string) map[int64]*bucket {
 			b.ToolCalls = n
 		case "tool_errors":
 			b.ToolErrors = n
+		case "status":
+			if len(parts) != 4 || n == 0 {
+				continue
+			}
+			if b.StatusCodes == nil {
+				b.StatusCodes = map[string]uint64{}
+			}
+			b.StatusCodes[parts[3]] += n
 		case "ttft", "e2e", "tps":
 			if len(parts) != 4 {
 				continue
@@ -261,6 +290,18 @@ func redisModelStat(model redisModel, retentionDays int) (ModelStat, bool) {
 		ToolCalls:        redisUint(model.fields["tool_calls"]),
 		ToolErrors:       redisUint(model.fields["tool_errors"]),
 	}
+	statuses := map[string]uint64{}
+	// Status counters are read from their lifetime fields only: recordStatus
+	// mirrors every failure into both a lifetime and a bucket field, so
+	// folding the buckets here would double each count. Bucket copies exist
+	// for the time-series views.
+	for field, value := range model.fields {
+		if status, ok := strings.CutPrefix(field, "status:"); ok {
+			if n := redisUint(value); n > 0 {
+				statuses[status] += n
+			}
+		}
+	}
 	ttft := make([]uint64, len(ttftEdges))
 	e2e := make([]uint64, len(e2eEdges))
 	tps := make([]uint64, len(tpsEdges))
@@ -280,6 +321,7 @@ func redisModelStat(model redisModel, retentionDays int) (ModelStat, bool) {
 			tps[i] += b.ThroughputBuckets[i]
 		}
 	}
+	stat.StatusCodes = nonEmpty(statuses)
 	stat.Uptime = ratio(stat.Successes, stat.Requests)
 	stat.TTFT = percentilesFromCounts(ttft, ttftEdges)
 	stat.E2E = percentilesFromCounts(e2e, e2eEdges)

@@ -15,6 +15,7 @@ import {
   Stack,
   Table,
   Text,
+  ThemeIcon,
   Title,
 } from '@mantine/core'
 import {
@@ -25,18 +26,20 @@ import {
   IconCoins,
   IconShieldCheck,
   IconTool,
+  IconServerOff,
 } from '@tabler/icons-react'
 import { BarChart, LineChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import type { UseQueryResult } from '@tanstack/react-query'
-import { fetchGrokUsage, fetchOverview, fetchStats, fetchStatsSeries } from '../api'
+import { fetchGrokUsage, fetchOverview, fetchStats, fetchStatsSeries, fetchUpstreamErrors } from '../api'
 import { useLiveStatsUpdates } from '../useLiveUpdates'
-import type { GrokUsage, ModelStat, SeriesPoint } from '../api'
+import type { GrokUsage, ModelStat, SeriesPoint, UpstreamErrorEvent } from '../api'
 import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
 import { SegmentedControl } from '@mantine/core'
 import StatTile from '../components/StatTile'
+import StatusChips from '../components/StatusChips'
 import UptimeBadge from '../components/UptimeBadge'
 import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
 import { Fade } from '../App'
@@ -58,6 +61,12 @@ export default function OverviewPage() {
     queryKey: ['stats-series', range],
     queryFn: () => fetchStatsSeries(range),
     placeholderData: keepPreviousData,
+  })
+  const errorsQ = useQuery({
+    queryKey: ['upstream-errors'],
+    queryFn: fetchUpstreamErrors,
+    refetchInterval: 30_000,
+    retry: 1,
   })
 
   const models = statsQ.data?.models ?? []
@@ -110,11 +119,15 @@ export default function OverviewPage() {
     volumeData.some((point) => Number(point.series0) > 0 || Number(point.series1) > 0)
 
   return (
-    <Fade fetching={statsQ.isFetching || ovQ.isFetching}>
+    <Fade fetching={statsQ.isFetching || ovQ.isFetching || errorsQ.isFetching}>
       <Stack gap="lg">
         <Title order={4} mb={-6}>
           Fleet overview
         </Title>
+
+        {errorsQ.data && errorsQ.data.errors.length > 0 && (
+          <UpstreamErrorsCard errors={errorsQ.data.errors} />
+        )}
 
         <Card withBorder radius="lg" p="md">
           <Group justify="space-between" align="center" wrap="wrap" gap="sm" mb={12}>
@@ -279,6 +292,7 @@ export default function OverviewPage() {
                     <Table.Th>Backend</Table.Th>
                     <Table.Th>Status</Table.Th>
                     <Table.Th ta="right">Uptime</Table.Th>
+                    {!isMobile && <Table.Th>Upstream errors</Table.Th>}
                     {!isMobile && <Table.Th ta="right">Requests</Table.Th>}
                     {!isMobile && <Table.Th ta="right">Tool err</Table.Th>}
                   </Table.Tr>
@@ -293,6 +307,15 @@ export default function OverviewPage() {
                       <Table.Td ta="right" style={{ fontVariantNumeric: 'tabular-nums' }}>
                         {fmtPct(p.uptime)}
                       </Table.Td>
+                      {!isMobile && (
+                        <Table.Td>
+                          {Object.keys(p.statusCodes).length > 0 ? (
+                            <StatusChips codes={p.statusCodes} />
+                          ) : (
+                            <Text size="xs" c="dimmed">none</Text>
+                          )}
+                        </Table.Td>
+                      )}
                       {!isMobile && (
                         <Table.Td ta="right" style={{ fontVariantNumeric: 'tabular-nums' }}>
                           {fmtInt(p.requests)}
@@ -561,14 +584,30 @@ export function providerSegments(
 function providerAggregates(models: ModelStat[]) {
   const byBackend = new Map<
     string,
-    { requests: number; successes: number; toolCalls: number; toolErrors: number }
+    {
+      requests: number
+      successes: number
+      toolCalls: number
+      toolErrors: number
+      statusCodes: Record<string, number>
+    }
   >()
   for (const m of models) {
-    const cur = byBackend.get(m.backend) ?? { requests: 0, successes: 0, toolCalls: 0, toolErrors: 0 }
+    const cur =
+      byBackend.get(m.backend) ?? {
+        requests: 0,
+        successes: 0,
+        toolCalls: 0,
+        toolErrors: 0,
+        statusCodes: {},
+      }
     cur.requests += m.requests
     cur.successes += m.successes
     cur.toolCalls += m.tool_calls
     cur.toolErrors += m.tool_errors
+    for (const [code, n] of Object.entries(m.status_codes ?? {})) {
+      cur.statusCodes[code] = (cur.statusCodes[code] ?? 0) + n
+    }
     byBackend.set(m.backend, cur)
   }
   return [...byBackend.entries()].map(([backend, v]) => ({
@@ -577,5 +616,71 @@ function providerAggregates(models: ModelStat[]) {
     uptime: v.requests ? v.successes / v.requests : 0,
     toolCalls: v.toolCalls,
     toolErrors: v.toolErrors,
+    statusCodes: v.statusCodes,
   }))
+}
+
+// UpstreamErrorsCard lists the most recent upstream failures newest-first:
+// when it happened, which backend/model, the HTTP status (or "no response"),
+// and what the upstream said about it.
+function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
+  const shown = errors.slice(0, 8)
+  return (
+    <Card withBorder radius="lg" p="md">
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm" mb={10}>
+        <Group gap={8}>
+          <ThemeIcon variant="light" color="red" size="sm" radius="xl">
+            <IconServerOff size={13} />
+          </ThemeIcon>
+          <Title order={5}>Recent upstream errors</Title>
+        </Group>
+        <Text size="xs" c="dimmed">
+          {errors.length === 1 ? '1 failure' : `${fmtInt(errors.length)} failures · newest first`}
+        </Text>
+      </Group>
+      <Stack gap={6}>
+        {shown.map((e, i) => (
+          <Paper key={`${e.at}-${i}`} withBorder radius="md" p="xs" bg="var(--mantine-color-default-hover)">
+            <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
+              <Box style={{ minWidth: 0 }}>
+                <Group gap={6} wrap="nowrap">
+                  <StatusBadge status={e.status} />
+                  <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {formatEventTime(e.at)}
+                  </Text>
+                </Group>
+                <Text size="sm" fw={500} mt={4} truncate>
+                  {e.backend} / {e.model}
+                </Text>
+                {e.message && (
+                  <Text size="xs" c="dimmed" lineClamp={2} mt={2}>
+                    {e.message}
+                  </Text>
+                )}
+              </Box>
+            </Group>
+          </Paper>
+        ))}
+        {errors.length > shown.length && (
+          <Text size="xs" c="dimmed">…and {fmtInt(errors.length - shown.length)} older</Text>
+        )}
+      </Stack>
+    </Card>
+  )
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const isErr = status === 'error'
+  const color = isErr ? 'red' : status.startsWith('5') ? 'red' : status.startsWith('4') ? 'yellow' : 'gray'
+  return (
+    <Badge size="sm" variant="light" color={color} styles={{ root: { fontWeight: 700 } }}>
+      {isErr ? 'no response' : status}
+    </Badge>
+  )
+}
+
+function formatEventTime(ts: string) {
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ts
+  return d.toLocaleTimeString('en-US', { hour12: false })
 }

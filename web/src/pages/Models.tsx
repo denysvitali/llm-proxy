@@ -29,6 +29,7 @@ import type { ModelStat, StatsSeries } from '../api'
 import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { status, useChartPalette } from '../palette'
 import UptimeBadge from '../components/UptimeBadge'
+import StatusChips from '../components/StatusChips'
 import PercentileBars from '../components/PercentileBars'
 import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
 import {
@@ -43,6 +44,7 @@ type SortKey =
   | 'model'
   | 'requests'
   | 'uptime'
+  | 'errors'
   | 'ttft'
   | 'e2e'
   | 'tps'
@@ -54,6 +56,7 @@ const columns: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'model', label: 'Backend / model' },
   { key: 'requests', label: 'Requests', numeric: true },
   { key: 'uptime', label: 'Uptime' },
+  { key: 'errors', label: 'Upstream errors' },
   { key: 'ttft', label: 'TTFT p50/p90/p99', numeric: true },
   { key: 'e2e', label: 'E2E p50/p90/p99', numeric: true },
   { key: 'tps', label: 'tok/s p50', numeric: true },
@@ -93,6 +96,10 @@ function sortValue(m: ModelStat, key: SortKey): string | number {
       return m.requests
     case 'uptime':
       return m.uptime
+    case 'errors':
+      // Sort by the largest single status count, then by total failures.
+      const counts = Object.values(m.status_codes ?? {})
+      return counts.length ? Math.max(...counts) : 0
     case 'ttft':
       return m.ttft_seconds.p50
     case 'e2e':
@@ -264,6 +271,9 @@ export default function ModelsPage() {
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <UptimeBadge uptime={m.uptime} requests={m.requests} />
+                        {Object.keys(m.status_codes ?? {}).length > 0 && (
+                          <StatusChips codes={m.status_codes} limit={3} />
+                        )}
                       </Group>
                     </Table.Td>
                     <Num td={fmtSec(m.ttft_seconds.p50)} title={`p90 ${fmtSec(m.ttft_seconds.p90)} · p99 ${fmtSec(m.ttft_seconds.p99)}`} />
@@ -551,6 +561,14 @@ function ModelDetail({
         <Progress value={successRate * 100} radius="sm" size="sm" color={successRate >= 0.99 ? 'teal' : successRate >= 0.9 ? 'yellow' : 'red'} />
         <DetailStat label="Successful" value={fmtInt(stat.successes)} />
         <DetailStat label="Failed" value={fmtInt(stat.requests - stat.successes)} />
+        {Object.keys(stat.status_codes ?? {}).length > 0 && (
+          <Box>
+            <Text size="xs" c="dimmed" fw={600} mb={6}>
+              Upstream errors by status
+            </Text>
+            <StatusChips codes={stat.status_codes} limit={8} />
+          </Box>
+        )}
       </DetailSection>
     </Stack>
   )

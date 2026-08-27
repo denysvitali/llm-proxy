@@ -36,12 +36,19 @@ type Stats struct {
 	through  *prometheus.HistogramVec // {backend,model}: output tokens/sec of the generation window
 	calls    *prometheus.CounterVec   // {backend,model}: tool calls observed in upstream responses
 	errs     *prometheus.CounterVec   // {backend,model}: errored tool results seen in inbound requests
+	statuses *prometheus.CounterVec   // {backend,model,status}: non-2xx upstream replies, status label = code or "error"
 
 	updates *updateHub
 
 	mu     sync.RWMutex // protects models
 	models map[string]*modelStats
 	cfg    config.StatsConfig
+
+	// recentMu protects recent. It is a bounded ring of the latest upstream
+	// failures for the dashboard's "recent errors" view; older entries roll
+	// off instead of growing without bound.
+	recentMu sync.Mutex
+	recent   []UpstreamErrorEvent
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -99,6 +106,10 @@ func newStats(reg *prometheus.Registry, cfg config.StatsConfig) *Stats {
 			Name: "llm_proxy_model_tool_errors_total",
 			Help: "Errored tool results (is_error) seen in later inbound requests.",
 		}, []string{"backend", "model"}),
+		statuses: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "llm_proxy_model_upstream_status_total",
+			Help: "Non-2xx upstream replies by HTTP status; 'error' labels transport failures without an upstream status.",
+		}, []string{"backend", "model", "status"}),
 		models:  make(map[string]*modelStats),
 		cfg:     cfg,
 		updates: newUpdateHub(),
@@ -106,7 +117,7 @@ func newStats(reg *prometheus.Registry, cfg config.StatsConfig) *Stats {
 	if cfg.RedisURL != "" {
 		st.redis, st.redisInitErr = newRedisStats(cfg.RedisURL, cfg.RedisKeyPrefix)
 	}
-	reg.MustRegister(st.requests, st.ttft, st.e2e, st.tokens, st.through, st.calls, st.errs)
+	reg.MustRegister(st.requests, st.ttft, st.e2e, st.tokens, st.through, st.calls, st.errs, st.statuses)
 	if st.cfg.PersistFile != "" && st.cfg.PersistInterval > 0 {
 		st.startPersist()
 	}
@@ -120,8 +131,18 @@ type tracker struct {
 	start    time.Time
 	firstAt  atomic.Int64 // unix nanos of first upstream byte, 0 = none yet
 	status   string
+	errMsg   string // bounded summary of the upstream failure when status != 2xx
+	bodyFail bool   // a 2xx reply turned out to carry an error object
 	rep      usageReport
 	finished bool
+}
+
+// markBodyFailure flags an HTTP-success reply whose body is an error object
+// (fronting gateways and quota-limited providers answer that way). The
+// exchange still failed — the client gets an error — so stats must not count
+// it as a success.
+func (t *tracker) markBodyFailure() {
+	t.bodyFail = true
 }
 
 // track starts recording a dispatched upstream request.
@@ -134,6 +155,22 @@ func (st *Stats) track(backendName, model string) *tracker {
 	}
 }
 
+// noteUpstreamError records why a non-2xx upstream reply (or transport
+// failure) happened. The message is trimmed to an upstream error summary so
+// the dashboard can show the provider's own words.
+func (t *tracker) noteUpstreamError(body []byte) {
+	t.errMsg = truncateMessage(upstreamErrorSummary(body))
+}
+
+// noteTransportError records a failure that never produced an upstream HTTP
+// response (dial error, timeout, context cancellation mid-dispatch).
+func (t *tracker) noteTransportError(err error) {
+	if err == nil {
+		return
+	}
+	t.errMsg = truncateMessage(fmt.Sprintf("%v", err))
+}
+
 // noteFirstByte stamps the TTFT moment; effective only for the first byte.
 func (t *tracker) noteFirstByte() {
 	t.firstAt.CompareAndSwap(0, time.Now().UnixNano())
@@ -144,6 +181,12 @@ func (t *tracker) setUpstreamStatus(status int) {
 	if status != 0 {
 		t.status = strconv.Itoa(status)
 	}
+}
+
+// successStatus reports whether the recorded outcome was a 2xx reply that
+// did not carry an error body.
+func (t *tracker) successStatus() bool {
+	return !t.bodyFail && t.status != statusError && strings.HasPrefix(t.status, "2")
 }
 
 // done records everything observed. Idempotent so a plain defer is safe on
@@ -164,10 +207,17 @@ func (t *tracker) done() {
 		t.st.calls.WithLabelValues(t.labels[0], t.labels[1]).Add(float64(t.rep.toolCalls))
 	}
 
-	if t.status == statusError {
-		t.st.record(t.labels[0], t.labels[1], t.status, 0, 0, 0, t.rep)
+	success := t.successStatus()
+	if !success {
+		t.st.recordFailure(t.labels[0], t.labels[1], t.status, t.errMsg)
+	}
+	if t.status == statusError || t.bodyFail {
+		// Record the request — lifetime counters and current bucket — without
+		// a latency distribution and without a success credit: either nothing
+		// came back at all, or the 200 carried an error object.
+		t.st.record(t.labels[0], t.labels[1], false, 0, 0, 0, t.rep)
 		t.st.updates.notify()
-		return // no latency distribution for requests without an upstream response
+		return // no latency distribution for requests without a usable response
 	}
 	var ttft, e2e, throughput float64
 	if first := t.firstAt.Load(); first != 0 {
@@ -185,7 +235,7 @@ func (t *tracker) done() {
 			}
 		}
 	}
-	t.st.record(t.labels[0], t.labels[1], t.status, ttft, e2e, throughput, t.rep)
+	t.st.record(t.labels[0], t.labels[1], success, ttft, e2e, throughput, t.rep)
 	t.st.updates.notify()
 }
 
@@ -252,16 +302,25 @@ const sniffCap = 8 << 20
 // sniffer forwards upstream bytes verbatim while keeping a bounded copy so
 // usage/tool-call stats can be parsed at Finish.
 type sniffer struct {
-	body    io.ReadCloser
-	tracker *tracker
-	sse     bool
-	buf     bytes.Buffer
-	dropped bool
-	closed  bool
+	body          io.ReadCloser
+	tracker       *tracker
+	sse           bool
+	attemptStatus string // HTTP status of the attempt this body belongs to
+	buf           bytes.Buffer
+	dropped       bool
+	closed        bool
 }
 
-func newSniffer(body io.ReadCloser, tr *tracker, sse bool) *sniffer {
-	return &sniffer{body: body, tracker: tr, sse: sse}
+// newSniffer wraps one attempt's body. The status is frozen at creation:
+// several attempts may share a tracker across retries, and a deferred Finish
+// must judge the body it held, not whatever status the tracker carries by
+// the time Finish runs.
+func newSniffer(body io.ReadCloser, tr *tracker, sse bool, status int) *sniffer {
+	attemptStatus := statusError
+	if status > 0 {
+		attemptStatus = strconv.Itoa(status)
+	}
+	return &sniffer{body: body, tracker: tr, sse: sse, attemptStatus: attemptStatus}
 }
 
 func (sn *sniffer) Read(p []byte) (int, error) {
@@ -290,13 +349,37 @@ func (sn *sniffer) Close() error {
 	return sn.body.Close()
 }
 
-// Finish parses whatever was retained and folds it into the tracker.
+// Finish parses whatever was retained and folds it into the tracker. Two
+// post-processing rules apply to the retained body:
+//
+//   - An upstream reply that is not a 2xx records why: its body's error
+//     message becomes the tracker's failure summary. Later successful attempts
+//     leave earlier messages alone, so a recovered retry keeps the reason of
+//     the attempt that failed.
+//   - A 2xx reply whose JSON body carries a top-level "error" object (the
+//     gateway/quota shape relayNativeBuffered rejects) marks the request as a
+//     failure so uptime stays honest.
 func (sn *sniffer) Finish() {
 	data := sn.buf.Bytes()
 	if len(data) == 0 {
 		return
 	}
 	sn.tracker.rep.mergeMax(parseUsageReport(data, sn.sse))
+	success := sn.attemptStatus != statusError && strings.HasPrefix(sn.attemptStatus, "2")
+	if success && !sn.sse && errorShapedBody(data) != nil {
+		// Gateway-200: the exchange will answer 502 for this. Mark the whole
+		// request failed so uptime counts it, and keep the body's message.
+		sn.tracker.bodyFail = true
+		if msg := truncateMessage(upstreamErrorSummary(data)); msg != "" {
+			sn.tracker.errMsg = msg
+		}
+		return
+	}
+	if !success {
+		if msg := truncateMessage(upstreamErrorSummary(data)); msg != "" {
+			sn.tracker.errMsg = msg
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -535,22 +618,100 @@ func sseDataPayloads(data []byte) [][]byte {
 // ModelStat is one backend/model row of the stats summary. Latency fields
 // are seconds, throughput tokens/second.
 type ModelStat struct {
-	Backend          string      `json:"backend"`
-	Model            string      `json:"model"`
-	Requests         uint64      `json:"requests"`
-	Successes        uint64      `json:"successes"`
-	Uptime           float64     `json:"uptime"` // successful / total requests
-	TTFT             Percentiles `json:"ttft_seconds"`
-	E2E              Percentiles `json:"e2e_seconds"`
-	Throughput       Percentiles `json:"throughput_tps"`
-	InputTokens      uint64      `json:"input_tokens"`
-	OutputTokens     uint64      `json:"output_tokens"`
-	CacheReadTokens  uint64      `json:"cache_read_tokens"`
-	CacheWriteTokens uint64      `json:"cache_write_tokens"`
-	CacheRate        float64     `json:"cache_rate"` // cached input / total input
-	ToolCalls        uint64      `json:"tool_calls"`
-	ToolErrors       uint64      `json:"tool_errors"`
-	ToolErrorRate    float64     `json:"tool_error_rate"`
+	Backend          string         `json:"backend"`
+	Model            string         `json:"model"`
+	Requests         uint64         `json:"requests"`
+	Successes        uint64         `json:"successes"`
+	Uptime           float64        `json:"uptime"` // successful / total requests
+	TTFT             Percentiles    `json:"ttft_seconds"`
+	E2E              Percentiles    `json:"e2e_seconds"`
+	Throughput       Percentiles    `json:"throughput_tps"`
+	InputTokens      uint64         `json:"input_tokens"`
+	OutputTokens     uint64         `json:"output_tokens"`
+	CacheReadTokens  uint64         `json:"cache_read_tokens"`
+	CacheWriteTokens uint64         `json:"cache_write_tokens"`
+	CacheRate        float64        `json:"cache_rate"` // cached input / total input
+	ToolCalls        uint64         `json:"tool_calls"`
+	ToolErrors       uint64         `json:"tool_errors"`
+	ToolErrorRate    float64        `json:"tool_error_rate"`
+	StatusCodes      map[string]uint64 `json:"status_codes,omitempty"` // non-2xx replies by HTTP status
+}
+
+// UpstreamErrorEvent is one recent upstream failure for the dashboard's error
+// feed: which backend/model failed, with what status and what the upstream
+// (or transport) said about it.
+type UpstreamErrorEvent struct {
+	At      time.Time `json:"at"`
+	Backend string    `json:"backend"`
+	Model   string    `json:"model"`
+	Status  string    `json:"status"` // HTTP code as text; "error" = no response at all
+	Message string    `json:"message,omitempty"`
+}
+
+// maxRecentErrors caps the shared ring of recent upstream failures.
+const maxRecentErrors = 50
+
+// recordFailure counts one non-2xx (or transport-failed) request into the
+// per-model status counters, its current bucket, Redis, and the recent ring.
+func (st *Stats) recordFailure(backend, model, status, message string) {
+	if message == "" && status != "" {
+		message = "upstream returned status " + status
+	}
+	st.statusesCountInMemory(backend, model, status)
+
+	// modelFor creates on first use: a failure can arrive before record() has
+	// ever run for this pair (it would otherwise be lost).
+	key := backend + "\x00" + model
+	ms := st.modelFor(key)
+	ms.mu.Lock()
+	b := ms.bucketForLocked(time.Now().Unix() / 300)
+	b.StatusCodes[status]++
+	ms.mu.Unlock()
+	st.recordRedisStatus(backend, model, status)
+
+	ev := UpstreamErrorEvent{
+		At:      time.Now(),
+		Backend: backend,
+		Model:   model,
+		Status:  status,
+		Message: message,
+	}
+	st.recentMu.Lock()
+	st.recent = append(st.recent, ev)
+	if n := len(st.recent); n > maxRecentErrors {
+		st.recent = st.recent[n-maxRecentErrors:]
+	}
+	st.recentMu.Unlock()
+}
+
+// statusesCountInMemory bumps the Prometheus status counter.
+func (st *Stats) statusesCountInMemory(backend, model, status string) {
+	if status == "" {
+		status = statusError
+	}
+	st.statuses.WithLabelValues(backend, model, status).Inc()
+}
+
+// recordRedisStatus mirrors a non-2xx count into the shared Redis hash so
+// multi-replica dashboards see every replica's failures.
+func (st *Stats) recordRedisStatus(backend, model, status string) {
+	if st.redis == nil || status == "" || status == statusError {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = st.redis.recordStatus(ctx, backend, model, status, st.cfg.RetentionDays)
+}
+
+// RecentUpstreamErrors returns a copy of the newest-first recent failure ring.
+func (st *Stats) RecentUpstreamErrors() []UpstreamErrorEvent {
+	st.recentMu.Lock()
+	defer st.recentMu.Unlock()
+	out := make([]UpstreamErrorEvent, 0, len(st.recent))
+	for i := len(st.recent) - 1; i >= 0; i-- {
+		out = append(out, st.recent[i])
+	}
+	return out
 }
 
 // Percentiles carries p50/p90/p99 of one distribution in its source unit.
@@ -581,6 +742,7 @@ func (st *Stats) snapshotFromPrometheus() []ModelStat {
 	type row struct {
 		stat               ModelStat
 		ttft, e2e, through *dto.Histogram
+		body200Failures    uint64 // 2xx replies whose body was an error object
 	}
 	rows := map[string]*row{}
 
@@ -643,6 +805,20 @@ func (st *Stats) snapshotFromPrometheus() []ModelStat {
 	collectInto(st.errs.MetricVec, func(labels []string, m *dto.Metric) {
 		get(labels[0], labels[1]).stat.ToolErrors += uint64(m.GetCounter().GetValue())
 	})
+	collectInto(st.statuses.MetricVec, func(labels []string, m *dto.Metric) {
+		v := uint64(m.GetCounter().GetValue())
+		r := get(labels[0], labels[1])
+		if strings.HasPrefix(labels[2], "2") {
+			// Body-failures (HTTP 200 carrying an error object) were recorded
+			// under the same status label as real successes; net them out of
+			// the successes count so uptime stays honest.
+			r.body200Failures += v
+		}
+		if r.stat.StatusCodes == nil {
+			r.stat.StatusCodes = map[string]uint64{}
+		}
+		r.stat.StatusCodes[labels[2]] += uint64(m.GetCounter().GetValue())
+	})
 	hist := func(vec *prometheus.HistogramVec, dst func(*row) **dto.Histogram) {
 		collectInto(vec.MetricVec, func(labels []string, m *dto.Metric) {
 			if hm := m.GetHistogram(); hm != nil {
@@ -658,6 +834,11 @@ func (st *Stats) snapshotFromPrometheus() []ModelStat {
 	out := make([]ModelStat, 0, len(rows))
 	for _, r := range rows {
 		s := r.stat
+		if s.Successes >= r.body200Failures {
+			s.Successes -= r.body200Failures
+		} else {
+			s.Successes = 0
+		}
 		s.Uptime = ratio(s.Successes, s.Requests)
 		s.TTFT = percentilesOf(r.ttft)
 		s.E2E = percentilesOf(r.e2e)
@@ -735,17 +916,18 @@ var tpsEdges = []float64{1, 2, 5, 10, 20, 50, 100, 200, 500, math.Inf(1)}
 
 // bucket holds the counters and fixed-edge histograms for one 5-minute window.
 type bucket struct {
-	WindowStart       time.Time `json:"window_start"`
-	Requests          uint64    `json:"requests"`
-	Successes         uint64    `json:"successes"`
-	TTFTBuckets       []uint64  `json:"ttft_buckets"`
-	E2EBuckets        []uint64  `json:"e2e_buckets"`
-	ThroughputBuckets []uint64  `json:"throughput_buckets"`
-	TokensIn          uint64    `json:"tokens_in"`
-	TokensOut         uint64    `json:"tokens_out"`
-	CacheRead         uint64    `json:"cache_read"`
-	ToolCalls         uint64    `json:"tool_calls"`
-	ToolErrors        uint64    `json:"tool_errors"`
+	WindowStart       time.Time          `json:"window_start"`
+	Requests          uint64             `json:"requests"`
+	Successes         uint64             `json:"successes"`
+	TTFTBuckets       []uint64           `json:"ttft_buckets"`
+	E2EBuckets        []uint64           `json:"e2e_buckets"`
+	ThroughputBuckets []uint64           `json:"throughput_buckets"`
+	TokensIn          uint64             `json:"tokens_in"`
+	TokensOut         uint64             `json:"tokens_out"`
+	CacheRead         uint64             `json:"cache_read"`
+	ToolCalls         uint64             `json:"tool_calls"`
+	ToolErrors        uint64             `json:"tool_errors"`
+	StatusCodes       map[string]uint64  `json:"status_codes,omitempty"` // non-2xx replies by HTTP status
 }
 
 // modelStats holds the cumulative counters and 5-minute bucket ring for one
@@ -775,13 +957,15 @@ func histIndex(edges []float64, v float64) int {
 }
 
 // record folds one completed upstream request into the in-memory model.
-func (st *Stats) record(backend, model, status string, ttft, e2e, throughput float64, rep usageReport) {
+// success tells whether the request actually served the client — 2xx without
+// an error object — so gateway-200 error bodies never inflate uptime.
+func (st *Stats) record(backend, model string, success bool, ttft, e2e, throughput float64, rep usageReport) {
 	key := backend + "\x00" + model
 	ms := st.modelFor(key)
 
 	ms.mu.Lock()
 	ms.requests++
-	if strings.HasPrefix(status, "2") {
+	if success {
 		ms.successes++
 	}
 	ms.tokensIn += uint64(rep.input)
@@ -792,7 +976,7 @@ func (st *Stats) record(backend, model, status string, ttft, e2e, throughput flo
 	win := time.Now().Unix() / 300
 	b := ms.bucketForLocked(win)
 	b.Requests++
-	if strings.HasPrefix(status, "2") {
+	if success {
 		b.Successes++
 	}
 	if ttft > 0 {
@@ -811,17 +995,17 @@ func (st *Stats) record(backend, model, status string, ttft, e2e, throughput flo
 	ms.mu.Unlock()
 
 	st.maybeEvict(ms)
-	st.recordRedis(backend, model, status, ttft, e2e, throughput, rep)
+	st.recordRedis(backend, model, success, ttft, e2e, throughput, rep)
 	st.updates.notify()
 }
 
-func (st *Stats) recordRedis(backend, model, status string, ttft, e2e, throughput float64, rep usageReport) {
+func (st *Stats) recordRedis(backend, model string, success bool, ttft, e2e, throughput float64, rep usageReport) {
 	if st.redis == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_ = st.redis.record(ctx, backend, model, status, ttft, e2e, throughput, rep, st.cfg.RetentionDays)
+	_ = st.redis.record(ctx, backend, model, success, ttft, e2e, throughput, rep, st.cfg.RetentionDays)
 }
 
 // recordToolErrors attributes errored tool results to the current bucket of
@@ -870,8 +1054,12 @@ func (ms *modelStats) bucketForLocked(win int64) *bucket {
 			TTFTBuckets:       make([]uint64, len(ttftEdges)),
 			E2EBuckets:        make([]uint64, len(e2eEdges)),
 			ThroughputBuckets: make([]uint64, len(tpsEdges)),
+			StatusCodes:       map[string]uint64{},
 		}
 		ms.buckets[win] = b
+	}
+	if b.StatusCodes == nil { // snapshots from older versions may lack the map
+		b.StatusCodes = map[string]uint64{}
 	}
 	return b
 }
@@ -932,14 +1120,15 @@ type statsSnapshot struct {
 }
 
 type modelSnapshot struct {
-	Requests   uint64   `json:"requests"`
-	Successes  uint64   `json:"successes"`
-	TokensIn   uint64   `json:"tokens_in"`
-	TokensOut  uint64   `json:"tokens_out"`
-	CacheRead  uint64   `json:"cache_read"`
-	ToolCalls  uint64   `json:"tool_calls"`
-	ToolErrors uint64   `json:"tool_errors"`
-	Buckets    []bucket `json:"buckets"`
+	Requests   uint64          `json:"requests"`
+	Successes  uint64          `json:"successes"`
+	TokensIn   uint64          `json:"tokens_in"`
+	TokensOut  uint64          `json:"tokens_out"`
+	CacheRead  uint64          `json:"cache_read"`
+	ToolCalls  uint64          `json:"tool_calls"`
+	ToolErrors uint64          `json:"tool_errors"`
+	Statuses   map[string]uint64 `json:"status_codes,omitempty"`
+	Buckets    []bucket        `json:"buckets"`
 }
 
 func (st *Stats) snapshotForPersist() *statsSnapshot {
@@ -957,6 +1146,14 @@ func (st *Stats) snapshotForPersist() *statsSnapshot {
 			buckets = append(buckets, *b)
 		}
 		ms.mu.Unlock()
+		lifetimeStatuses := map[string]uint64{}
+		for _, b := range ms.buckets {
+			for status, n := range b.StatusCodes {
+				if n > 0 {
+					lifetimeStatuses[status] += n
+				}
+			}
+		}
 		snap.Models[key] = modelSnapshot{
 			Requests:   ms.requests,
 			Successes:  ms.successes,
@@ -965,6 +1162,7 @@ func (st *Stats) snapshotForPersist() *statsSnapshot {
 			CacheRead:  ms.cacheRead,
 			ToolCalls:  ms.toolCalls,
 			ToolErrors: ms.toolErrors,
+			Statuses:   nonEmpty(lifetimeStatuses),
 			Buckets:    buckets,
 		}
 	}
@@ -1050,6 +1248,9 @@ func (st *Stats) load(path string) error {
 			b.TTFTBuckets = msBucketsOf(b.TTFTBuckets, ttftEdges)
 			b.E2EBuckets = msBucketsOf(b.E2EBuckets, e2eEdges)
 			b.ThroughputBuckets = msBucketsOf(b.ThroughputBuckets, tpsEdges)
+			if b.StatusCodes == nil {
+				b.StatusCodes = map[string]uint64{}
+			}
 			m.buckets[win] = &b
 		}
 		st.models[key] = m
@@ -1127,6 +1328,7 @@ func (st *Stats) snapshotFromBuckets() []ModelStat {
 	type row struct {
 		stat           ModelStat
 		ttft, e2e, tps []uint64
+		statuses       map[string]uint64
 	}
 	rows := map[string]*row{}
 	st.mu.RLock()
@@ -1137,10 +1339,11 @@ func (st *Stats) snapshotFromBuckets() []ModelStat {
 			continue
 		}
 		r := &row{
-			stat: ModelStat{Backend: backend, Model: model},
-			ttft: make([]uint64, len(ttftEdges)),
-			e2e:  make([]uint64, len(e2eEdges)),
-			tps:  make([]uint64, len(tpsEdges)),
+			stat:     ModelStat{Backend: backend, Model: model},
+			ttft:     make([]uint64, len(ttftEdges)),
+			e2e:      make([]uint64, len(e2eEdges)),
+			tps:      make([]uint64, len(tpsEdges)),
+			statuses: map[string]uint64{},
 		}
 		ms.mu.Lock()
 		// Lifetime counters already cover every event the buckets hold —
@@ -1165,6 +1368,11 @@ func (st *Stats) snapshotFromBuckets() []ModelStat {
 			for i := range b.ThroughputBuckets {
 				r.tps[i] += b.ThroughputBuckets[i]
 			}
+			for status, n := range b.StatusCodes {
+				if n > 0 {
+					r.statuses[status] += n
+				}
+			}
 		}
 		ms.mu.Unlock()
 		rows[key] = r
@@ -1178,6 +1386,7 @@ func (st *Stats) snapshotFromBuckets() []ModelStat {
 		s.Throughput = percentilesFromCounts(r.tps, tpsEdges)
 		s.CacheRate = ratio(s.CacheReadTokens, s.InputTokens)
 		s.ToolErrorRate = ratio(s.ToolErrors, s.ToolCalls)
+		s.StatusCodes = nonEmpty(r.statuses)
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1187,6 +1396,15 @@ func (st *Stats) snapshotFromBuckets() []ModelStat {
 		return out[i].Model < out[j].Model
 	})
 	return out
+}
+
+// nonEmpty returns the map as-is when it holds entries, nil otherwise, so
+// JSON payloads omit rather than show "{}" for healthy models.
+func nonEmpty(m map[string]uint64) map[string]uint64 {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
 // ---------------------------------------------------------------------------
@@ -1363,6 +1581,12 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 // history"); otherwise it falls back to the Prometheus-backed counters.
 func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"models": s.stats.snapshot()})
+}
+
+// handleStatsErrors serves GET /api/stats/errors with the most recent
+// upstream failures (newest first), for the dashboard's error feed.
+func (s *Server) handleStatsErrors(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"errors": s.stats.RecentUpstreamErrors()})
 }
 
 // handleStatsBackendSeries serves GET /api/stats/backends/{backend}?range=...

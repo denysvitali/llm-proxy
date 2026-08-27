@@ -24,6 +24,19 @@ export interface ModelStat {
   tool_calls: number
   tool_errors: number
   tool_error_rate: number
+  status_codes?: Record<string, number>
+}
+
+export interface UpstreamErrorEvent {
+  at: string
+  backend: string
+  model: string
+  status: string // HTTP code as text; "error" = the request never got a response
+  message?: string
+}
+
+export interface UpstreamErrorsResponse {
+  errors: UpstreamErrorEvent[]
 }
 
 export interface StatsResponse {
@@ -143,4 +156,8 @@ export function fetchOverview(): Promise<Overview> {
 
 export function fetchGrokUsage(): Promise<GrokUsage> {
   return getJSON<GrokUsage>('/api/grok/usage')
+}
+
+export function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {
+  return getJSON<UpstreamErrorsResponse>('/api/stats/errors')
 }

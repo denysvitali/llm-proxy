@@ -434,7 +434,7 @@ func TestSnifferForwardsBytesAndCaptures(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	tr := newStats(reg, config.StatsConfig{}).track("b", "m")
 	payload := strings.Repeat("x", 4096)
-	sn := newSniffer(io.NopCloser(strings.NewReader(payload)), tr, false)
+	sn := newSniffer(io.NopCloser(strings.NewReader(payload)), tr, false, http.StatusOK)
 	buf := make([]byte, len(payload)+16)
 	total := 0
 	for {
