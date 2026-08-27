@@ -107,7 +107,7 @@ native endpoint and translates client requests when the client API differs.
 Requires Go (see `go.mod` for the minimum version).
 
 ```bash
-go build -o llm-proxy ./cmd
+go build -o llm-proxy .
 ```
 
 A container image is published to `ghcr.io/denysvitali/llm-proxy` on every
