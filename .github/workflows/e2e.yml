@@ -265,3 +265,109 @@ jobs:
       - name: Stop llm-proxy
         if: always()
         run: pkill -f 'llm-proxy serve' || true
+
+  # Secret-free E2E against the mock upstream: covers the Codex model
+  # catalog dialect and a full codex turn on every push, even when the
+  # live-inference secrets are not configured.
+  e2e-mock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build llm-proxy
+        run: go build -o llm-proxy .
+
+      - name: Install Codex
+        run: npm install -g @openai/codex
+
+      - name: Start mock upstream and proxy
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/llm-proxy-mock
+          python3 scripts/e2e/mock_upstream.py 9911 > /tmp/llm-proxy-mock/mock.log 2>&1 &
+          cat > /tmp/llm-proxy-mock/config.yaml <<EOF
+          server:
+            listen: 127.0.0.1:8090
+          auth:
+            file: /tmp/llm-proxy-mock/keys.json
+          log_level: info
+          backends:
+            - type: venice
+              api_key_env: MOCK_UPSTREAM_KEY
+              base_url: http://127.0.0.1:9911/v1
+          default_route:
+            backend: venice
+          EOF
+          ./llm-proxy keys create-user e2e --store /tmp/llm-proxy-mock/keys.json
+          ./llm-proxy keys create e2e --name ci --store /tmp/llm-proxy-mock/keys.json | head -1 > /tmp/llm-proxy-mock/proxy-key
+          test -s /tmp/llm-proxy-mock/proxy-key
+          MOCK_UPSTREAM_KEY=dummy ./llm-proxy serve --config /tmp/llm-proxy-mock/config.yaml > /tmp/llm-proxy-mock/proxy.log 2>&1 &
+          for i in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:8090/healthz > /dev/null; then exit 0; fi
+            sleep 0.2
+          done
+          echo "proxy did not become healthy"; cat /tmp/llm-proxy-mock/proxy.log; exit 1
+
+      - name: Codex model catalog dialect
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-mock/proxy-key)
+          # Codex refreshes its model catalog from GET {base}/models at turn
+          # startup and decodes it as {"models":[...]}; answering the OpenAI
+          # {"object":"list","data":[...]} envelope wedges the turn with
+          # "failed to decode models response: missing field `models`".
+          # Assert the codex dialect, then feed the exact served body to the
+          # real codex catalog parser (codex debug models) as a decode gate.
+          curl -fsS -A "codex_app_server/0.149.0" \
+            -H "Authorization: Bearer $KEY" \
+            http://127.0.0.1:8090/v1/models -o /tmp/llm-proxy-mock/models-codex.json
+          jq -e 'has("models") and (.models | type == "array" and length > 0)' \
+            /tmp/llm-proxy-mock/models-codex.json > /dev/null
+          jq -e '(.models[0] | has("slug") and has("display_name") and has("model_messages") and has("truncation_policy")) and (has("data") | not)' \
+            /tmp/llm-proxy-mock/models-codex.json > /dev/null
+          codex debug models -c model_catalog_json=/tmp/llm-proxy-mock/models-codex.json \
+            | tee /tmp/llm-proxy-mock/codex-catalog.out
+          grep -q '"slug":"venice/stealth-mock"' /tmp/llm-proxy-mock/codex-catalog.out
+          # Every other client keeps the OpenAI list envelope.
+          curl -fsS -H "Authorization: Bearer $KEY" \
+            http://127.0.0.1:8090/v1/models | jq -e '.object == "list" and (.data | length > 0)' > /dev/null
+
+      - name: Codex end-to-end against mock upstream
+        run: |
+          set -euo pipefail
+          KEY=$(cat /tmp/llm-proxy-mock/proxy-key)
+          mkdir -p ~/.codex
+          cat > ~/.codex/config.toml <<EOF
+          model = "venice/stealth-mock"
+          model_provider = "llm_proxy"
+
+          [model_providers.llm_proxy]
+          name = "llm-proxy"
+          base_url = "http://127.0.0.1:8090/v1"
+          env_key = "CODEX_PROVIDER_KEY"
+          wire_api = "responses"
+          requires_openai_auth = false
+          EOF
+          export CODEX_PROVIDER_KEY="$KEY"
+          codex exec --skip-git-repo-check "Reply with exactly: E2E_OK" | tee /tmp/llm-proxy-mock/codex.out
+          grep -q "E2E_OK" /tmp/llm-proxy-mock/codex.out
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          cat /tmp/llm-proxy-mock/proxy.log || true
+          tail -50 /tmp/llm-proxy-mock/mock.log || true
+
+      - name: Stop background processes
+        if: always()
+        run: |
+          pkill -f 'llm-proxy serve' || true
+          pkill -f 'mock_upstream.py' || true
