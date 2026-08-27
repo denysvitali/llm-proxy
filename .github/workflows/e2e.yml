@@ -194,6 +194,25 @@ jobs:
           requires_openai_auth = false
           EOF
           export CODEX_PROVIDER_KEY="$KEY"
+          # Codex refreshes its model catalog from GET {base}/models at turn
+          # startup and decodes it as {"models":[...]}; answering the OpenAI
+          # {"object":"list","data":[...]} envelope wedges the turn with
+          # "failed to decode models response: missing field `models`".
+          # Assert the codex dialect, then feed the exact served body to the
+          # real codex catalog parser (codex debug models) as a decode gate.
+          curl -fsS -A "codex_app_server/0.149.0" \
+            -H "Authorization: Bearer $KEY" \
+            http://127.0.0.1:8090/v1/models -o /tmp/llm-proxy-e2e/models-codex.json
+          jq -e 'has("models") and (.models | type == "array" and length > 0)' \
+            /tmp/llm-proxy-e2e/models-codex.json > /dev/null
+          jq -e '(.models[0] | has("slug") and has("display_name") and has("model_messages") and has("truncation_policy")) and (has("data") | not)' \
+            /tmp/llm-proxy-e2e/models-codex.json > /dev/null
+          codex debug models -c model_catalog_json=/tmp/llm-proxy-e2e/models-codex.json \
+            | tee /tmp/llm-proxy-e2e/codex-catalog.out
+          grep -q "\"slug\":\"venice/$VENICE_MODEL\"" /tmp/llm-proxy-e2e/codex-catalog.out
+          # Every other client keeps the OpenAI list envelope.
+          curl -fsS -H "Authorization: Bearer $KEY" \
+            http://127.0.0.1:8090/v1/models | jq -e '.object == "list" and (.data | length > 0)' > /dev/null
           codex exec --skip-git-repo-check "Reply with exactly: E2E_OK" | tee /tmp/llm-proxy-e2e/codex.out
           grep -q "E2E_OK" /tmp/llm-proxy-e2e/codex.out
 
