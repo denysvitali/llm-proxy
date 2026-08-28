@@ -22,14 +22,15 @@ const (
 // overviewBackend describes one configured backend. It never carries key
 // material — only HasKey.
 type overviewBackend struct {
-	Name           string   `json:"name"`
-	Enabled        bool     `json:"enabled"`
-	Host           string   `json:"host"`
-	HasKey         bool     `json:"hasKey"`
-	AuthLabel      string   `json:"authLabel"`
-	AuthConfigured bool     `json:"authConfigured"`
-	Models         []string `json:"models"`
-	CatalogOK      bool     `json:"catalogOK"`
+	Name           string            `json:"name"`
+	Enabled        bool              `json:"enabled"`
+	Host           string            `json:"host"`
+	HasKey         bool              `json:"hasKey"`
+	AuthLabel      string            `json:"authLabel"`
+	AuthConfigured bool              `json:"authConfigured"`
+	Models         []string          `json:"models"`
+	ModelCredits   map[string]string `json:"modelCredits,omitempty"`
+	CatalogOK      bool              `json:"catalogOK"`
 }
 
 type grokUsageMetadata struct {
@@ -109,6 +110,12 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 				for _, model := range models {
 					entry.Models = append(entry.Models, bc.Type+"/"+model)
 				}
+				if credits, ok := s.backendModelCredits(bc.Type); ok {
+					entry.ModelCredits = make(map[string]string, len(credits))
+					for model, rate := range credits {
+						entry.ModelCredits[bc.Type+"/"+model] = rate
+					}
+				}
 			}
 		}
 		page.Backends = append(page.Backends, entry)
@@ -145,6 +152,20 @@ env_key = "LLM_PROXY_API_KEY"
 # launch: codex --config model_provider=%s --model %s`,
 		proxyName, proxyName, r.Host, proxyName, page.ExampleModel)
 	return page
+}
+
+func (s *Server) backendModelCredits(name string) (map[string]string, bool) {
+	for _, candidate := range s.backends {
+		if candidate.Name() != name {
+			continue
+		}
+		provider, ok := candidate.(interface{ ModelCredits() map[string]string })
+		if !ok {
+			return nil, false
+		}
+		return provider.ModelCredits(), true
+	}
+	return nil, false
 }
 
 func (s *Server) grokUsageMetadata(r *http.Request) grokUsageMetadata {

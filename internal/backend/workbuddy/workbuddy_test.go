@@ -32,7 +32,7 @@ func TestModelsFetchesLiveCatalogAndFiltersMediaModels(t *testing.T) {
 		if r.URL.Path != "/v3/config" || r.Header.Get("Authorization") != "Bearer account-token" {
 			t.Errorf("request path=%q headers=%v", r.URL.Path, r.Header)
 		}
-		_, _ = io.WriteString(w, `{"code":0,"msg":"OK","data":{"models":[{"id":"hy3","tags":["craft"]},{"id":"hunyuan-image-v3.0","tags":["text-to-image"]}]}}`)
+		_, _ = io.WriteString(w, `{"code":0,"msg":"OK","data":{"models":[{"id":"hy3","credits":"x0.00","tags":["craft"]},{"id":"hunyuan-image-v3.0","credits":"x5.00 credits","tags":["text-to-image"]}]}}`)
 	}))
 	defer server.Close()
 	c := New(server.URL, staticToken("account-token"))
@@ -44,6 +44,9 @@ func TestModelsFetchesLiveCatalogAndFiltersMediaModels(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("catalog calls = %d, want 1 cached request", calls)
+	}
+	if got := c.ModelCredits(); got["hy3"] != "x0.00" || len(got) != 1 {
+		t.Fatalf("ModelCredits() = %v", got)
 	}
 }
 

@@ -86,6 +86,7 @@ export interface OverviewBackend {
   authLabel: string
   authConfigured: boolean
   models: string[] | null
+  modelCredits?: Record<string, string>
   catalogOK: boolean
 }
 

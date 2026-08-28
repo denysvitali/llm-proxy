@@ -311,9 +311,14 @@ function ProviderCard({
           <Divider my="sm" />
           <CardSection title={`Catalog · ${(b.models?.length ?? 0)}`}>
             {shownModels.map((m) => (
-              <Code key={m} style={{ fontSize: '0.72rem' }}>
-                {m}
-              </Code>
+              <Group key={m} gap={4} wrap="nowrap">
+                <Code style={{ fontSize: '0.72rem' }}>{m}</Code>
+                {b.modelCredits?.[m] && (
+                  <Badge size="xs" variant="light" color="violet">
+                    {b.modelCredits[m]}
+                  </Badge>
+                )}
+              </Group>
             ))}
             {extra > 0 && (
               <Button

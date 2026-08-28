@@ -35,6 +35,7 @@ type Client struct {
 
 	modelMu      sync.Mutex
 	cachedModels []string
+	modelCredits map[string]string
 	modelsUntil  time.Time
 }
 
@@ -57,7 +58,7 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	if len(c.cachedModels) > 0 && time.Now().Before(c.modelsUntil) {
 		return append([]string(nil), c.cachedModels...), nil
 	}
-	models, err := c.fetchModels(ctx)
+	models, credits, err := c.fetchModels(ctx)
 	if err != nil {
 		if len(c.cachedModels) > 0 {
 			return append([]string(nil), c.cachedModels...), nil
@@ -65,21 +66,34 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	c.cachedModels = append(c.cachedModels[:0], models...)
+	c.modelCredits = credits
 	c.modelsUntil = time.Now().Add(modelCacheTTL)
 	return append([]string(nil), models...), nil
 }
 
-func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
+// ModelCredits returns the credit-rate labels attached to the most recently
+// fetched live catalog. Call Models first to refresh the catalog.
+func (c *Client) ModelCredits() map[string]string {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
+	out := make(map[string]string, len(c.modelCredits))
+	for model, credits := range c.modelCredits {
+		out[model] = credits
+	}
+	return out
+}
+
+func (c *Client) fetchModels(ctx context.Context) ([]string, map[string]string, error) {
 	if c.Tokens == nil {
-		return nil, errors.New("workbuddy backend has no account session configured")
+		return nil, nil, errors.New("workbuddy backend has no account session configured")
 	}
 	credentials, token, err := c.credentials(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/v3/config", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	setHeaders(req.Header, token, c.BaseURL)
 	req.Header.Set("Accept", "application/json")
@@ -88,38 +102,43 @@ func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch CodeBuddy model catalog: %w", err)
+		return nil, nil, fmt.Errorf("fetch CodeBuddy model catalog: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("fetch CodeBuddy model catalog: HTTP %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("fetch CodeBuddy model catalog: HTTP %d", resp.StatusCode)
 	}
 	var payload struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
 			Models []struct {
-				ID   string   `json:"id"`
-				Tags []string `json:"tags"`
+				ID      string   `json:"id"`
+				Tags    []string `json:"tags"`
+				Credits string   `json:"credits"`
 			} `json:"models"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode CodeBuddy model catalog: %w", err)
+		return nil, nil, fmt.Errorf("decode CodeBuddy model catalog: %w", err)
 	}
 	if payload.Code != 0 {
-		return nil, fmt.Errorf("fetch CodeBuddy model catalog: code %d: %s", payload.Code, payload.Msg)
+		return nil, nil, fmt.Errorf("fetch CodeBuddy model catalog: code %d: %s", payload.Code, payload.Msg)
 	}
 	models := make([]string, 0, len(payload.Data.Models))
+	credits := make(map[string]string, len(payload.Data.Models))
 	for _, model := range payload.Data.Models {
 		if model.ID != "" && !mediaModel(model.Tags) {
 			models = append(models, model.ID)
+			if model.Credits != "" {
+				credits[model.ID] = model.Credits
+			}
 		}
 	}
 	if len(models) == 0 {
-		return nil, errors.New("CodeBuddy model catalog is empty")
+		return nil, nil, errors.New("CodeBuddy model catalog is empty")
 	}
-	return models, nil
+	return models, credits, nil
 }
 
 func mediaModel(tags []string) bool {
