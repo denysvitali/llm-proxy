@@ -187,13 +187,14 @@ function ProviderCard({
   models: ModelStat[]
   onInspect: () => void
 }) {
+  const [catalogExpanded, setCatalogExpanded] = useState(false)
   const requests = models.reduce((s, m) => s + m.requests, 0)
   const successes = models.reduce((s, m) => s + m.successes, 0)
   const toolCalls = models.reduce((s, m) => s + m.tool_calls, 0)
   const toolErrors = models.reduce((s, m) => s + m.tool_errors, 0)
   const uptime = requests ? successes / requests : 0
   const segTotal = segments.reduce((s, x) => s + x.value, 0)
-  const shownModels = b.models?.slice(0, 5) ?? []
+  const shownModels = catalogExpanded ? (b.models ?? []) : (b.models?.slice(0, 5) ?? [])
   const extra = (b.models?.length ?? 0) - shownModels.length
 
   // Ring color mirrors UptimeBadge thresholds; the badge under the ring
@@ -315,9 +316,30 @@ function ProviderCard({
               </Code>
             ))}
             {extra > 0 && (
-              <Text size="xs" c="dimmed" style={{ alignSelf: 'center' }}>
-                +{extra} more
-              </Text>
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                aria-expanded={catalogExpanded}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setCatalogExpanded(true)
+                }}
+              >
+                Show all (+{extra})
+              </Button>
+            )}
+            {catalogExpanded && (b.models?.length ?? 0) > 5 && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                aria-expanded={catalogExpanded}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setCatalogExpanded(false)
+                }}
+              >
+                Show less
+              </Button>
             )}
           </CardSection>
         </>
