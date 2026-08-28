@@ -25,6 +25,7 @@ dashboard; Grok has no upstream API-key setting.
 | `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
+| `workbuddy` | WorkBuddy account subscription   | Chat Completions                         | Reuses the signed-in WorkBuddy desktop session; Anthropic and Responses requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
@@ -69,6 +70,29 @@ Two Apodex behaviours are worth knowing before pointing a client at it:
 
 Non-streaming requests cap `max_tokens` at 32768 and time out around 600
 seconds upstream; stream anything longer.
+
+### WorkBuddy
+
+Install WorkBuddy and sign in with the account that owns your subscription,
+then enable the backend without an API key:
+
+```yaml
+backends:
+  - type: workbuddy
+```
+
+On Windows the session is discovered at
+`%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info`.
+Override `workbuddy_auth_file` at the top level when WorkBuddy stores it
+elsewhere. The file is read for every request, so signing in again does not
+require restarting the proxy. Models are read from WorkBuddy's local catalog;
+use qualified names such as `workbuddy/auto` or `workbuddy/glm-5.1`.
+
+WorkBuddy exposes a streaming-only Chat Completions service internally. The
+proxy aggregates it for non-streaming clients and uses the existing translation
+matrix for Claude Code (`/v1/messages`) and Codex (`/v1/responses`). This is an
+undocumented private endpoint and may change with a WorkBuddy update. Confirm
+that this use is permitted by WorkBuddy's terms for your account.
 
 ### OpenRouter
 

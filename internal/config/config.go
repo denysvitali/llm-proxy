@@ -95,11 +95,14 @@ type Config struct {
 	BaseURL string `mapstructure:"base_url"`
 	// GrokAuthFile stores the xAI account session used by the Grok
 	// subscription backend. It is not an API key.
-	GrokAuthFile string          `mapstructure:"grok_auth_file"`
-	Server       ServerConfig    `mapstructure:"server"`
-	Auth         AuthConfig      `mapstructure:"auth"`
-	Backends     []BackendConfig `mapstructure:"backends"`
-	Stats        StatsConfig     `mapstructure:"stats"`
+	GrokAuthFile string `mapstructure:"grok_auth_file"`
+	// WorkBuddyAuthFile is the WorkBuddy desktop session. The proxy reads it
+	// on every request, so signing in or switching accounts needs no restart.
+	WorkBuddyAuthFile string          `mapstructure:"workbuddy_auth_file"`
+	Server            ServerConfig    `mapstructure:"server"`
+	Auth              AuthConfig      `mapstructure:"auth"`
+	Backends          []BackendConfig `mapstructure:"backends"`
+	Stats             StatsConfig     `mapstructure:"stats"`
 
 	// Routes maps inbound model name -> explicit route. Models not listed are
 	// matched against each enabled backend's catalog (first match wins in
@@ -118,6 +121,16 @@ func (c *Config) Defaults() {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			c.GrokAuthFile = filepath.Join(home, ".config", "grok-proxy", "auth.json")
+		}
+	}
+	if c.WorkBuddyAuthFile == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if local := os.Getenv("LOCALAPPDATA"); local != "" {
+				c.WorkBuddyAuthFile = filepath.Join(local, "CodeBuddyExtension", "Data", "Public", "auth", "workbuddy-desktop.info")
+			} else {
+				c.WorkBuddyAuthFile = filepath.Join(home, ".workbuddy", "auth", "workbuddy-desktop.info")
+			}
 		}
 	}
 	if c.Server.Listen == "" {

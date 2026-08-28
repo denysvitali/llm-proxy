@@ -12,4 +12,5 @@ import (
 	_ "github.com/denysvitali/llm-proxy/internal/backend/opencodego"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/openrouter"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/venice"
+	_ "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
 )
