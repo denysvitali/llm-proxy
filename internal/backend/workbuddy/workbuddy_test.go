@@ -70,6 +70,24 @@ func TestNormalizeRequestSanitizesUnsupportedSchema(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequestAddsRequiredSystemMessage(t *testing.T) {
+	b, err := normalizeRequest([]byte(`{"messages":[{"role":"user","content":"hello"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Messages []struct {
+			Role string `json:"role"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Messages) != 2 || body.Messages[0].Role != "system" || body.Messages[1].Role != "user" {
+		t.Fatalf("messages = %#v", body.Messages)
+	}
+}
+
 type staticToken string
 
 func (s staticToken) AccessToken(context.Context) (string, error) { return string(s), nil }

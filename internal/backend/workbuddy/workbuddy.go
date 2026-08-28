@@ -159,6 +159,11 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 	}
 	body["stream"] = true
 	body["stream_options"] = map[string]any{"include_usage": true}
+	if messages, ok := body["messages"].([]any); ok {
+		if len(messages) == 0 || messageRole(messages[0]) != "system" {
+			body["messages"] = append([]any{map[string]any{"role": "system", "content": "You are a helpful coding assistant."}}, messages...)
+		}
+	}
 	if _, ok := body["tool_choice"].(map[string]any); ok {
 		body["tool_choice"] = "auto"
 	}
@@ -174,6 +179,12 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 		}
 	}
 	return json.Marshal(body)
+}
+
+func messageRole(value any) string {
+	message, _ := value.(map[string]any)
+	role, _ := message["role"].(string)
+	return role
 }
 
 func sanitizeSchema(v any) {
