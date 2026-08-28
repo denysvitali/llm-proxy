@@ -25,19 +25,26 @@ func TestSessionReadsDesktopLogin(t *testing.T) {
 	}
 }
 
-func TestFallbackModelsIncludeHy3(t *testing.T) {
-	c := New("", nil)
-	c.Home = t.TempDir()
-	models, err := c.Models(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, model := range models {
-		if model == "hy3" {
-			return
+func TestModelsFetchesLiveCatalogAndFiltersMediaModels(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/v3/config" || r.Header.Get("Authorization") != "Bearer account-token" {
+			t.Errorf("request path=%q headers=%v", r.URL.Path, r.Header)
+		}
+		_, _ = io.WriteString(w, `{"code":0,"msg":"OK","data":{"models":[{"id":"hy3","tags":["craft"]},{"id":"hunyuan-image-v3.0","tags":["text-to-image"]}]}}`)
+	}))
+	defer server.Close()
+	c := New(server.URL, staticToken("account-token"))
+	for range 2 {
+		models, err := c.Models(context.Background())
+		if err != nil || len(models) != 1 || models[0] != "hy3" {
+			t.Fatalf("Models() = %v, %v", models, err)
 		}
 	}
-	t.Fatalf("fallback models do not include hy3: %v", models)
+	if calls != 1 {
+		t.Fatalf("catalog calls = %d, want 1 cached request", calls)
+	}
 }
 
 func TestSendUsesPrivateChatEndpointAndAggregatesStream(t *testing.T) {

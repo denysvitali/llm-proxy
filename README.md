@@ -88,7 +88,10 @@ Start the proxy, open `http://127.0.0.1:8090/login/workbuddy`, and choose
 authorization. The proxy stores and refreshes its own account session, so the
 WorkBuddy desktop application is not required. Override `workbuddy_auth_file`
 at the top level to change where that session is stored. Use qualified model
-names such as `workbuddy/auto` or `workbuddy/glm-5.1`.
+names such as `workbuddy/hy3` or `workbuddy/glm-5.3`. The catalog is fetched
+from CodeBuddy International's authenticated `/v3/config` endpoint and cached
+for five minutes; the last successful response is retained during a temporary
+catalog outage.
 
 WorkBuddy exposes a streaming-only Chat Completions service internally. The
 proxy aggregates it for non-streaming clients and uses the existing translation

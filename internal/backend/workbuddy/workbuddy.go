@@ -13,10 +13,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -27,21 +26,23 @@ const (
 	clientVersion  = "2.110.0"
 )
 
-var fallbackModels = []string{"auto", "hy3", "glm-5v-turbo", "glm-5.1", "glm-5.0-turbo", "glm-5.0", "glm-4.7", "kimi-k2.5", "minimax-m2.7", "deepseek-v3-2-volc"}
+const modelCacheTTL = 5 * time.Minute
 
 type Client struct {
 	BaseURL string
 	Tokens  backend.TokenSource
 	HTTP    *http.Client
-	Home    string
+
+	modelMu      sync.Mutex
+	cachedModels []string
+	modelsUntil  time.Time
 }
 
 func New(baseURL string, tokens backend.TokenSource) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	home, _ := os.UserHomeDir()
-	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Tokens: tokens, Home: home, HTTP: &http.Client{Timeout: 0, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: 5 * time.Minute}}}
+	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Tokens: tokens, HTTP: &http.Client{Timeout: 0, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: 5 * time.Minute}}}
 }
 
 func init() {
@@ -50,31 +51,52 @@ func init() {
 func (c *Client) Name() string                    { return "workbuddy" }
 func (c *Client) Supports(kind backend.Kind) bool { return kind == backend.KindOpenAIChat }
 
-func (c *Client) Models(context.Context) ([]string, error) {
-	dir := filepath.Join(c.Home, ".workbuddy", "local_storage")
-	entries, _ := filepath.Glob(filepath.Join(dir, "entry_*.info"))
-	var newest string
-	var newestAt time.Time
-	for _, path := range entries {
-		info, err := os.Stat(path)
-		if err == nil && info.ModTime().After(newestAt) {
-			newest, newestAt = path, info.ModTime()
-		}
+func (c *Client) Models(ctx context.Context) ([]string, error) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
+	if len(c.cachedModels) > 0 && time.Now().Before(c.modelsUntil) {
+		return append([]string(nil), c.cachedModels...), nil
 	}
-	if newest != "" {
-		if models := modelsFromCache(newest); len(models) > 0 {
-			return models, nil
+	models, err := c.fetchModels(ctx)
+	if err != nil {
+		if len(c.cachedModels) > 0 {
+			return append([]string(nil), c.cachedModels...), nil
 		}
+		return nil, err
 	}
-	return append([]string(nil), fallbackModels...), nil
+	c.cachedModels = append(c.cachedModels[:0], models...)
+	c.modelsUntil = time.Now().Add(modelCacheTTL)
+	return append([]string(nil), models...), nil
 }
 
-func modelsFromCache(path string) []string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil
+func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
+	if c.Tokens == nil {
+		return nil, errors.New("workbuddy backend has no account session configured")
 	}
-	var entries []struct {
+	credentials, token, err := c.credentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/v3/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	setHeaders(req.Header, token, c.BaseURL)
+	req.Header.Set("Accept", "application/json")
+	if credentials.AccessToken != "" {
+		setAccountHeaders(req.Header, credentials)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch CodeBuddy model catalog: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch CodeBuddy model catalog: HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
 		Data struct {
 			Models []struct {
 				ID   string   `json:"id"`
@@ -82,18 +104,22 @@ func modelsFromCache(path string) []string {
 			} `json:"models"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(b, &entries) != nil {
-		return nil
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode CodeBuddy model catalog: %w", err)
 	}
-	var out []string
-	for _, entry := range entries {
-		for _, m := range entry.Data.Models {
-			if m.ID != "" && !mediaModel(m.Tags) {
-				out = append(out, m.ID)
-			}
+	if payload.Code != 0 {
+		return nil, fmt.Errorf("fetch CodeBuddy model catalog: code %d: %s", payload.Code, payload.Msg)
+	}
+	models := make([]string, 0, len(payload.Data.Models))
+	for _, model := range payload.Data.Models {
+		if model.ID != "" && !mediaModel(model.Tags) {
+			models = append(models, model.ID)
 		}
 	}
-	return out
+	if len(models) == 0 {
+		return nil, errors.New("CodeBuddy model catalog is empty")
+	}
+	return models, nil
 }
 
 func mediaModel(tags []string) bool {
@@ -109,17 +135,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if c.Tokens == nil {
 		return nil, errors.New("workbuddy backend has no account session configured")
 	}
-	var credentials Credentials
-	var token string
-	var err error
-	if source, ok := c.Tokens.(interface {
-		Credentials(context.Context) (Credentials, error)
-	}); ok {
-		credentials, err = source.Credentials(ctx)
-		token = credentials.AccessToken
-	} else {
-		token, err = c.Tokens.AccessToken(ctx)
-	}
+	credentials, token, err := c.credentials(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +166,17 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	header := resp.Header.Clone()
 	header.Set("Content-Type", "application/json")
 	return &backend.Response{Status: resp.StatusCode, Header: header, Body: io.NopCloser(bytes.NewReader(aggregated))}, nil
+}
+
+func (c *Client) credentials(ctx context.Context) (Credentials, string, error) {
+	if source, ok := c.Tokens.(interface {
+		Credentials(context.Context) (Credentials, error)
+	}); ok {
+		credentials, err := source.Credentials(ctx)
+		return credentials, credentials.AccessToken, err
+	}
+	token, err := c.Tokens.AccessToken(ctx)
+	return Credentials{}, token, err
 }
 
 func normalizeRequest(raw []byte) ([]byte, error) {
