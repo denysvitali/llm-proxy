@@ -113,6 +113,28 @@ func TestNormalizeRequestAddsRequiredSystemMessage(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequestSanitizesForeignChannelIdentity(t *testing.T) {
+	b, err := normalizeRequest([]byte(`{"model":"hy3","messages":[{"role":"system","content":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.240"},{"type":"text","text":"You are a Claude agent built by Anthropic."}]},{"role":"user","content":"hello"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"x-anthropic-billing-header", "Claude", "Anthropic"} {
+		if strings.Contains(string(b), forbidden) {
+			t.Fatalf("normalized request still contains %q: %s", forbidden, b)
+		}
+	}
+
+	b, err = normalizeRequest([]byte(`{"model":"hy3","messages":[{"role":"system","content":"You are Codex CLI, led by OpenAI."},{"role":"user","content":"hello"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"Codex", "OpenAI"} {
+		if strings.Contains(string(b), forbidden) {
+			t.Fatalf("normalized request still contains %q: %s", forbidden, b)
+		}
+	}
+}
+
 type staticToken string
 
 func (s staticToken) AccessToken(context.Context) (string, error) { return string(s), nil }

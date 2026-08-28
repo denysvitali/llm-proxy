@@ -209,6 +209,12 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 		if len(messages) == 0 || messageRole(messages[0]) != "system" {
 			body["messages"] = append([]any{map[string]any{"role": "system", "content": "You are a helpful coding assistant."}}, messages...)
 		}
+		for _, value := range body["messages"].([]any) {
+			message, _ := value.(map[string]any)
+			if messageRole(message) == "system" {
+				message["content"] = sanitizeChannelIdentity(message["content"])
+			}
+		}
 	}
 	if _, ok := body["tool_choice"].(map[string]any); ok {
 		body["tool_choice"] = "auto"
@@ -225,6 +231,40 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 		}
 	}
 	return json.Marshal(body)
+}
+
+func sanitizeChannelIdentity(content any) any {
+	switch value := content.(type) {
+	case string:
+		lines := strings.Split(value, "\n")
+		kept := lines[:0]
+		for _, line := range lines {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "x-anthropic-billing-header:") {
+				continue
+			}
+			kept = append(kept, line)
+		}
+		text := strings.Join(kept, "\n")
+		return strings.NewReplacer(
+			"Claude Agent SDK", "agent SDK",
+			"Claude Code", "coding assistant",
+			"Claude", "assistant",
+			"Anthropic", "the model provider",
+			"Codex CLI", "coding CLI",
+			"Codex", "coding agent",
+			"OpenAI", "the model provider",
+		).Replace(text)
+	case []any:
+		for _, item := range value {
+			block, _ := item.(map[string]any)
+			if text, ok := block["text"].(string); ok {
+				block["text"] = sanitizeChannelIdentity(text)
+			}
+		}
+		return value
+	default:
+		return content
+	}
 }
 
 func messageRole(value any) string {
