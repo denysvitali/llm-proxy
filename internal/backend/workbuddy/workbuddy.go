@@ -23,37 +23,11 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://www.codebuddy.ai"
+	defaultBaseURL = "https://copilot.tencent.com"
 	clientVersion  = "2.110.0"
 )
 
 var fallbackModels = []string{"auto", "glm-5v-turbo", "glm-5.1", "glm-5.0-turbo", "glm-5.0", "glm-4.7", "kimi-k2.5", "minimax-m2.7", "deepseek-v3-2-volc"}
-
-type Session struct{ Path string }
-
-func NewSession(path string) *Session { return &Session{Path: path} }
-
-func (s *Session) AccessToken(context.Context) (string, error) {
-	b, err := os.ReadFile(s.Path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("not signed in to WorkBuddy; open the WorkBuddy desktop app and sign in (session expected at %s)", s.Path)
-	}
-	if err != nil {
-		return "", fmt.Errorf("read WorkBuddy session: %w", err)
-	}
-	var value struct {
-		Auth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"auth"`
-	}
-	if err := json.Unmarshal(b, &value); err != nil {
-		return "", fmt.Errorf("decode WorkBuddy session: %w", err)
-	}
-	if value.Auth.AccessToken == "" {
-		return "", errors.New("WorkBuddy session has no access token; sign in again in the desktop app")
-	}
-	return value.Auth.AccessToken, nil
-}
 
 type Client struct {
 	BaseURL string
@@ -135,7 +109,17 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if c.Tokens == nil {
 		return nil, errors.New("workbuddy backend has no account session configured")
 	}
-	token, err := c.Tokens.AccessToken(ctx)
+	var credentials Credentials
+	var token string
+	var err error
+	if source, ok := c.Tokens.(interface {
+		Credentials(context.Context) (Credentials, error)
+	}); ok {
+		credentials, err = source.Credentials(ctx)
+		token = credentials.AccessToken
+	} else {
+		token, err = c.Tokens.AccessToken(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +132,9 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, err
 	}
 	setHeaders(httpReq.Header, token)
+	if credentials.AccessToken != "" {
+		setAccountHeaders(httpReq.Header, credentials)
+	}
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to WorkBuddy failed: %w", err)
@@ -253,6 +240,24 @@ func setHeaders(h http.Header, token string) {
 	h.Set("X-Stainless-Lang", "js")
 	h.Set("X-Stainless-OS", runtime.GOOS)
 	h.Set("User-Agent", "CLI/"+clientVersion+" CodeBuddy/"+clientVersion)
+	h.Set("Origin", "https://www.codebuddy.cn")
+	h.Set("Referer", "https://www.codebuddy.cn/")
+}
+
+func setAccountHeaders(h http.Header, credentials Credentials) {
+	h.Del("X-API-Key")
+	if credentials.UserID != "" {
+		h.Set("X-User-Id", credentials.UserID)
+	}
+	if credentials.EnterpriseID != "" {
+		h.Set("X-Enterprise-Id", credentials.EnterpriseID)
+	}
+	if credentials.RefreshToken != "" {
+		h.Set("X-Refresh-Token", credentials.RefreshToken)
+	}
+	if credentials.Domain != "" {
+		h.Set("X-Domain", credentials.Domain)
+	}
 }
 func randomUUID() string {
 	x := randomHex(32)

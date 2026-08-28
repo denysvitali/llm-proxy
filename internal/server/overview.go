@@ -88,10 +88,15 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 			Host:    baseURLHost(bc.BaseURL),
 			HasKey:  bc.Type != "grok" && bc.ResolveKey(os.Getenv) != "",
 		}
-		if bc.Type == "grok" {
+		switch bc.Type {
+		case "grok":
 			entry.AuthLabel = "xAI account"
 			entry.AuthConfigured = s.grokAuth != nil && s.grokAuth.HasSession()
-		} else {
+		case "workbuddy":
+			entry.AuthLabel = "WorkBuddy account"
+			entry.AuthConfigured = s.workBuddyAuth != nil && s.workBuddyAuth.HasSession()
+			entry.HasKey = false
+		default:
 			entry.AuthLabel = "API key"
 			entry.AuthConfigured = entry.HasKey
 		}

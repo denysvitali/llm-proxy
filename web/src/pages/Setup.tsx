@@ -64,6 +64,13 @@ export default function SetupPage() {
             </Alert>
           )}
 
+          {ov.backends.some((b) => b.name === 'workbuddy') && (
+            <Alert color="blue" variant="light" title="WorkBuddy uses your account">
+              WorkBuddy does not use an upstream API key.{' '}
+              <a href="/login/workbuddy">Sign in with WorkBuddy</a> to connect your subscription.
+            </Alert>
+          )}
+
           <Card withBorder radius="lg" p={0}>
             <Tabs defaultValue="claude" keepMounted={false}>
               <Tabs.List px="md" pt={6}>

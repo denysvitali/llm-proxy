@@ -109,7 +109,8 @@ func runServe(cfg *config.Config) error {
 	}
 
 	grokTokens := grokbackend.NewManager(cfg.GrokAuthFile)
-	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workbuddybackend.NewSession(cfg.WorkBuddyAuthFile))
+	workBuddyTokens := workbuddybackend.NewManager(cfg.WorkBuddyAuthFile)
+	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workBuddyTokens)
 	if err != nil {
 		return err
 	}
@@ -130,7 +131,7 @@ func runServe(cfg *config.Config) error {
 		}()
 	}
 
-	srv := server.NewWithGrokAuth(cfg, log, store, backends, grokTokens)
+	srv := server.NewWithAccountAuth(cfg, log, store, backends, grokTokens, workBuddyTokens)
 	defer func() { _ = srv.Close() }()
 
 	httpServer := &http.Server{

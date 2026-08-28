@@ -17,6 +17,7 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/auth"
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
+	workbuddybackend "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/sirupsen/logrus"
 )
@@ -33,6 +34,7 @@ type Server struct {
 	metrics        *Metrics
 	stats          *Stats
 	grokAuth       *grokbackend.Manager
+	workBuddyAuth  *workbuddybackend.Manager
 	catalogs       catalogCache
 	grokUsageMu    sync.Mutex
 	grokUsageValue *grokbackend.UsageView
@@ -46,16 +48,21 @@ const (
 // New builds a Server. backends must already be constructed from cfg entries
 // in config order; auth may be nil for unauthenticated loopback deployments.
 func New(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend) *Server {
-	return newServer(cfg, log, store, backends, nil)
+	return newServer(cfg, log, store, backends, nil, nil)
 }
 
 // NewWithGrokAuth wires the xAI account session into the browser-only sign-in
 // page as well as the Grok backend.
 func NewWithGrokAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager) *Server {
-	return newServer(cfg, log, store, backends, grokAuth)
+	return newServer(cfg, log, store, backends, grokAuth, nil)
 }
 
-func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager) *Server {
+// NewWithAccountAuth wires browser sign-in for subscription backends.
+func NewWithAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager) *Server {
+	return newServer(cfg, log, store, backends, grokAuth, workBuddyAuth)
+}
+
+func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager) *Server {
 	if log == nil {
 		log = logrus.StandardLogger()
 	}
@@ -76,16 +83,17 @@ func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, ba
 		log.WithError(err).Warn("stats persistence load failed; starting with empty stats")
 	}
 	return &Server{
-		cfg:      cfg,
-		log:      log,
-		auth:     store,
-		backends: backends,
-		byName:   byName,
-		updates:  updates,
-		metrics:  metrics,
-		stats:    stats,
-		grokAuth: grokAuth,
-		catalogs: newCatalogCache(),
+		cfg:           cfg,
+		log:           log,
+		auth:          store,
+		backends:      backends,
+		byName:        byName,
+		updates:       updates,
+		metrics:       metrics,
+		stats:         stats,
+		grokAuth:      grokAuth,
+		workBuddyAuth: workBuddyAuth,
+		catalogs:      newCatalogCache(),
 	}
 }
 
@@ -108,6 +116,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/updates/sse", s.handleUpdatesSSE)
 	mux.HandleFunc("GET /login", s.grokLoginPage)
 	mux.HandleFunc("POST /login", s.grokLogin)
+	mux.HandleFunc("GET /login/workbuddy", s.workBuddyLoginPage)
+	mux.HandleFunc("POST /login/workbuddy", s.workBuddyLogin)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics.handler())

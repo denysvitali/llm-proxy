@@ -126,11 +126,7 @@ func (c *Config) Defaults() {
 	if c.WorkBuddyAuthFile == "" {
 		home, err := os.UserHomeDir()
 		if err == nil {
-			if local := os.Getenv("LOCALAPPDATA"); local != "" {
-				c.WorkBuddyAuthFile = filepath.Join(local, "CodeBuddyExtension", "Data", "Public", "auth", "workbuddy-desktop.info")
-			} else {
-				c.WorkBuddyAuthFile = filepath.Join(home, ".workbuddy", "auth", "workbuddy-desktop.info")
-			}
+			c.WorkBuddyAuthFile = filepath.Join(home, ".config", "llm-proxy", "workbuddy-auth.json")
 		}
 	}
 	if c.Server.Listen == "" {

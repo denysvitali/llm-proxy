@@ -7,9 +7,9 @@ configured backends, translating between API shapes when needed.
 
 Access control is two-sided: end users authenticate to the proxy with their own
 API keys (each user can hold any number of keys), while ordinary upstream
-provider keys are configured once, per backend, server-side. Grok is different:
-it uses an xAI account session and coding subscription signed in from the web
-dashboard; Grok has no upstream API-key setting.
+provider keys are configured once, per backend, server-side. Subscription-backed
+Grok and WorkBuddy instead use account sessions signed in from the web dashboard,
+not upstream API keys.
 
 > [!IMPORTANT]
 > Each backend is a separate service with its own terms of service. Check that
@@ -73,20 +73,19 @@ seconds upstream; stream anything longer.
 
 ### WorkBuddy
 
-Install WorkBuddy and sign in with the account that owns your subscription,
-then enable the backend without an API key:
+Enable the backend without an API key:
 
 ```yaml
 backends:
   - type: workbuddy
 ```
 
-On Windows the session is discovered at
-`%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info`.
-Override `workbuddy_auth_file` at the top level when WorkBuddy stores it
-elsewhere. The file is read for every request, so signing in again does not
-require restarting the proxy. Models are read from WorkBuddy's local catalog;
-use qualified names such as `workbuddy/auto` or `workbuddy/glm-5.1`.
+Start the proxy, open `http://127.0.0.1:8090/login/workbuddy`, and choose
+**Sign in with WorkBuddy**. Complete WorkBuddy's Google or GitHub browser
+authorization. The proxy stores and refreshes its own account session, so the
+WorkBuddy desktop application is not required. Override `workbuddy_auth_file`
+at the top level to change where that session is stored. Use qualified model
+names such as `workbuddy/auto` or `workbuddy/glm-5.1`.
 
 WorkBuddy exposes a streaming-only Chat Completions service internally. The
 proxy aggregates it for non-streaming clients and uses the existing translation
@@ -350,10 +349,11 @@ flags are applied afterwards.
 | `stats.redis_url`            | `LLM_PROXY_STATS_REDIS_URL`          | *(empty)*              | Redis/Valkey URL for shared stats and cross-instance dashboard notifications. When set, this replaces local JSON stats persistence. |
 | `stats.redis_key_prefix`     | `LLM_PROXY_STATS_REDIS_KEY_PREFIX`   | `llm-proxy:stats:`     | Prefix used to isolate this proxy's stats keys and Pub/Sub channel in a shared Redis/Valkey instance. |
 | `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `nous`, `openrouter`); at most one backend per type. |
+| `workbuddy_auth_file`        | `LLM_PROXY_WORKBUDDY_AUTH_FILE`    | `~/.config/llm-proxy/workbuddy-auth.json` | Account session created by the WorkBuddy browser sign-in flow. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
-| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key (not supported for `grok`). |
-| `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok`).                   |
+| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key (not supported for `grok` or `workbuddy`). |
+| `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok` or `workbuddy`).    |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
 | `backends[].fallbacks`       | —                                    | —                        | Alternate backends (with optional model rewrites) tried when this backend fails before anything reaches the client. |
@@ -431,6 +431,7 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET    | `/api/updates/ws`             | WebSocket stream of stats-change events for the dashboard |
 | GET    | `/api/updates/sse`             | Server-Sent-Events twin of the WebSocket, for transports that cannot upgrade |
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
+| GET/POST | `/login/workbuddy`          | Web-only WorkBuddy account sign-in |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |
