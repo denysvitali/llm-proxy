@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://copilot.tencent.com"
+	defaultBaseURL = "https://www.codebuddy.ai"
 	clientVersion  = "2.110.0"
 )
 
@@ -131,7 +131,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, err
 	}
-	setHeaders(httpReq.Header, token)
+	setHeaders(httpReq.Header, token, c.BaseURL)
 	if credentials.AccessToken != "" {
 		setAccountHeaders(httpReq.Header, credentials)
 	}
@@ -206,7 +206,7 @@ func randomHex(n int) string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
-func setHeaders(h http.Header, token string) {
+func setHeaders(h http.Header, token, baseURL string) {
 	trace, span, parent := randomHex(32), randomHex(16), randomHex(16)
 	h.Set("Authorization", "Bearer "+token)
 	h.Set("X-API-Key", token)
@@ -240,8 +240,9 @@ func setHeaders(h http.Header, token string) {
 	h.Set("X-Stainless-Lang", "js")
 	h.Set("X-Stainless-OS", runtime.GOOS)
 	h.Set("User-Agent", "CLI/"+clientVersion+" CodeBuddy/"+clientVersion)
-	h.Set("Origin", "https://www.codebuddy.cn")
-	h.Set("Referer", "https://www.codebuddy.cn/")
+	origin := strings.TrimRight(baseURL, "/")
+	h.Set("Origin", origin)
+	h.Set("Referer", origin+"/")
 }
 
 func setAccountHeaders(h http.Header, credentials Credentials) {

@@ -27,10 +27,14 @@ func TestSessionReadsDesktopLogin(t *testing.T) {
 
 func TestSendUsesPrivateChatEndpointAndAggregatesStream(t *testing.T) {
 	var gotPath string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		if r.Header.Get("Authorization") != "Bearer account-token" || r.Header.Get("X-CodeBuddy-Request") != "1" {
 			t.Errorf("missing WorkBuddy auth/fingerprint headers: %v", r.Header)
+		}
+		if r.Header.Get("Origin") != server.URL {
+			t.Errorf("origin = %q, want %q", r.Header.Get("Origin"), server.URL)
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)

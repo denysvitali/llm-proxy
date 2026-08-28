@@ -25,7 +25,7 @@ not upstream API keys.
 | `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
-| `workbuddy` | WorkBuddy account subscription   | Chat Completions                         | Reuses the signed-in WorkBuddy desktop session; Anthropic and Responses requests are translated server-side. |
+| `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
@@ -72,6 +72,9 @@ Non-streaming requests cap `max_tokens` at 32768 and time out around 600
 seconds upstream; stream anything longer.
 
 ### WorkBuddy
+
+This backend targets **CodeBuddy International** at `www.codebuddy.ai`, not
+the China deployment at `copilot.tencent.com` / `codebuddy.cn`.
 
 Enable the backend without an API key:
 

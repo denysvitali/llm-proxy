@@ -221,8 +221,9 @@ func (m *Manager) do(ctx context.Context, client *http.Client, method, path stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("Origin", "https://www.codebuddy.cn")
-	req.Header.Set("Referer", "https://www.codebuddy.cn/")
+	origin := strings.TrimRight(m.BaseURL, "/")
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Referer", origin+"/")
 	req.Header.Set("User-Agent", "CLI/"+clientVersion+" CodeBuddy/"+clientVersion)
 	for k, values := range headers {
 		for _, value := range values {

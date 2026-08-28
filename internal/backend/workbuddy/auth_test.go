@@ -13,6 +13,9 @@ import (
 func TestBrowserLoginAndRefresh(t *testing.T) {
 	var refreshCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "http://"+r.Host {
+			t.Errorf("origin = %q", r.Header.Get("Origin"))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		var data any
 		switch r.URL.Path {
