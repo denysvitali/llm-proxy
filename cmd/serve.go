@@ -57,10 +57,6 @@ func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
 	return buildBackendsWithTokenSources(cfg, grokbackend.NewManager(cfg.GrokAuthFile), workbuddybackend.NewSession(cfg.WorkBuddyAuthFile))
 }
 
-func buildBackendsWithTokenSource(cfg *config.Config, tokens backend.TokenSource) ([]backend.Backend, error) {
-	return buildBackendsWithTokenSources(cfg, tokens, nil)
-}
-
 func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyTokens backend.TokenSource) ([]backend.Backend, error) {
 	out := make([]backend.Backend, 0, len(cfg.Backends))
 	for _, bc := range cfg.EnabledBackends() {
