@@ -25,6 +25,21 @@ func TestSessionReadsDesktopLogin(t *testing.T) {
 	}
 }
 
+func TestFallbackModelsIncludeHy3(t *testing.T) {
+	c := New("", nil)
+	c.Home = t.TempDir()
+	models, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range models {
+		if model == "hy3" {
+			return
+		}
+	}
+	t.Fatalf("fallback models do not include hy3: %v", models)
+}
+
 func TestSendUsesPrivateChatEndpointAndAggregatesStream(t *testing.T) {
 	var gotPath string
 	var server *httptest.Server

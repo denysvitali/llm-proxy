@@ -27,7 +27,7 @@ const (
 	clientVersion  = "2.110.0"
 )
 
-var fallbackModels = []string{"auto", "glm-5v-turbo", "glm-5.1", "glm-5.0-turbo", "glm-5.0", "glm-4.7", "kimi-k2.5", "minimax-m2.7", "deepseek-v3-2-volc"}
+var fallbackModels = []string{"auto", "hy3", "glm-5v-turbo", "glm-5.1", "glm-5.0-turbo", "glm-5.0", "glm-4.7", "kimi-k2.5", "minimax-m2.7", "deepseek-v3-2-volc"}
 
 type Client struct {
 	BaseURL string
