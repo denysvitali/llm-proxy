@@ -363,7 +363,7 @@ flags are applied afterwards.
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
 | `backends[].fallbacks`       | —                                    | —                        | Alternate backends (with optional model rewrites) tried when this backend fails before anything reaches the client. |
-| `backends[].retry_attempts`  | —                                    | `10`                     | Extra connection-phase attempts after a transient upstream failure.        |
+| `backends[].retry_attempts`  | —                                    | `3`                      | Extra connection-phase attempts after a transient upstream failure.        |
 | `backends[].retry_max_backoff` | —                                  | `30s`                    | Cap on a single retry pause (exponential backoff and provider `Retry-After`). |
 | `routes.<model>.backend`     | —                                    | —                        | Backend serving this inbound model name.                                    |
 | `routes.<model>.model`       | —                                    | inbound model name       | Upstream model name sent to the backend.                                    |

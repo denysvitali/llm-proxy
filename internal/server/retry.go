@@ -50,7 +50,7 @@ const (
 	// see. They remain bounded so a permanently unhealthy upstream cannot
 	// keep a request alive forever. Per-backend override:
 	// backends[].retry_attempts.
-	defaultRetryAttempts = 10
+	defaultRetryAttempts = 3
 	// defaultRetryMaxBackoff caps provider-supplied Retry-After delays and
 	// the exponential backoff so a bad or extreme header cannot stall
 	// requests indefinitely. Per-backend override: backends[].retry_max_backoff.
@@ -150,18 +150,27 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 			break
 		}
 		failed := s.stats.track(backendName, model)
+		var retryLog logrus.FieldLogger = log
 		if resp != nil {
 			failed.setUpstreamStatus(resp.Status)
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorRelay))
 			_ = resp.Body.Close()
 			failed.noteUpstreamError(body)
+			retryLog = retryLog.WithFields(logrus.Fields{
+				"upstream_status": resp.Status,
+				"upstream_error":  upstreamErrorSummary(body),
+			})
 		} else if err != nil {
 			failed.noteTransportError(err)
+			retryLog = retryLog.WithError(err)
 		}
 		failed.done()
 		attempts++
 		s.metrics.noteRetryAttempt(retryPhaseConnect, backendName, model)
-		log.WithError(err).WithField("attempt", attempts+1).Warn("upstream unavailable; retrying")
+		retryLog.WithFields(logrus.Fields{
+			"attempt":      attempts + 1,
+			"max_attempts": budget.attempts + 1,
+		}).Warn("upstream unavailable; retrying")
 		paused := true
 		if resp != nil {
 			if delay, ok := retryAfter(resp.Header, budget.maxBackoff); ok && delay > retryDelay(attempt, budget.maxBackoff) {

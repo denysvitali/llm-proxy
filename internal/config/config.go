@@ -39,7 +39,7 @@ type BackendConfig struct {
 	Fallbacks []FallbackRoute `mapstructure:"fallbacks"`
 	// RetryAttempts caps the extra connection-phase attempts made after a
 	// transient upstream failure while nothing has been forwarded. Zero means
-	// the built-in default (10).
+	// the built-in default (3).
 	RetryAttempts int `mapstructure:"retry_attempts"`
 	// RetryMaxBackoff caps a single retry pause (exponential backoff from
 	// 750ms, and provider Retry-After values). Zero means 30s.
