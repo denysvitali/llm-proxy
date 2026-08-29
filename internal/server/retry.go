@@ -150,7 +150,7 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 			break
 		}
 		failed := s.stats.track(backendName, model)
-		var retryLog logrus.FieldLogger = log
+		retryLog := log
 		if resp != nil {
 			failed.setUpstreamStatus(resp.Status)
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorRelay))
