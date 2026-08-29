@@ -72,3 +72,10 @@ type ModelWireOverrider interface {
 	// shape natively for this specific model.
 	SupportsModel(kind Kind, model string) bool
 }
+
+// RequestPreviewer optionally exposes the final body a backend will put on
+// the wire. The admin request inspector uses it for backends that normalize
+// the server-prepared payload inside Send.
+type RequestPreviewer interface {
+	PreviewRequest(req *Request) ([]byte, error)
+}

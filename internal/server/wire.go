@@ -426,6 +426,13 @@ func (s *Server) exchange(
 		Header:    header,
 		Streaming: env.streaming,
 	}
+	inspectedPayload := payload
+	if previewer, ok := rt.backend.(backend.RequestPreviewer); ok {
+		if preview, err := previewer.PreviewRequest(req); err == nil {
+			inspectedPayload = preview
+		}
+	}
+	s.stats.inspect(tr, RequestID(r.Context()), string(wireFormat), env.body, inspectedPayload)
 	// Every attempt's body is sniffed against the same tracker: usage fields
 	// fold by high-water mark, so a recovered retry keeps its stats and a
 	// discarded partial one cannot inflate them. All sniffers close when

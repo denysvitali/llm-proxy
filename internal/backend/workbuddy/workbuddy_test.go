@@ -135,6 +135,18 @@ func TestNormalizeRequestSanitizesForeignChannelIdentity(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequestSanitizesCaseVariantsAndToolDescriptions(t *testing.T) {
+	b, err := normalizeRequest([]byte(`{"model":"hy3","messages":[{"role":"system","content":"You are CLAUDE-code by anthropic."}],"tools":[{"type":"function","function":{"name":"x","description":"Used by codex cli and OPENAI","parameters":{"type":"object"}}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"CLAUDE", "anthropic", "codex", "OPENAI"} {
+		if strings.Contains(string(b), forbidden) {
+			t.Fatalf("normalized request still contains %q: %s", forbidden, b)
+		}
+	}
+}
+
 type staticToken string
 
 func (s staticToken) AccessToken(context.Context) (string, error) { return string(s), nil }

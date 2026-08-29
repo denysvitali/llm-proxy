@@ -3,17 +3,20 @@ import {
   Box,
   Alert,
   Badge,
+  Button,
   Card,
   Code,
   Divider,
   Group,
   Loader,
+  Modal,
   Progress,
   Paper,
   ScrollArea,
   SimpleGrid,
   Stack,
   Table,
+  Tabs,
   Text,
   ThemeIcon,
   Title,
@@ -32,9 +35,9 @@ import { BarChart, LineChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import type { UseQueryResult } from '@tanstack/react-query'
-import { fetchGrokUsage, fetchOverview, fetchStats, fetchStatsSeries, fetchUpstreamErrors } from '../api'
+import { fetchGrokUsage, fetchOverview, fetchRequest, fetchRequests, fetchStats, fetchStatsSeries, fetchUpstreamErrors } from '../api'
 import { useLiveStatsUpdates } from '../useLiveUpdates'
-import type { GrokUsage, ModelStat, SeriesPoint, UpstreamErrorEvent } from '../api'
+import type { GrokUsage, InspectedRequest, ModelStat, SeriesPoint, UpstreamErrorEvent } from '../api'
 import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
 import { SegmentedControl } from '@mantine/core'
@@ -68,6 +71,7 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
     retry: 1,
   })
+  const requestsQ = useQuery({ queryKey: ['recent-requests'], queryFn: fetchRequests, refetchInterval: 30_000 })
 
   const models = statsQ.data?.models ?? []
   const pal = useChartPalette()
@@ -128,6 +132,8 @@ export default function OverviewPage() {
         {errorsQ.data && errorsQ.data.errors.length > 0 && (
           <UpstreamErrorsCard errors={errorsQ.data.errors} />
         )}
+
+        <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} />
 
         <Card withBorder radius="lg" p="md">
           <Group justify="space-between" align="center" wrap="wrap" gap="sm" mb={12}>
@@ -657,6 +663,7 @@ function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
                     {e.message}
                   </Text>
                 )}
+                {e.request_id && <RequestInspectButton id={e.request_id} />}
               </Box>
             </Group>
           </Paper>
@@ -667,6 +674,64 @@ function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
       </Stack>
     </Card>
   )
+}
+
+function RecentRequestsCard({ requests, loading }: { requests: InspectedRequest[]; loading: boolean }) {
+  return (
+    <Card withBorder radius="lg" p="md">
+      <Group justify="space-between" mb={10}>
+        <Title order={5}>Recent requests</Title>
+        <Text size="xs" c="dimmed">Last {requests.length} upstream attempts</Text>
+      </Group>
+      {loading ? <Group justify="center" py="sm"><Loader size="sm" /></Group> : requests.length === 0 ? (
+        <Text size="sm" c="dimmed">No requests captured since this proxy instance started.</Text>
+      ) : (
+        <ScrollArea>
+          <Table verticalSpacing="xs">
+            <Table.Thead><Table.Tr><Table.Th>Time</Table.Th><Table.Th>Backend / model</Table.Th><Table.Th>Status</Table.Th><Table.Th /></Table.Tr></Table.Thead>
+            <Table.Tbody>{requests.slice(0, 10).map((request) => (
+              <Table.Tr key={request.id}>
+                <Table.Td><Text size="xs" c="dimmed">{formatEventTime(request.at)}</Text></Table.Td>
+                <Table.Td><Text size="sm">{request.backend} / {request.model}</Text></Table.Td>
+                <Table.Td><StatusBadge status={request.status} /></Table.Td>
+                <Table.Td ta="right"><RequestInspectButton id={request.id} /></Table.Td>
+              </Table.Tr>
+            ))}</Table.Tbody>
+          </Table>
+        </ScrollArea>
+      )}
+    </Card>
+  )
+}
+
+function RequestInspectButton({ id }: { id: string }) {
+  const [opened, setOpened] = useState(false)
+  const query = useQuery({ queryKey: ['request', id], queryFn: () => fetchRequest(id), enabled: opened, retry: 1 })
+  return <>
+    <Button size="compact-xs" variant="subtle" onClick={() => setOpened(true)}>Inspect request</Button>
+    <Modal opened={opened} onClose={() => setOpened(false)} title="Request inspection" size="xl">
+      {query.isPending ? <Group justify="center" py="xl"><Loader size="sm" /></Group> : query.isError ? (
+        <Alert color="red">This request is no longer available. The in-memory history keeps the latest 50 attempts per instance.</Alert>
+      ) : query.data ? <RequestDetail request={query.data} /> : null}
+    </Modal>
+  </>
+}
+
+function RequestDetail({ request }: { request: InspectedRequest }) {
+  return <Stack gap="sm">
+    <Group gap="xs"><StatusBadge status={request.status} /><Text size="sm">{request.backend} / {request.model}</Text></Group>
+    <Text size="xs" c="dimmed">Proxy request ID: {request.proxy_request_id || 'unavailable'} · wire format: {request.kind || 'unknown'}</Text>
+    {request.error && <Alert color="red" variant="light">{request.error}</Alert>}
+    <Tabs defaultValue="client">
+      <Tabs.List><Tabs.Tab value="client">Client request</Tabs.Tab><Tabs.Tab value="upstream">Upstream request</Tabs.Tab></Tabs.List>
+      <Tabs.Panel value="client" pt="sm"><RequestJSON value={request.client_request} /></Tabs.Panel>
+      <Tabs.Panel value="upstream" pt="sm"><RequestJSON value={request.upstream_request} /></Tabs.Panel>
+    </Tabs>
+  </Stack>
+}
+
+function RequestJSON({ value }: { value: unknown }) {
+  return <ScrollArea h={460}><Code block>{value === undefined ? 'Not captured' : JSON.stringify(value, null, 2)}</Code></ScrollArea>
 }
 
 function StatusBadge({ status }: { status: string }) {

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -187,6 +188,12 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	return &backend.Response{Status: resp.StatusCode, Header: header, Body: io.NopCloser(bytes.NewReader(aggregated))}, nil
 }
 
+// PreviewRequest returns the body Send will transmit after WorkBuddy's
+// required stream, channel-identity, tool-choice, and schema normalization.
+func (c *Client) PreviewRequest(req *backend.Request) ([]byte, error) {
+	return normalizeRequest(req.RawBody)
+}
+
 func (c *Client) credentials(ctx context.Context) (Credentials, string, error) {
 	if source, ok := c.Tokens.(interface {
 		Credentials(context.Context) (Credentials, error)
@@ -223,6 +230,9 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 		for _, item := range tools {
 			if tool, ok := item.(map[string]any); ok {
 				if fn, ok := tool["function"].(map[string]any); ok {
+					if description, ok := fn["description"].(string); ok {
+						fn["description"] = sanitizeChannelText(description)
+					}
 					if schema, ok := fn["parameters"].(map[string]any); ok {
 						sanitizeSchema(schema)
 					}
@@ -233,27 +243,24 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 	return json.Marshal(body)
 }
 
+var foreignChannelIdentity = regexp.MustCompile(`(?i)\b(?:claude(?:[ -](?:code|agent sdk))?|anthropic|codex(?: cli)?|openai)\b`)
+
+func sanitizeChannelText(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "x-anthropic-billing-header:") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return foreignChannelIdentity.ReplaceAllString(strings.Join(kept, "\n"), "coding assistant")
+}
+
 func sanitizeChannelIdentity(content any) any {
 	switch value := content.(type) {
 	case string:
-		lines := strings.Split(value, "\n")
-		kept := lines[:0]
-		for _, line := range lines {
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "x-anthropic-billing-header:") {
-				continue
-			}
-			kept = append(kept, line)
-		}
-		text := strings.Join(kept, "\n")
-		return strings.NewReplacer(
-			"Claude Agent SDK", "agent SDK",
-			"Claude Code", "coding assistant",
-			"Claude", "assistant",
-			"Anthropic", "the model provider",
-			"Codex CLI", "coding CLI",
-			"Codex", "coding agent",
-			"OpenAI", "the model provider",
-		).Replace(text)
+		return sanitizeChannelText(value)
 	case []any:
 		for _, item := range value {
 			block, _ := item.(map[string]any)

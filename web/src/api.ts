@@ -33,7 +33,23 @@ export interface UpstreamErrorEvent {
   model: string
   status: string // HTTP code as text; "error" = the request never got a response
   message?: string
+  request_id?: string
 }
+
+export interface InspectedRequest {
+  id: string
+  at: string
+  proxy_request_id?: string
+  backend: string
+  model: string
+  kind?: string
+  status: string
+  error?: string
+  client_request?: unknown
+  upstream_request?: unknown
+}
+
+export interface RequestsResponse { requests: InspectedRequest[] }
 
 export interface UpstreamErrorsResponse {
   errors: UpstreamErrorEvent[]
@@ -161,4 +177,12 @@ export function fetchGrokUsage(): Promise<GrokUsage> {
 
 export function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {
   return getJSON<UpstreamErrorsResponse>('/api/stats/errors')
+}
+
+export function fetchRequests(): Promise<RequestsResponse> {
+  return getJSON<RequestsResponse>('/api/requests')
+}
+
+export function fetchRequest(id: string): Promise<InspectedRequest> {
+  return getJSON<InspectedRequest>(`/api/requests/${encodeURIComponent(id)}`)
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -165,5 +166,27 @@ func TestStatsErrorsEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(payload.Errors[0].Message, "502") {
 		t.Fatalf("message = %q, want status fallback text", payload.Errors[0].Message)
+	}
+}
+
+func TestRequestInspectionListsMetadataAndServesBodies(t *testing.T) {
+	st := newStats(prometheus.NewRegistry(), config.StatsConfig{})
+	tr := st.track("workbuddy", "hy3")
+	st.inspect(tr, "proxy-1", string(backend.KindOpenAIChat), []byte(`{"model":"workbuddy/hy3"}`), []byte(`{"model":"hy3"}`))
+	tr.setUpstreamStatus(http.StatusBadRequest)
+	tr.noteUpstreamError([]byte(`{"msg":"rejected"}`))
+	tr.done()
+
+	list := st.RecentRequests()
+	if len(list) != 1 || list[0].ID == "" || list[0].ClientRequest != nil || list[0].UpstreamRequest != nil {
+		t.Fatalf("RecentRequests() = %+v", list)
+	}
+	detail, ok := st.Request(list[0].ID)
+	if !ok || string(detail.ClientRequest) != `{"model":"workbuddy/hy3"}` || string(detail.UpstreamRequest) != `{"model":"hy3"}` {
+		t.Fatalf("Request() = %+v, %v", detail, ok)
+	}
+	errors := st.RecentUpstreamErrors()
+	if len(errors) != 1 || errors[0].RequestID != list[0].ID {
+		t.Fatalf("RecentUpstreamErrors() = %+v", errors)
 	}
 }

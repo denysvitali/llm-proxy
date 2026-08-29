@@ -47,8 +47,10 @@ type Stats struct {
 	// recentMu protects recent. It is a bounded ring of the latest upstream
 	// failures for the dashboard's "recent errors" view; older entries roll
 	// off instead of growing without bound.
-	recentMu sync.Mutex
-	recent   []UpstreamErrorEvent
+	recentMu   sync.Mutex
+	recent     []UpstreamErrorEvent
+	inspected  []InspectedRequest
+	requestSeq atomic.Uint64
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -135,6 +137,7 @@ type tracker struct {
 	bodyFail bool   // a 2xx reply turned out to carry an error object
 	rep      usageReport
 	finished bool
+	request  InspectedRequest
 }
 
 // markBodyFailure flags an HTTP-success reply whose body is an error object
@@ -197,6 +200,10 @@ func (t *tracker) done() {
 	}
 	t.finished = true
 	now := time.Now()
+	t.request.At = now
+	t.request.Status = t.status
+	t.request.Error = t.errMsg
+	t.st.recordRequest(t.request)
 
 	t.st.requests.WithLabelValues(t.labels[0], t.labels[1], t.status).Inc()
 	t.st.tokens.WithLabelValues(t.labels[0], t.labels[1], tokenInput).Add(float64(t.rep.input))
@@ -209,7 +216,7 @@ func (t *tracker) done() {
 
 	success := t.successStatus()
 	if !success {
-		t.st.recordFailure(t.labels[0], t.labels[1], t.status, t.errMsg)
+		t.st.recordFailure(t.labels[0], t.labels[1], t.status, t.errMsg, t.request.ID)
 	}
 	if t.status == statusError || t.bodyFail {
 		// Record the request — lifetime counters and current bucket — without
@@ -641,11 +648,27 @@ type ModelStat struct {
 // feed: which backend/model failed, with what status and what the upstream
 // (or transport) said about it.
 type UpstreamErrorEvent struct {
-	At      time.Time `json:"at"`
-	Backend string    `json:"backend"`
-	Model   string    `json:"model"`
-	Status  string    `json:"status"` // HTTP code as text; "error" = no response at all
-	Message string    `json:"message,omitempty"`
+	At        time.Time `json:"at"`
+	Backend   string    `json:"backend"`
+	Model     string    `json:"model"`
+	Status    string    `json:"status"` // HTTP code as text; "error" = no response at all
+	Message   string    `json:"message,omitempty"`
+	RequestID string    `json:"request_id,omitempty"`
+}
+
+// InspectedRequest is one bounded, recent upstream attempt available to the
+// admin dashboard. Bodies are retained in memory only and are never persisted.
+type InspectedRequest struct {
+	ID              string          `json:"id"`
+	At              time.Time       `json:"at"`
+	ProxyRequestID  string          `json:"proxy_request_id,omitempty"`
+	Backend         string          `json:"backend"`
+	Model           string          `json:"model"`
+	Kind            string          `json:"kind,omitempty"`
+	Status          string          `json:"status"`
+	Error           string          `json:"error,omitempty"`
+	ClientRequest   json.RawMessage `json:"client_request,omitempty"`
+	UpstreamRequest json.RawMessage `json:"upstream_request,omitempty"`
 }
 
 // maxRecentErrors caps the shared ring of recent upstream failures.
@@ -653,7 +676,7 @@ const maxRecentErrors = 50
 
 // recordFailure counts one non-2xx (or transport-failed) request into the
 // per-model status counters, its current bucket, Redis, and the recent ring.
-func (st *Stats) recordFailure(backend, model, status, message string) {
+func (st *Stats) recordFailure(backend, model, status, message, requestID string) {
 	if message == "" && status != "" {
 		message = "upstream returned status " + status
 	}
@@ -670,11 +693,12 @@ func (st *Stats) recordFailure(backend, model, status, message string) {
 	st.recordRedisStatus(backend, model, status)
 
 	ev := UpstreamErrorEvent{
-		At:      time.Now(),
-		Backend: backend,
-		Model:   model,
-		Status:  status,
-		Message: message,
+		At:        time.Now(),
+		Backend:   backend,
+		Model:     model,
+		Status:    status,
+		Message:   message,
+		RequestID: requestID,
 	}
 	st.recentMu.Lock()
 	st.recent = append(st.recent, ev)
@@ -682,6 +706,63 @@ func (st *Stats) recordFailure(backend, model, status, message string) {
 		st.recent = st.recent[n-maxRecentErrors:]
 	}
 	st.recentMu.Unlock()
+}
+
+const maxInspectedRequestBody = 1 << 20
+
+func boundedJSON(body []byte) json.RawMessage {
+	if len(body) == 0 {
+		return nil
+	}
+	if len(body) > maxInspectedRequestBody {
+		return json.RawMessage(strconv.Quote(fmt.Sprintf("request omitted: %d bytes exceeds 1 MiB inspection limit", len(body))))
+	}
+	return append(json.RawMessage(nil), body...)
+}
+
+func (st *Stats) inspect(tr *tracker, proxyID, kind string, clientBody, upstreamBody []byte) {
+	seq := st.requestSeq.Add(1)
+	tr.request = InspectedRequest{
+		ID: fmt.Sprintf("%d-%d", time.Now().UnixNano(), seq), ProxyRequestID: proxyID,
+		Backend: tr.labels[0], Model: tr.labels[1], Kind: kind,
+		ClientRequest: boundedJSON(clientBody), UpstreamRequest: boundedJSON(upstreamBody),
+	}
+}
+
+func (st *Stats) recordRequest(req InspectedRequest) {
+	if req.ID == "" {
+		return
+	}
+	st.recentMu.Lock()
+	defer st.recentMu.Unlock()
+	st.inspected = append(st.inspected, req)
+	if n := len(st.inspected); n > maxRecentErrors {
+		st.inspected = st.inspected[n-maxRecentErrors:]
+	}
+}
+
+func (st *Stats) RecentRequests() []InspectedRequest {
+	st.recentMu.Lock()
+	defer st.recentMu.Unlock()
+	out := make([]InspectedRequest, 0, len(st.inspected))
+	for i := len(st.inspected) - 1; i >= 0; i-- {
+		r := st.inspected[i]
+		r.ClientRequest = nil
+		r.UpstreamRequest = nil
+		out = append(out, r)
+	}
+	return out
+}
+
+func (st *Stats) Request(id string) (InspectedRequest, bool) {
+	st.recentMu.Lock()
+	defer st.recentMu.Unlock()
+	for i := len(st.inspected) - 1; i >= 0; i-- {
+		if st.inspected[i].ID == id {
+			return st.inspected[i], true
+		}
+	}
+	return InspectedRequest{}, false
 }
 
 // statusesCountInMemory bumps the Prometheus status counter.
@@ -1587,6 +1668,19 @@ func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 // upstream failures (newest first), for the dashboard's error feed.
 func (s *Server) handleStatsErrors(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"errors": s.stats.RecentUpstreamErrors()})
+}
+
+func (s *Server) handleRequests(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"requests": s.stats.RecentRequests()})
+}
+
+func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.stats.Request(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "request not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, req)
 }
 
 // handleStatsBackendSeries serves GET /api/stats/backends/{backend}?range=...
