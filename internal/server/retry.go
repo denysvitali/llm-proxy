@@ -100,16 +100,17 @@ type errReader struct{ err error }
 func (r errReader) Read([]byte) (int, error) { return 0, r.err }
 
 // retryableUpstream reports whether a connection-phase outcome deserves
-// another attempt: transport errors always, and statuses the client must
-// never see while nothing has been forwarded — gateway failures (502/503/504)
-// plus providers that use 429/422 as transient overload signals.
+// another attempt: transport errors always, and the server-side gateway
+// statuses the client must never see while nothing has been forwarded
+// (502/503/504). Every 4xx is relayed to the client on the first attempt
+// instead: a rate limit or an invalid request is the upstream's answer for
+// this request, not a transient fault, so retrying it only stalls the client.
 func retryableUpstream(resp *backend.Response, err error) bool {
 	if err != nil {
 		return true
 	}
 	switch resp.Status {
-	case http.StatusTooManyRequests, http.StatusUnprocessableEntity,
-		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false

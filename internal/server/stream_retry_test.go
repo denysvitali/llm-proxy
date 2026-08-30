@@ -42,16 +42,6 @@ func newScripted(kind backend.Kind, steps ...step) *scriptedBackend {
 	}
 }
 
-// persistentRetrySteps queues defaultRetryAttempts failures followed by a final
-// successful attempt.
-func persistentRetrySteps(status int, body string, final step) []step {
-	steps := make([]step, 0, defaultRetryAttempts+1)
-	for range defaultRetryAttempts {
-		steps = append(steps, step{resp: unavailableResponse(status, body)})
-	}
-	return append(steps, final)
-}
-
 func (b *scriptedBackend) Name() string { return b.name }
 
 func (b *scriptedBackend) Models(context.Context) ([]string, error) {
@@ -353,42 +343,32 @@ func TestMessagesRetriesConnectPhase(t *testing.T) {
 	})
 }
 
-// TestResponsesAlwaysRetriesUnprocessableEntity covers providers that use 422
-// as a persistent overload signal. Codex otherwise treats that status as fatal
-// even though no response bytes have been forwarded yet.
-func TestResponsesAlwaysRetriesUnprocessableEntity(t *testing.T) {
+// TestResponsesRelaysUnprocessableEntityImmediately covers the no-4xx-retry
+// contract: a 422 is the upstream's answer for this exact request, so it
+// reaches the client on the first attempt instead of burning the retry
+// budget stalling behind a failure that will not heal.
+func TestResponsesRelaysUnprocessableEntityImmediately(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		upstream := newScripted(backend.KindOpenAIResponses,
-			persistentRetrySteps(
-				http.StatusUnprocessableEntity,
-				`{"error":{"message":"temporarily unavailable"}}`,
-				step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
-			)...)
+			step{resp: unavailableResponse(http.StatusUnprocessableEntity, `{"error":{"message":"unprocessable"}}`)},
+			step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
+		)
 		s := newMsgServerWith(t, upstream)
 
-		recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
-
 		rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
-		if rec.Code != http.StatusOK {
+		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
-		if upstream.callCount() != defaultRetryAttempts+1 {
-			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), defaultRetryAttempts+1)
+		if upstream.callCount() != 1 {
+			t.Fatalf("upstream attempts = %d, want 1", upstream.callCount())
 		}
-		body := rec.Body.String()
-		if !strings.Contains(body, "response.completed") {
-			t.Fatalf("retried Responses stream incomplete:\n%s", body)
-		}
-		if strings.Contains(body, "422") || strings.Contains(body, "temporarily unavailable") {
-			t.Fatalf("pre-output 422 should remain invisible to the client:\n%s", body)
-		}
-		if recovered() < 1 {
-			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+		if !strings.Contains(rec.Body.String(), "unprocessable") {
+			t.Fatalf("upstream 422 body should be relayed verbatim:\n%s", rec.Body.String())
 		}
 	})
 }
 
-// unavailableResponse builds a JSON error response for a retryable status.
+// unavailableResponse builds a JSON error response with the given status.
 func unavailableResponse(status int, body string) *backend.Response {
 	return &backend.Response{
 		Status: status,
@@ -397,48 +377,40 @@ func unavailableResponse(status int, body string) *backend.Response {
 	}
 }
 
-// TestResponsesAlwaysRetriesTooManyRequests ensures rate-limit failures are
-// hidden from clients across every provider-supplied attempt.
-func TestResponsesAlwaysRetriesTooManyRequests(t *testing.T) {
+// TestResponsesRelaysTooManyRequestsImmediately ensures rate-limit failures
+// are answered, not retried: a 429 body carries the upstream's own account
+// guidance, which no amount of backoff will change within one request.
+func TestResponsesRelaysTooManyRequestsImmediately(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		upstream := newScripted(backend.KindOpenAIResponses, persistentRetrySteps(
-			http.StatusTooManyRequests,
-			`{"error":{"message":"rate limited"}}`,
+		upstream := newScripted(backend.KindOpenAIResponses,
+			step{resp: unavailableResponse(http.StatusTooManyRequests, `{"error":{"message":"rate limited"}}`)},
 			step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
-		)...)
+		)
 		s := newMsgServerWith(t, upstream)
 
-		recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
-
 		rec := postMsg(t, s, "/v1/responses", `{"model":"m1","stream":true,"input":"hi"}`)
-		if rec.Code != http.StatusOK {
+		if rec.Code != http.StatusTooManyRequests {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
-		if upstream.callCount() != defaultRetryAttempts+1 {
-			t.Fatalf("upstream attempts = %d, want %d", upstream.callCount(), defaultRetryAttempts+1)
+		if upstream.callCount() != 1 {
+			t.Fatalf("upstream attempts = %d, want 1", upstream.callCount())
 		}
-		if !strings.Contains(rec.Body.String(), "response.completed") {
-			t.Fatalf("retried Responses stream incomplete:\n%s", rec.Body.String())
-		}
-		if strings.Contains(rec.Body.String(), "rate limited") {
-			t.Fatalf("pre-output rate-limit failure should remain invisible:\n%s", rec.Body.String())
-		}
-		if recovered() < 1 {
-			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+		if !strings.Contains(rec.Body.String(), "rate limited") {
+			t.Fatalf("upstream 429 body should be relayed verbatim:\n%s", rec.Body.String())
 		}
 	})
 }
 
-// TestResponsesRetriesTooManyRequestsHonorsRetryAfter ensures provider rate-
-// limit guidance is respected without allowing an unbounded client wait.
-func TestResponsesRetriesTooManyRequestsHonorsRetryAfter(t *testing.T) {
+// TestResponsesRetryHonorsRetryAfter ensures provider backoff guidance on a
+// retryable 5xx is respected without allowing an unbounded client wait.
+func TestResponsesRetryHonorsRetryAfter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		before := time.Now()
 		upstream := newScripted(backend.KindOpenAIResponses,
 			step{resp: &backend.Response{
-				Status: http.StatusTooManyRequests,
+				Status: http.StatusServiceUnavailable,
 				Header: http.Header{"Retry-After": []string{"1"}},
-				Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+				Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"overloaded"}}`)),
 			}},
 			step{resp: sseResponse("text/event-stream", fullResponsesSSE)},
 		)
