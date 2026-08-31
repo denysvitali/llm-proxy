@@ -70,7 +70,7 @@ func (s *Server) grokLogin(w http.ResponseWriter, r *http.Request) {
 func writeLoginMessage(w http.ResponseWriter, message string) {
 	if target, ok := strings.CutPrefix(message, "Open: "); ok {
 		escaped := html.EscapeString(target)
-		_, _ = fmt.Fprintf(w, `<div><a href="%s" target="_blank" rel="noreferrer">Continue to xAI</a></div>`, escaped)
+		_, _ = fmt.Fprintf(w, `<div><a href="%s" target="_blank" rel="noreferrer">Continue in browser</a></div>`, escaped)
 		return
 	}
 	_, _ = fmt.Fprintf(w, `<div>%s</div>`, html.EscapeString(message))

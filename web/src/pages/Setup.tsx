@@ -71,6 +71,13 @@ export default function SetupPage() {
             </Alert>
           )}
 
+          {ov.backends.some((b) => b.name === 'codex') && (
+            <Alert color="gray" variant="light" title="Codex uses your ChatGPT account">
+              Codex does not use an upstream API key.{' '}
+              <a href="/login/codex">Sign in with ChatGPT</a> using a one-time device code.
+            </Alert>
+          )}
+
           <Card withBorder radius="lg" p={0}>
             <Tabs defaultValue="claude" keepMounted={false}>
               <Tabs.List px="md" pt={6}>

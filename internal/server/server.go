@@ -16,6 +16,7 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/auth"
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	codexbackend "github.com/denysvitali/llm-proxy/internal/backend/codex"
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	workbuddybackend "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
 	"github.com/denysvitali/llm-proxy/internal/config"
@@ -35,6 +36,7 @@ type Server struct {
 	stats          *Stats
 	grokAuth       *grokbackend.Manager
 	workBuddyAuth  *workbuddybackend.Manager
+	codexAuth      *codexbackend.Manager
 	catalogs       catalogCache
 	grokUsageMu    sync.Mutex
 	grokUsageValue *grokbackend.UsageView
@@ -48,21 +50,26 @@ const (
 // New builds a Server. backends must already be constructed from cfg entries
 // in config order; auth may be nil for unauthenticated loopback deployments.
 func New(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend) *Server {
-	return newServer(cfg, log, store, backends, nil, nil)
+	return newServer(cfg, log, store, backends, nil, nil, nil)
 }
 
 // NewWithGrokAuth wires the xAI account session into the browser-only sign-in
 // page as well as the Grok backend.
 func NewWithGrokAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager) *Server {
-	return newServer(cfg, log, store, backends, grokAuth, nil)
+	return newServer(cfg, log, store, backends, grokAuth, nil, nil)
 }
 
 // NewWithAccountAuth wires browser sign-in for subscription backends.
 func NewWithAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager) *Server {
-	return newServer(cfg, log, store, backends, grokAuth, workBuddyAuth)
+	return newServer(cfg, log, store, backends, grokAuth, workBuddyAuth, nil)
 }
 
-func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager) *Server {
+// NewWithAllAccountAuth wires browser sign-in for every subscription backend.
+func NewWithAllAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager, codexAuth *codexbackend.Manager) *Server {
+	return newServer(cfg, log, store, backends, grokAuth, workBuddyAuth, codexAuth)
+}
+
+func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager, codexAuth *codexbackend.Manager) *Server {
 	if log == nil {
 		log = logrus.StandardLogger()
 	}
@@ -93,6 +100,7 @@ func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, ba
 		stats:         stats,
 		grokAuth:      grokAuth,
 		workBuddyAuth: workBuddyAuth,
+		codexAuth:     codexAuth,
 		catalogs:      newCatalogCache(),
 	}
 }
@@ -120,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login", s.grokLogin)
 	mux.HandleFunc("GET /login/workbuddy", s.workBuddyLoginPage)
 	mux.HandleFunc("POST /login/workbuddy", s.workBuddyLogin)
+	mux.HandleFunc("GET /login/codex", s.codexLoginPage)
+	mux.HandleFunc("POST /login/codex", s.codexLogin)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics.handler())

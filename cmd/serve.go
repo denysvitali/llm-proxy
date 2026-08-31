@@ -14,6 +14,7 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/auth"
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/all"
+	codexbackend "github.com/denysvitali/llm-proxy/internal/backend/codex"
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	workbuddybackend "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
 	"github.com/denysvitali/llm-proxy/internal/config"
@@ -54,16 +55,16 @@ func init() {
 // buildBackends constructs the enabled backends in configuration order via
 // the backend registry.
 func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
-	return buildBackendsWithTokenSources(cfg, grokbackend.NewManager(cfg.GrokAuthFile), workbuddybackend.NewSession(cfg.WorkBuddyAuthFile))
+	return buildBackendsWithTokenSources(cfg, grokbackend.NewManager(cfg.GrokAuthFile), workbuddybackend.NewSession(cfg.WorkBuddyAuthFile), codexbackend.NewManager(cfg.CodexAuthFile))
 }
 
-func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyTokens backend.TokenSource) ([]backend.Backend, error) {
+func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyTokens, codexTokens backend.TokenSource) ([]backend.Backend, error) {
 	out := make([]backend.Backend, 0, len(cfg.Backends))
 	for _, bc := range cfg.EnabledBackends() {
 		b, err := backend.New(bc.Type, backend.Options{
 			BaseURL:     bc.BaseURL,
 			APIKey:      bc.ResolveKey(os.Getenv),
-			TokenSource: tokensForBackend(bc.Type, grokTokens, workBuddyTokens),
+			TokenSource: tokensForBackend(bc.Type, grokTokens, workBuddyTokens, codexTokens),
 			FreeOnly:    bc.FreeOnly,
 		})
 		if err != nil {
@@ -74,12 +75,15 @@ func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyToke
 	return out, nil
 }
 
-func tokensForBackend(name string, grokTokens, workBuddyTokens backend.TokenSource) backend.TokenSource {
+func tokensForBackend(name string, grokTokens, workBuddyTokens, codexTokens backend.TokenSource) backend.TokenSource {
 	if name == "grok" {
 		return grokTokens
 	}
 	if name == "workbuddy" {
 		return workBuddyTokens
+	}
+	if name == "codex" {
+		return codexTokens
 	}
 	return nil
 }
@@ -110,7 +114,8 @@ func runServe(cfg *config.Config) error {
 
 	grokTokens := grokbackend.NewManager(cfg.GrokAuthFile)
 	workBuddyTokens := workbuddybackend.NewManager(cfg.WorkBuddyAuthFile)
-	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workBuddyTokens)
+	codexTokens := codexbackend.NewManager(cfg.CodexAuthFile)
+	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workBuddyTokens, codexTokens)
 	if err != nil {
 		return err
 	}
@@ -131,7 +136,7 @@ func runServe(cfg *config.Config) error {
 		}()
 	}
 
-	srv := server.NewWithAccountAuth(cfg, log, store, backends, grokTokens, workBuddyTokens)
+	srv := server.NewWithAllAccountAuth(cfg, log, store, backends, grokTokens, workBuddyTokens, codexTokens)
 	defer func() { _ = srv.Close() }()
 
 	httpServer := &http.Server{

@@ -8,7 +8,7 @@ configured backends, translating between API shapes when needed.
 Access control is two-sided: end users authenticate to the proxy with their own
 API keys (each user can hold any number of keys), while ordinary upstream
 provider keys are configured once, per backend, server-side. Subscription-backed
-Grok and WorkBuddy instead use account sessions signed in from the web dashboard,
+Grok, WorkBuddy, and Codex instead use account sessions signed in from the web dashboard,
 not upstream API keys.
 
 > [!IMPORTANT]
@@ -26,6 +26,7 @@ not upstream API keys.
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
+| `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
@@ -98,6 +99,28 @@ proxy aggregates it for non-streaming clients and uses the existing translation
 matrix for Claude Code (`/v1/messages`) and Codex (`/v1/responses`). This is an
 undocumented private endpoint and may change with a WorkBuddy update. Confirm
 that this use is permitted by WorkBuddy's terms for your account.
+
+### Codex subscription
+
+Enable Codex without an upstream API key:
+
+```yaml
+backends:
+  - type: codex
+```
+
+Start the proxy, open `http://127.0.0.1:8090/login/codex`, and choose
+**Sign in with ChatGPT**. OpenAI displays a one-time device code; approve it
+with the ChatGPT account and workspace whose Codex subscription you want to
+use. Device-code login must be enabled in the account's ChatGPT security
+settings or by its workspace administrator.
+
+The session is stored at `~/.config/llm-proxy/codex-auth.json` with mode
+`0600` and refreshed automatically. Override `codex_auth_file` at the top
+level to change the path. The live authenticated catalog is cached for five
+minutes, and models are available as `codex/<model>`. The backend calls
+ChatGPT's Codex Responses service, so Chat Completions and Anthropic Messages
+clients use the proxy's normal translation paths.
 
 ### OpenRouter
 
@@ -178,6 +201,8 @@ push to `main` and for `v*` tags.
    device authorization with the xAI account that owns the coding subscription;
    the session is stored in `~/.config/grok-proxy/auth.json` and refreshed by
    the proxy. Grok account sign-in is available from this web page only.
+   For a `codex` backend, open `http://127.0.0.1:8090/login/codex` and complete
+   the ChatGPT device-code flow instead.
 
 3. Create a user and mint an API key. The plaintext key starts with `llx_`,
    grants access to everything the proxy can reach, and is shown exactly once:
@@ -356,10 +381,11 @@ flags are applied afterwards.
 | `stats.redis_key_prefix`     | `LLM_PROXY_STATS_REDIS_KEY_PREFIX`   | `llm-proxy:stats:`     | Prefix used to isolate this proxy's stats keys and Pub/Sub channel in a shared Redis/Valkey instance. |
 | `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
 | `workbuddy_auth_file`        | `LLM_PROXY_WORKBUDDY_AUTH_FILE`    | `~/.config/llm-proxy/workbuddy-auth.json` | Account session created by the WorkBuddy browser sign-in flow. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `nous`, `openrouter`); at most one backend per type. |
+| `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
-| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key (not supported for `grok` or `workbuddy`). |
-| `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok` or `workbuddy`).    |
+| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key (not supported for `grok`, `workbuddy`, or `codex`). |
+| `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok`, `workbuddy`, or `codex`). |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
 | `backends[].fallbacks`       | —                                    | —                        | Alternate backends (with optional model rewrites) tried when this backend fails before anything reaches the client. |
@@ -438,6 +464,7 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET    | `/api/updates/sse`             | Server-Sent-Events twin of the WebSocket, for transports that cannot upgrade |
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
 | GET/POST | `/login/workbuddy`          | Web-only WorkBuddy account sign-in |
+| GET/POST | `/login/codex`              | ChatGPT device-code sign-in for Codex |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |

@@ -6,6 +6,7 @@ package all
 
 import (
 	_ "github.com/denysvitali/llm-proxy/internal/backend/apodex"
+	_ "github.com/denysvitali/llm-proxy/internal/backend/codex"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/nous"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/opencode"

@@ -98,11 +98,14 @@ type Config struct {
 	GrokAuthFile string `mapstructure:"grok_auth_file"`
 	// WorkBuddyAuthFile is the WorkBuddy desktop session. The proxy reads it
 	// on every request, so signing in or switching accounts needs no restart.
-	WorkBuddyAuthFile string          `mapstructure:"workbuddy_auth_file"`
-	Server            ServerConfig    `mapstructure:"server"`
-	Auth              AuthConfig      `mapstructure:"auth"`
-	Backends          []BackendConfig `mapstructure:"backends"`
-	Stats             StatsConfig     `mapstructure:"stats"`
+	WorkBuddyAuthFile string `mapstructure:"workbuddy_auth_file"`
+	// CodexAuthFile stores the ChatGPT OAuth session used by the Codex
+	// subscription backend. It is populated by device-code login.
+	CodexAuthFile string          `mapstructure:"codex_auth_file"`
+	Server        ServerConfig    `mapstructure:"server"`
+	Auth          AuthConfig      `mapstructure:"auth"`
+	Backends      []BackendConfig `mapstructure:"backends"`
+	Stats         StatsConfig     `mapstructure:"stats"`
 
 	// Routes maps inbound model name -> explicit route. Models not listed are
 	// matched against each enabled backend's catalog (first match wins in
@@ -127,6 +130,12 @@ func (c *Config) Defaults() {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			c.WorkBuddyAuthFile = filepath.Join(home, ".config", "llm-proxy", "workbuddy-auth.json")
+		}
+	}
+	if c.CodexAuthFile == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			c.CodexAuthFile = filepath.Join(home, ".config", "llm-proxy", "codex-auth.json")
 		}
 	}
 	if c.Server.Listen == "" {

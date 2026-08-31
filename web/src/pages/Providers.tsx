@@ -222,14 +222,14 @@ function ProviderCard({
           </Group>
           <Code>{b.host}</Code>
           <Group gap="sm" wrap="wrap" mt={8}>
-            {b.name === 'grok' || b.name === 'workbuddy' ? (
+            {b.name === 'grok' || b.name === 'workbuddy' || b.name === 'codex' ? (
               <Group gap="xs">
                 <StatusDot
                   ok={b.authConfigured}
-                  okLabel={`${b.name === 'grok' ? 'xAI' : 'WorkBuddy'} account signed in`}
-                  badLabel={`${b.name === 'grok' ? 'xAI' : 'WorkBuddy'} account not signed in`}
+                  okLabel={`${b.name === 'grok' ? 'xAI' : b.name === 'codex' ? 'ChatGPT' : 'WorkBuddy'} account signed in`}
+                  badLabel={`${b.name === 'grok' ? 'xAI' : b.name === 'codex' ? 'ChatGPT' : 'WorkBuddy'} account not signed in`}
                 />
-                <Button component="a" href={b.name === 'grok' ? '/login' : '/login/workbuddy'} size="compact-xs" variant="light">
+                <Button component="a" href={b.name === 'grok' ? '/login' : `/login/${b.name}`} size="compact-xs" variant="light">
                   {b.authConfigured ? 'Sign in again' : 'Sign in'}
                 </Button>
               </Group>
