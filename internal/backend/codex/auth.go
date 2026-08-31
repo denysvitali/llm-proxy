@@ -122,14 +122,14 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 		return Credentials{}, err
 	}
 	if credentials == nil || credentials.AccessToken == "" {
-		return Credentials{}, errors.New("not signed in to Codex; use the dashboard to sign in with ChatGPT")
+		return Credentials{}, errors.New("not signed in to codex; use the dashboard to sign in with ChatGPT")
 	}
 	if credentials.ExpiresAt == 0 {
 		credentials.ExpiresAt, _ = jwtExpiration(credentials.AccessToken)
 	}
 	if credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(5*time.Minute).Unix() {
 		if credentials.RefreshToken == "" {
-			return Credentials{}, errors.New("Codex session expired; sign in again from the dashboard")
+			return Credentials{}, errors.New("codex session expired; sign in again from the dashboard")
 		}
 		if err := m.refresh(ctx, credentials); err != nil {
 			return Credentials{}, err
@@ -142,7 +142,7 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 		credentials.AccountID, _ = jwtAccountID(credentials.IDToken)
 	}
 	if credentials.AccountID == "" {
-		return Credentials{}, errors.New("Codex session has no ChatGPT account ID; sign in again")
+		return Credentials{}, errors.New("codex session has no ChatGPT account ID; sign in again")
 	}
 	return *credentials, nil
 }
@@ -192,7 +192,7 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 		return fmt.Errorf("request Codex device code: %w", err)
 	}
 	if device.DeviceAuthID == "" || device.UserCode == "" {
-		return errors.New("Codex device authorization omitted the device or user code")
+		return errors.New("codex device authorization omitted the device or user code")
 	}
 	announce("Open: " + issuer + "/codex/device")
 	announce("Code: " + device.UserCode)
@@ -223,7 +223,7 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 		return fmt.Errorf("poll Codex device authorization: %w", err)
 	}
 	if authorization.AuthorizationCode == "" || authorization.CodeVerifier == "" {
-		return errors.New("Codex device authorization expired")
+		return errors.New("codex device authorization expired")
 	}
 
 	values := url.Values{

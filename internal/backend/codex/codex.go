@@ -111,7 +111,7 @@ func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
 		}
 	}
 	if len(models) == 0 {
-		return nil, errors.New("Codex model catalog is empty")
+		return nil, errors.New("codex model catalog is empty")
 	}
 	return models, nil
 }
@@ -197,7 +197,7 @@ func aggregateResponsesSSE(body io.Reader) ([]byte, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return nil, errors.New("Codex stream ended without response.completed")
+	return nil, errors.New("codex stream ended without response.completed")
 }
 
 func (c *Client) credentials(ctx context.Context) (Credentials, error) {
