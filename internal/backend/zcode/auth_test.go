@@ -121,8 +121,9 @@ func TestAccessTokenRequiresUnexpiredSession(t *testing.T) {
 	}
 }
 
-func TestCaptchaVerifyParamIsShortLivedAndNotPersisted(t *testing.T) {
-	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+func TestCaptchaVerifyParamIsShortLivedAndShared(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "zcode-auth.json")
+	manager := NewManager(path)
 	if _, err := manager.CaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA verification is required") {
 		t.Fatalf("CaptchaVerifyParam() error = %v, want missing-verification error", err)
 	}
@@ -136,17 +137,36 @@ func TestCaptchaVerifyParamIsShortLivedAndNotPersisted(t *testing.T) {
 	if got != "fresh-param" {
 		t.Errorf("CaptchaVerifyParam() = %q, want fresh-param", got)
 	}
-	manager.captchaMu.Lock()
-	manager.captchaAt = time.Now().Add(-captchaTTL)
-	manager.captchaMu.Unlock()
+	otherReplica := NewManager(path)
+	got, err = otherReplica.CaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatalf("other replica CaptchaVerifyParam() error = %v", err)
+	}
+	if got != "fresh-param" {
+		t.Errorf("other replica CaptchaVerifyParam() = %q, want fresh-param", got)
+	}
+	stale, err := json.Marshal(captchaRecord{VerifyParam: "stale-param", IssuedAt: time.Now().Add(-captchaTTL)})
+	if err != nil {
+		t.Fatalf("marshal stale CAPTCHA record: %v", err)
+	}
+	if err := writePrivateFile(path+captchaFileSuffix, append(stale, '\n')); err != nil {
+		t.Fatalf("write stale CAPTCHA record: %v", err)
+	}
 	if _, err := manager.CaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA verification is required") {
 		t.Fatalf("expired CaptchaVerifyParam() error = %v, want missing-verification error", err)
 	}
 	if err := manager.SetCaptchaVerifyParam(" "); err == nil {
 		t.Error("SetCaptchaVerifyParam(whitespace) succeeded, want error")
 	}
+	manager.InvalidateCaptcha("fresh-param")
+	if _, err := manager.CaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA verification is required") {
+		t.Fatalf("invalidated CaptchaVerifyParam() error = %v, want missing-verification error", err)
+	}
+	if _, err := os.Stat(path + captchaFileSuffix); !os.IsNotExist(err) {
+		t.Fatalf("invalidated CAPTCHA file still exists at %s", path+captchaFileSuffix)
+	}
 	if _, err := os.Stat(manager.Store.Path); !os.IsNotExist(err) {
-		t.Fatalf("CAPTCHA value was persisted at %s", manager.Store.Path)
+		t.Fatalf("CAPTCHA value was persisted in the credential file at %s", manager.Store.Path)
 	}
 }
 

@@ -8,7 +8,9 @@ package zcode
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -25,8 +27,8 @@ const (
 	anthropicVersion = "2023-06-01"
 
 	// zcodeAppVersion and the identity headers below match the headers used by
-	// the ZCode client. The inbound request can override runtime values when it
-	// already comes from a ZCode client.
+	// the ZCode client. They are fixed so an arbitrary inbound client cannot
+	// create an inconsistent identity that triggers the gateway's abuse checks.
 	zcodeAppVersion = "3.0.1"
 
 	aliyunCaptchaHeader = "X-Aliyun-Captcha-Verify-Param"
@@ -37,6 +39,10 @@ const (
 // contract used by unrelated providers.
 type captchaSource interface {
 	CaptchaVerifyParam(context.Context) (string, error)
+}
+
+type captchaInvalidator interface {
+	InvalidateCaptcha(string)
 }
 
 // defaultModels is the model included in the currently published Start Plan
@@ -136,19 +142,32 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if req.Kind == backend.KindAnthropic {
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	}
-	if param := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader)); param != "" {
-		httpReq.Header.Set(aliyunCaptchaHeader, param)
-	} else if source, ok := c.Tokens.(captchaSource); ok {
-		param, err := source.CaptchaVerifyParam(ctx)
-		if err != nil {
-			return nil, err
+	captchaParam := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader))
+	if source, ok := c.Tokens.(captchaSource); ok {
+		// Prefer the proxy's newest proof. Client applications can retain a
+		// previous header across retries, while the manager knows which proof
+		// was most recently generated for this proxy session.
+		param, sourceErr := source.CaptchaVerifyParam(ctx)
+		if sourceErr == nil {
+			captchaParam = param
+		} else if captchaParam == "" {
+			return nil, sourceErr
 		}
-		httpReq.Header.Set(aliyunCaptchaHeader, param)
+	}
+	if captchaParam != "" {
+		httpReq.Header.Set(aliyunCaptchaHeader, captchaParam)
 	}
 	copyRuntimeHeaders(httpReq.Header, req.Header)
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to ZCode failed: %w", err)
+	}
+	var captchaRejected bool
+	captchaRejected, resp.Body = inspectCaptchaRejection(resp.StatusCode, resp.Body)
+	if captchaRejected {
+		if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
+			invalidator.InvalidateCaptcha(captchaParam)
+		}
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
@@ -159,7 +178,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 // transport owns connection headers.
 func copyRuntimeHeaders(dst, src http.Header) {
 	for name, values := range src {
-		if !isRuntimeHeader(name) {
+		if !isRuntimeHeader(name) || strings.EqualFold(name, aliyunCaptchaHeader) {
 			continue
 		}
 		copied := false
@@ -186,14 +205,33 @@ func isRuntimeHeader(name string) bool {
 		"x-session-id",
 		"x-device-mid",
 		"x-os-category",
-		"x-os-version",
-		"x-zcode-app-version",
-		"x-zcode-agent",
-		"x-zcode-trace-id":
+		"x-os-version":
 		return true
 	default:
 		return false
 	}
+}
+
+// inspectCaptchaRejection identifies the ZCode responses that make the
+// current proof unusable. Error responses are buffered and restored so the
+// normal server path still relays ZCode's original body to the client.
+func inspectCaptchaRejection(status int, body io.ReadCloser) (bool, io.ReadCloser) {
+	if status != http.StatusBadRequest && status != http.StatusMethodNotAllowed {
+		return false, body
+	}
+	b, err := io.ReadAll(io.LimitReader(body, 1<<20))
+	_ = body.Close()
+	replay := io.NopCloser(bytes.NewReader(b))
+	if err != nil {
+		return false, replay
+	}
+	var envelope struct {
+		Code json.Number `json:"code"`
+	}
+	if err := json.Unmarshal(b, &envelope); err != nil {
+		return false, replay
+	}
+	return envelope.Code.String() == "3007" || envelope.Code.String() == "3012", replay
 }
 
 // Models returns the models included in the Start Plan catalog known to this

@@ -119,7 +119,15 @@ func runServe(cfg *config.Config) error {
 	grokTokens := grokbackend.NewManager(cfg.GrokAuthFile)
 	workBuddyTokens := workbuddybackend.NewManager(cfg.WorkBuddyAuthFile)
 	codexTokens := codexbackend.NewManager(cfg.CodexAuthFile)
-	zcodeTokens := zcodebackend.NewManager(cfg.ZCodeAuthFile)
+	var zcodeCaptchaStore *zcodebackend.ValkeyCaptchaStore
+	if cfg.Stats.RedisURL != "" && zcodeEnabled(cfg) {
+		zcodeCaptchaStore, err = zcodebackend.NewValkeyCaptchaStore(cfg.Stats.RedisURL, cfg.Stats.RedisKeyPrefix)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = zcodeCaptchaStore.Close() }()
+	}
+	zcodeTokens := zcodebackend.NewManagerWithCaptchaStore(cfg.ZCodeAuthFile, zcodeCaptchaStore)
 	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workBuddyTokens, codexTokens, zcodeTokens)
 	if err != nil {
 		return err
@@ -174,6 +182,15 @@ func runServe(cfg *config.Config) error {
 		}
 		return err
 	}
+}
+
+func zcodeEnabled(cfg *config.Config) bool {
+	for _, bc := range cfg.EnabledBackends() {
+		if strings.EqualFold(bc.Type, "zcode") {
+			return true
+		}
+	}
+	return false
 }
 
 func backendNames(bs []backend.Backend) []string {

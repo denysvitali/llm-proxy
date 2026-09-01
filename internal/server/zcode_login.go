@@ -76,7 +76,7 @@ func (s *Server) zcodeCaptcha(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid CAPTCHA verification request"})
 		return
 	}
-	if err := s.zcodeAuth.SetCaptchaVerifyParam(request.VerifyParam); err != nil {
+	if err := s.zcodeAuth.SetCaptchaVerifyParamContext(r.Context(), request.VerifyParam); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

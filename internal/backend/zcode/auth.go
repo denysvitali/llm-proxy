@@ -30,7 +30,18 @@ const (
 	// usual lifetime. A fresh browser verification is cheap compared with
 	// sending a stale parameter and receiving code 3007 from ZCode.
 	captchaTTL = 40 * time.Second
+
+	captchaFileSuffix = ".captcha"
 )
+
+// CaptchaStore is the optional shared store used to pass the short-lived
+// browser proof between proxy replicas. Implementations must not log or
+// expose the parameter.
+type CaptchaStore interface {
+	Set(context.Context, string, time.Time) error
+	Get(context.Context) (string, time.Time, error)
+	DeleteIfMatch(context.Context, string, time.Time) error
+}
 
 // Credentials is the ZCode session returned after browser authorization.
 // The token is a ZCode JWT, not a Z.ai API key.
@@ -99,12 +110,22 @@ type Manager struct {
 	Issuer     string
 	HTTPClient *http.Client
 	mu         sync.Mutex
-	captchaMu  sync.RWMutex
-	captcha    string
-	captchaAt  time.Time
+	captcha    CaptchaStore
+}
+
+type captchaRecord struct {
+	VerifyParam string    `json:"verify_param"`
+	IssuedAt    time.Time `json:"issued_at"`
 }
 
 func NewManager(path string) *Manager {
+	return NewManagerWithCaptchaStore(path, nil)
+}
+
+// NewManagerWithCaptchaStore constructs a manager with an optional shared
+// CAPTCHA store. A nil store uses the private sidecar file next to the auth
+// file, which keeps local single-replica deployments self-contained.
+func NewManagerWithCaptchaStore(path string, captcha CaptchaStore) *Manager {
 	if path == "" {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json")
@@ -113,6 +134,7 @@ func NewManager(path string) *Manager {
 		Store:      &Store{Path: path},
 		Issuer:     Issuer,
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		captcha:    captcha,
 	}
 }
 
@@ -141,9 +163,17 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 }
 
 // SetCaptchaVerifyParam stores a browser-generated Aliyun verification
-// parameter for the short period in which ZCode accepts it. The parameter is
-// not written to disk: it is a disposable proof, not an account credential.
+// parameter for the short period in which ZCode accepts it. The short-lived
+// proof is written to the configured shared store when available, or beside
+// the session file for a local single-replica deployment. It is never
+// included in logs or API responses.
 func (m *Manager) SetCaptchaVerifyParam(param string) error {
+	return m.SetCaptchaVerifyParamContext(context.Background(), param)
+}
+
+// SetCaptchaVerifyParamContext is the request-context variant used by the
+// HTTP callback handler.
+func (m *Manager) SetCaptchaVerifyParamContext(ctx context.Context, param string) error {
 	param = strings.TrimSpace(param)
 	if param == "" {
 		return errors.New("cannot save an empty ZCode CAPTCHA verification parameter")
@@ -151,10 +181,18 @@ func (m *Manager) SetCaptchaVerifyParam(param string) error {
 	if len(param) > 64<<10 {
 		return errors.New("ZCode CAPTCHA verification parameter is too large")
 	}
-	m.captchaMu.Lock()
-	m.captcha = param
-	m.captchaAt = time.Now()
-	m.captchaMu.Unlock()
+	issuedAt := time.Now()
+	record, err := json.Marshal(captchaRecord{VerifyParam: param, IssuedAt: issuedAt})
+	if err != nil {
+		return fmt.Errorf("encode ZCode CAPTCHA verification parameter: %w", err)
+	}
+	if m.captcha != nil {
+		if err := m.captcha.Set(ctx, param, issuedAt); err != nil {
+			return fmt.Errorf("save ZCode CAPTCHA verification parameter: %w", err)
+		}
+	} else if err := writePrivateFile(m.captchaPath(), append(record, '\n')); err != nil {
+		return fmt.Errorf("save ZCode CAPTCHA verification parameter: %w", err)
+	}
 	return nil
 }
 
@@ -166,13 +204,124 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	default:
 	}
-	m.captchaMu.RLock()
-	param, issuedAt := m.captcha, m.captchaAt
-	m.captchaMu.RUnlock()
-	if param != "" && time.Since(issuedAt) < captchaTTL {
-		return param, nil
+	if m.captcha != nil {
+		param, issuedAt, err := m.captcha.Get(ctx)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+			}
+			return "", fmt.Errorf("read ZCode CAPTCHA verification parameter: %w", err)
+		}
+		age := time.Since(issuedAt)
+		if strings.TrimSpace(param) != "" && age >= 0 && age < captchaTTL {
+			return param, nil
+		}
+		_ = m.captcha.DeleteIfMatch(ctx, param, issuedAt)
+		return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+	}
+	if record, err := readCaptchaRecord(m.captchaPath()); err == nil {
+		age := time.Since(record.IssuedAt)
+		if record.VerifyParam != "" && age >= 0 && age < captchaTTL {
+			return record.VerifyParam, nil
+		}
+		removeCaptchaRecord(m.captchaPath(), record)
 	}
 	return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+}
+
+// InvalidateCaptcha clears a rejected proof, but only when it is still the
+// proof currently cached. A concurrent browser verification must not be
+// discarded just because an older request finished with an error.
+func (m *Manager) InvalidateCaptcha(param string) {
+	m.InvalidateCaptchaContext(context.Background(), param)
+}
+
+// InvalidateCaptchaContext removes a rejected proof without touching a newer
+// verification that may have arrived concurrently.
+func (m *Manager) InvalidateCaptchaContext(ctx context.Context, param string) {
+	param = strings.TrimSpace(param)
+	if param == "" {
+		return
+	}
+	if m.captcha != nil {
+		storedParam, issuedAt, err := m.captcha.Get(ctx)
+		if err == nil && storedParam == param {
+			_ = m.captcha.DeleteIfMatch(ctx, storedParam, issuedAt)
+		}
+		return
+	}
+	record, err := readCaptchaRecord(m.captchaPath())
+	if err == nil && record.VerifyParam == param {
+		removeCaptchaRecord(m.captchaPath(), record)
+	}
+}
+
+func (m *Manager) captchaPath() string {
+	if m == nil || m.Store == nil {
+		return ""
+	}
+	return m.Store.Path + captchaFileSuffix
+}
+
+func readCaptchaRecord(path string) (captchaRecord, error) {
+	if path == "" {
+		return captchaRecord{}, os.ErrNotExist
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return captchaRecord{}, err
+	}
+	var record captchaRecord
+	if err := json.Unmarshal(b, &record); err != nil {
+		return captchaRecord{}, err
+	}
+	return record, nil
+}
+
+func removeCaptchaRecord(path string, expected captchaRecord) {
+	record, err := readCaptchaRecord(path)
+	if err != nil || record.VerifyParam != expected.VerifyParam || !record.IssuedAt.Equal(expected.IssuedAt) {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// writePrivateFile atomically writes a mode-0600 file. A unique temporary
+// name matters when more than one proxy replica shares the credentials volume.
+func writePrivateFile(path string, data []byte) error {
+	if path == "" {
+		return errors.New("ZCode CAPTCHA verification path is empty")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	removeTemp := true
+	defer func() {
+		_ = tmp.Close()
+		if removeTemp {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	removeTemp = false
+	return os.Chmod(path, 0600)
 }
 
 type oauthEnvelope struct {

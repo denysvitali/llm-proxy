@@ -116,7 +116,7 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{
 			"X-Aliyun-Captcha-Verify-Param": "fresh-param",
-			"X-ZCode-App-Version":           "3.7.7",
+			"X-ZCode-App-Version":           zcodeAppVersion,
 			"X-ZCode-Agent":                 "glm",
 			"X-Title":                       "Z Code@test",
 		} {
@@ -147,6 +147,52 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 	_ = response.Body.Close()
+}
+
+type invalidatingTokenAndCaptchaSource struct {
+	invalidated string
+}
+
+func (s *invalidatingTokenAndCaptchaSource) AccessToken(context.Context) (string, error) {
+	return "session-token", nil
+}
+
+func (s *invalidatingTokenAndCaptchaSource) CaptchaVerifyParam(context.Context) (string, error) {
+	return "source-param", nil
+}
+
+func (s *invalidatingTokenAndCaptchaSource) InvalidateCaptcha(param string) {
+	s.invalidated = param
+}
+
+func TestSendInvalidatesRejectedCaptchaAndPreservesBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(aliyunCaptchaHeader); got != "source-param" {
+			t.Errorf("captcha header = %q, want source-param", got)
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = fmt.Fprint(w, `{"code":3012,"msg":"request has been blocked due to unusual activity."}`)
+	}))
+	defer server.Close()
+
+	source := &invalidatingTokenAndCaptchaSource{}
+	client := New(server.URL, "unused")
+	client.Tokens = source
+	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if string(body) != `{"code":3012,"msg":"request has been blocked due to unusual activity."}` {
+		t.Errorf("response body = %q, want original rejection", body)
+	}
+	if source.invalidated != "source-param" {
+		t.Errorf("invalidated captcha = %q, want source-param", source.invalidated)
+	}
 }
 
 func TestModels(t *testing.T) {
@@ -236,6 +282,7 @@ func TestSendUsesCaptchaSourceWhenClientDidNotProvideOne(t *testing.T) {
 	client.Tokens = staticTokenAndCaptchaSource{}
 	response, err := client.Send(context.Background(), &backend.Request{
 		Kind:    backend.KindOpenAIChat,
+		Header:  http.Header{aliyunCaptchaHeader: []string{"stale-client-param"}},
 		RawBody: []byte(`{"model":"glm-5.3-flash"}`),
 	})
 	if err != nil {
