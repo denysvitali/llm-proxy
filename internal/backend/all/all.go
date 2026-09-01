@@ -15,4 +15,5 @@ import (
 	_ "github.com/denysvitali/llm-proxy/internal/backend/openrouter"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/venice"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
+	_ "github.com/denysvitali/llm-proxy/internal/backend/zcode"
 )
