@@ -69,7 +69,7 @@ func (m *Manager) ClaimPlan(ctx context.Context, planID string) (ClaimOutcome, e
 	if err != nil {
 		return ClaimOutcome{}, fmt.Errorf("request ZCode plan claim: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return ClaimOutcome{}, fmt.Errorf("read ZCode plan claim response: %w", err)
