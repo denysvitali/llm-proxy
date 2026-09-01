@@ -28,7 +28,7 @@ func TestSupportsAndDefaults(t *testing.T) {
 		want bool
 	}{
 		{backend.KindAnthropic, true},
-		{backend.KindOpenAIChat, true},
+		{backend.KindOpenAIChat, false},
 		{backend.KindOpenAIResponses, false},
 		{"", false},
 	} {
@@ -55,13 +55,6 @@ func TestSendNativeEndpoints(t *testing.T) {
 			path:             "/anthropic/v1/messages",
 			wantAccept:       "application/json",
 			wantAnthropicVer: anthropicVersion,
-		},
-		{
-			name:       "chat completions streaming",
-			kind:       backend.KindOpenAIChat,
-			path:       "/chat/completions",
-			streaming:  true,
-			wantAccept: "text/event-stream",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -202,7 +195,7 @@ func TestSendInvalidatesRejectedCaptchaAndPreservesBody(t *testing.T) {
 	source := &invalidatingTokenAndCaptchaSource{}
 	client := New(server.URL, "unused")
 	client.Tokens = source
-	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat})
+	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
@@ -243,7 +236,7 @@ func TestSendRejectsMissingKeyAndUnsupportedKind(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "")
-	if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat}); err == nil || !strings.Contains(err.Error(), "no ZCode session") {
+	if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic}); err == nil || !strings.Contains(err.Error(), "no ZCode session") {
 		t.Fatalf("Send without key error = %v, want missing-key error", err)
 	}
 
@@ -284,7 +277,7 @@ func TestSendUsesTokenSourceInsteadOfConfiguredKey(t *testing.T) {
 	client := New(server.URL, "stale-configured-key")
 	client.Tokens = staticTokenSource("session-token")
 	response, err := client.Send(context.Background(), &backend.Request{
-		Kind:    backend.KindOpenAIChat,
+		Kind:    backend.KindAnthropic,
 		RawBody: []byte(`{"model":"glm-5.3-flash"}`),
 	})
 	if err != nil {
@@ -305,7 +298,7 @@ func TestSendUsesCaptchaSourceWhenClientDidNotProvideOne(t *testing.T) {
 	client := New(server.URL, "stale-configured-key")
 	client.Tokens = staticTokenAndCaptchaSource{}
 	response, err := client.Send(context.Background(), &backend.Request{
-		Kind:    backend.KindOpenAIChat,
+		Kind:    backend.KindAnthropic,
 		Header:  http.Header{aliyunCaptchaHeader: []string{"stale-client-param"}},
 		RawBody: []byte(`{"model":"glm-5.3-flash"}`),
 	})

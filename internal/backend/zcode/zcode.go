@@ -1,8 +1,9 @@
 // Package zcode implements the ZCode Start Plan backend.
 //
-// ZCode exposes Anthropic Messages and OpenAI Chat Completions endpoints under
-// the same plan gateway. The Start Plan JWT is sent as a bearer token; it is
-// not interchangeable with a Z.ai API key.
+// ZCode exposes the Anthropic Messages endpoint under its plan gateway. Other
+// client formats are translated to Messages by the proxy, matching current
+// ZCode clients. The Start Plan JWT is sent as a bearer token; it is not
+// interchangeable with a Z.ai API key.
 package zcode
 
 import (
@@ -92,18 +93,17 @@ func init() {
 
 func (c *Client) Name() string { return "zcode" }
 
-// Supports reports the two wire formats exposed by the ZCode plan gateway.
-// Responses API clients are translated by the proxy onto one of these paths.
+// Supports reports the wire format used by current ZCode clients. Advertising
+// the legacy Chat Completions path makes Responses requests prefer that path,
+// which the plan gateway rejects with code 3012.
 func (c *Client) Supports(kind backend.Kind) bool {
-	return kind == backend.KindAnthropic || kind == backend.KindOpenAIChat
+	return kind == backend.KindAnthropic
 }
 
 func endpoint(kind backend.Kind) (string, bool) {
 	switch kind {
 	case backend.KindAnthropic:
 		return "/anthropic/v1/messages", true
-	case backend.KindOpenAIChat:
-		return "/chat/completions", true
 	default:
 		return "", false
 	}

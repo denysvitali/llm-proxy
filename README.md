@@ -28,7 +28,7 @@ not upstream API keys.
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
-| `zcode`     | ZCode Start Plan                 | Anthropic Messages, Chat Completions     | Browser sign-in stores a ZCode session; Responses requests are translated server-side. |
+| `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
@@ -180,12 +180,13 @@ A fresh proxy verification takes precedence over a stale client-supplied
 device identity and the current ZCode platform/release headers; inbound
 clients cannot override those identity fields.
 
-The backend forwards Anthropic requests to
-`https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages` and OpenAI
-Chat Completions requests to
-`https://zcode.z.ai/api/v1/zcode-plan/chat/completions`. The current Start
-Plan catalog entry is `glm-5.3-flash`. To use another model that ZCode
-enables for the account, add an explicit route for it.
+The backend forwards requests to
+`https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`. Chat
+Completions and Responses requests are translated to Anthropic Messages
+before forwarding because ZCode's legacy `/chat/completions` plan route is no
+longer accepted. The current Start Plan catalog entry is `glm-5.3-flash`. To
+use another model that ZCode enables for the account, add an explicit route
+for it.
 
 This uses an undocumented provider gateway discovered from the ZCode client
 and may change with a ZCode release. Confirm that routing your own entitlement

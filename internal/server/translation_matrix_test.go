@@ -10,6 +10,7 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/backend/apodex"
+	"github.com/denysvitali/llm-proxy/internal/backend/zcode"
 	"github.com/denysvitali/llm-proxy/internal/config"
 )
 
@@ -20,6 +21,16 @@ import (
 const cannedAnthropicText = `{"id":"msg_1","model":"u-a",` +
 	`"content":[{"type":"text","text":"hi there"}],"stop_reason":"end_turn",` +
 	`"usage":{"input_tokens":3,"output_tokens":4}}`
+
+func TestResponsesClientUsesZCodeAnthropicWire(t *testing.T) {
+	wire, ok := resolveWire(backend.KindOpenAIResponses, zcode.New("", "session"), "glm-5.3-flash")
+	if !ok || wire.native || wire.path == nil {
+		t.Fatalf("resolveWire(Responses, ZCode) = %+v, %v; want translated wire", wire, ok)
+	}
+	if wire.path.kind != backend.KindAnthropic {
+		t.Fatalf("ZCode wire kind = %q, want Anthropic (legacy Chat route returns code 3012)", wire.path.kind)
+	}
+}
 
 func anthropicOnlyBackend(name string) *fakeOABackend {
 	return &fakeOABackend{
