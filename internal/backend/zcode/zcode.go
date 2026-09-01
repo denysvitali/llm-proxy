@@ -9,11 +9,13 @@ package zcode
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -34,7 +36,9 @@ const (
 	// create an inconsistent identity that triggers the gateway's abuse checks.
 	zcodeAppVersion = "3.10.0"
 
-	aliyunCaptchaHeader = "X-Aliyun-Captcha-Verify-Param"
+	aliyunCaptchaHeader       = "X-Aliyun-Captcha-Verify-Param"
+	aliyunCaptchaRegionHeader = "X-Aliyun-Captcha-Verify-Region"
+	aliyunCaptchaRegion       = "sgp"
 )
 
 // captchaSource is implemented by the ZCode account manager. Keeping this
@@ -125,7 +129,8 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("zcode backend has no ZCode session configured")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(req.RawBody))
+	requestBody := transformStartPlanRequest(req.RawBody)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, err
 	}
@@ -136,12 +141,18 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	httpReq.Header.Set("X-ZCode-Agent", "glm")
 	httpReq.Header.Set("X-Title", "Z Code@electron")
 	httpReq.Header.Set("HTTP-Referer", "https://zcode.z.ai")
-	httpReq.Header.Set("X-Platform", runtime.GOOS+"-"+runtime.GOARCH)
+	httpReq.Header.Set("X-Platform", runtime.GOOS+"-"+zcodeArch())
 	httpReq.Header.Set("X-Release-Channel", "production")
 	httpReq.Header.Set("X-Client-Language", "en")
 	httpReq.Header.Set("X-Client-Timezone", "UTC")
 	httpReq.Header.Set("X-Os-Category", runtime.GOOS)
+	if release := kernelRelease(); release != "" {
+		httpReq.Header.Set("X-Os-Version", release)
+	}
 	httpReq.Header.Set("X-Device-Mid", deviceMID(token))
+	httpReq.Header.Set("X-Request-Id", randomUUID())
+	httpReq.Header.Set("X-ZCode-Session-Type", "main")
+	httpReq.Header.Set("X-ZCode-Trace-Id", randomUUID())
 	accept := "application/json"
 	if req.Streaming {
 		accept = "text/event-stream"
@@ -164,6 +175,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 	if captchaParam != "" {
 		httpReq.Header.Set(aliyunCaptchaHeader, captchaParam)
+		httpReq.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
 	}
 	copyRuntimeHeaders(httpReq.Header, req.Header)
 	resp, err := c.HTTP.Do(httpReq)
@@ -185,7 +197,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 // request: a stable identity is required by ZCode's unusual-activity checks.
 func copyRuntimeHeaders(dst, src http.Header) {
 	for name, values := range src {
-		if !isRuntimeHeader(name) || strings.EqualFold(name, aliyunCaptchaHeader) {
+		if !isRuntimeHeader(name) || strings.EqualFold(name, aliyunCaptchaHeader) || strings.EqualFold(name, aliyunCaptchaRegionHeader) {
 			continue
 		}
 		copied := false
@@ -205,13 +217,44 @@ func isRuntimeHeader(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	switch lower {
 	case strings.ToLower(aliyunCaptchaHeader),
+		strings.ToLower(aliyunCaptchaRegionHeader),
 		"x-request-id",
 		"x-query-id",
-		"x-session-id":
+		"x-session-id",
+		"x-zcode-trace-id":
 		return true
 	default:
 		return false
 	}
+}
+
+func zcodeArch() string {
+	if runtime.GOARCH == "amd64" {
+		return "x64"
+	}
+	return runtime.GOARCH
+}
+
+func kernelRelease() string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	b, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func randomUUID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		sum := sha256.Sum256([]byte(time.Now().UTC().String()))
+		copy(raw[:], sum[:16])
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40
+	raw[8] = (raw[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", raw[0:4], raw[4:6], raw[6:8], raw[8:10], raw[10:16])
 }
 
 // deviceMID returns a stable, non-secret UUID-shaped identifier for a ZCode

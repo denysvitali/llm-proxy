@@ -41,6 +41,7 @@ func TestSupportsAndDefaults(t *testing.T) {
 func TestSendNativeEndpoints(t *testing.T) {
 	const requestBody = `{"model":"glm-5.3-flash","messages":[]}`
 	const responseBody = `{"id":"response-id"}`
+	wantRequestBody := transformStartPlanRequest([]byte(requestBody))
 	for _, test := range []struct {
 		name             string
 		kind             backend.Kind
@@ -66,8 +67,8 @@ func TestSendNativeEndpoints(t *testing.T) {
 				if err != nil {
 					t.Errorf("read request body: %v", err)
 				}
-				if !bytes.Equal(received, []byte(requestBody)) {
-					t.Errorf("request body = %q, want byte-for-byte %q", received, requestBody)
+				if !bytes.Equal(received, wantRequestBody) {
+					t.Errorf("request body = %q, want transformed body %q", received, wantRequestBody)
 				}
 				if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 					t.Errorf("Authorization = %q, want %q", got, "Bearer secret")
@@ -109,22 +110,33 @@ func TestSendNativeEndpoints(t *testing.T) {
 func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{
-			"X-Aliyun-Captcha-Verify-Param": "fresh-param",
-			"X-ZCode-App-Version":           zcodeAppVersion,
-			"X-ZCode-Agent":                 "glm",
-			"User-Agent":                    "ZCode/" + zcodeAppVersion,
-			"HTTP-Referer":                  "https://zcode.z.ai",
-			"X-Title":                       "Z Code@electron",
-			"X-Platform":                    runtime.GOOS + "-" + runtime.GOARCH,
-			"X-Release-Channel":             "production",
-			"X-Client-Language":             "en",
-			"X-Client-Timezone":             "UTC",
-			"X-Os-Category":                 runtime.GOOS,
-			"X-Device-Mid":                  deviceMID("secret"),
+			"X-Aliyun-Captcha-Verify-Param":  "fresh-param",
+			"X-Aliyun-Captcha-Verify-Region": aliyunCaptchaRegion,
+			"X-ZCode-App-Version":            zcodeAppVersion,
+			"X-ZCode-Agent":                  "glm",
+			"User-Agent":                     "ZCode/" + zcodeAppVersion,
+			"HTTP-Referer":                   "https://zcode.z.ai",
+			"X-Title":                        "Z Code@electron",
+			"X-Platform":                     runtime.GOOS + "-" + zcodeArch(),
+			"X-Release-Channel":              "production",
+			"X-Client-Language":              "en",
+			"X-Client-Timezone":              "UTC",
+			"X-Os-Category":                  runtime.GOOS,
+			"X-Device-Mid":                   deviceMID("secret"),
+			"X-ZCode-Session-Type":           "main",
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
 			}
+		}
+		if got := r.Header.Get("X-Request-Id"); got == "" {
+			t.Error("X-Request-Id is empty")
+		}
+		if got := r.Header.Get("X-ZCode-Trace-Id"); got == "" {
+			t.Error("X-ZCode-Trace-Id is empty")
+		}
+		if runtime.GOOS == "linux" && r.Header.Get("X-Os-Version") == "" {
+			t.Error("X-Os-Version is empty on Linux")
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Errorf("Authorization = %q, want bearer token", got)
@@ -139,12 +151,13 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	response, err := New(server.URL, "secret").Send(context.Background(), &backend.Request{
 		Kind: backend.KindAnthropic,
 		Header: http.Header{
-			"X-Aliyun-Captcha-Verify-Param": []string{"fresh-param"},
-			"X-ZCode-App-Version":           []string{"3.7.7"},
-			"X-Title":                       []string{"Z Code@test"},
-			"X-Device-Mid":                  []string{"untrusted-device"},
-			"X-Platform":                    []string{"untrusted-platform"},
-			"X-ZCode-Api-Key":               []string{"must-not-forward"},
+			"X-Aliyun-Captcha-Verify-Param":  []string{"fresh-param"},
+			"X-ZCode-App-Version":            []string{"3.7.7"},
+			"X-Title":                        []string{"Z Code@test"},
+			"X-Device-Mid":                   []string{"untrusted-device"},
+			"X-Platform":                     []string{"untrusted-platform"},
+			"X-Aliyun-Captcha-Verify-Region": []string{"untrusted-region"},
+			"X-ZCode-Api-Key":                []string{"must-not-forward"},
 		},
 	})
 	if err != nil {
