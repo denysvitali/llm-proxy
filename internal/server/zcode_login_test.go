@@ -29,10 +29,13 @@ func TestZCodeLoginPageIsWebOnly(t *testing.T) {
 			t.Errorf("login page does not contain %q", want)
 		}
 	}
-	for _, want := range []string{"Verify browser session", "AliyunCaptcha.js", "/login/zcode/captcha", "startRequested", "automatically when ready"} {
+	for _, want := range []string{"Verify browser session", "AliyunCaptcha.js", "/login/zcode/captcha", "startRequested", "automatically when ready", "if(verificationActive)return", "button:'#zcode-captcha-sdk-trigger'"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("login page does not contain %q", want)
 		}
+	}
+	if strings.Contains(rec.Body.String(), "button:'#verify-captcha'") {
+		t.Error("visible verification button is also bound by the Aliyun SDK; one click would start two proofs")
 	}
 }
 

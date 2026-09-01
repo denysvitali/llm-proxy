@@ -29,8 +29,11 @@ body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.w
   var initialized=false;
   var startRequested=false;
   var verificationActive=false;
+	var sdkButton=document.createElement('button');
+	sdkButton.id='zcode-captcha-sdk-trigger';sdkButton.hidden=true;sdkButton.type='button';document.body.appendChild(sdkButton);
   function setStatus(message, className){status.textContent=message;status.className='status '+(className||'');}
   function startVerification(){
+	if(verificationActive)return;
     if(!initialized||!captcha){startRequested=true;setStatus('Browser verification is loading; it will start automatically when ready.');return;}
     startRequested=false;verificationActive=true;button.disabled=true;setStatus('Starting browser verification…');
     try{captcha.startTracelessVerification();}catch(error){setStatus('Could not start verification: '+error.message,'err');button.disabled=false;}
@@ -40,7 +43,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.w
   try{
     initialization=window.initAliyunCaptcha({
       SceneId:'11xygtvd',mode:'popup',region:'sgp',prefix:'no8xfe',
-      element:'#zcode-captcha',button:'#verify-captcha',
+	  element:'#zcode-captcha',button:'#zcode-captcha-sdk-trigger',
       captchaLogoImg:'',showErrorTip:true,delayBeforeSuccess:false,
       getInstance:function(instance){captcha=instance;initialized=true;if(startRequested)startVerification();else if(!verificationActive&&!button.disabled)setStatus('Browser verification is ready.');},
       success:function(param){
