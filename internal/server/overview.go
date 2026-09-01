@@ -33,7 +33,7 @@ type overviewBackend struct {
 	CatalogOK      bool              `json:"catalogOK"`
 }
 
-type grokUsageMetadata struct {
+type usageMetadata struct {
 	Configured bool   `json:"configured"`
 	Available  bool   `json:"available"`
 	Error      string `json:"error,omitempty"`
@@ -56,7 +56,8 @@ type overviewPage struct {
 	Backends      []overviewBackend `json:"backends"`
 	Routes        []overviewRoute   `json:"routes"`
 	Stats         []ModelStat       `json:"stats,omitempty"`
-	GrokUsage     grokUsageMetadata `json:"grokUsage"`
+	GrokUsage     usageMetadata `json:"grokUsage"`
+	ZcodeUsage    usageMetadata `json:"zcodeUsage"`
 	HasDefault    bool              `json:"hasDefault"`
 	DefaultRoute  overviewRoute     `json:"defaultRoute"`
 	ExampleModel  string            `json:"exampleModel"`
@@ -130,6 +131,7 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 	}
 
 	page.GrokUsage = s.grokUsageMetadata(r)
+	page.ZcodeUsage = s.zcodeUsageMetadata(r)
 	page.ExampleModel = exampleModel(page.Backends)
 
 	for _, name := range s.sortedRoutes() {
@@ -176,7 +178,7 @@ func (s *Server) backendModelCredits(name string) (map[string]string, bool) {
 	return nil, false
 }
 
-func (s *Server) grokUsageMetadata(r *http.Request) grokUsageMetadata {
+func (s *Server) grokUsageMetadata(r *http.Request) usageMetadata {
 	configured := false
 	for _, bc := range s.cfg.Backends {
 		if bc.Type != grokUsageBackendName || !bc.IsEnabled() {
@@ -186,16 +188,40 @@ func (s *Server) grokUsageMetadata(r *http.Request) grokUsageMetadata {
 		break
 	}
 	if !configured {
-		return grokUsageMetadata{}
+		return usageMetadata{}
 	}
 	if s.grokAuth == nil || !s.grokAuth.HasSession() {
-		return grokUsageMetadata{Configured: true}
+		return usageMetadata{Configured: true}
 	}
 	usage, err := s.grokUsage(r.Context(), false)
 	if err != nil {
-		return grokUsageMetadata{Configured: true, Available: false, Error: sanitizeUsageError(err)}
+		return usageMetadata{Configured: true, Available: false, Error: sanitizeUsageError(err)}
 	}
-	return grokUsageMetadata{Configured: true, Available: usage.Available}
+	return usageMetadata{Configured: true, Available: usage.Available}
+}
+
+// zcodeUsageMetadata reports whether the dashboard should render the ZCode
+// plan usage card. Like the grok metadata, it carries only presence and a
+// sanitized failure reason — never the upstream response.
+func (s *Server) zcodeUsageMetadata(r *http.Request) usageMetadata {
+	configured := false
+	for _, bc := range s.cfg.Backends {
+		if bc.Type != zcodeUsageBackendName || !bc.IsEnabled() {
+			continue
+		}
+		configured = true
+		break
+	}
+	if !configured {
+		return usageMetadata{}
+	}
+	if s.zcodeAuth == nil || !s.zcodeAuth.HasSession() {
+		return usageMetadata{Configured: true}
+	}
+	if _, err := s.zcodeUsage(r.Context()); err != nil {
+		return usageMetadata{Configured: true, Available: false, Error: err.Error()}
+	}
+	return usageMetadata{Configured: true, Available: true}
 }
 
 func (s *Server) grokUsage(ctx context.Context, refresh bool) (grokbackend.UsageView, error) {

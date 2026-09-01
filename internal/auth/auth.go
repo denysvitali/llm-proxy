@@ -36,6 +36,12 @@ type Store struct {
 	mu    sync.RWMutex
 	path  string
 	users []User
+	// loadedMod/loadedSize describe the file contents currently held in
+	// memory; the auto-reload watcher compares them against os.Stat to
+	// detect out-of-band changes (keys minted by the CLI, another proxy
+	// instance, a hand edit, ...).
+	loadedMod  time.Time
+	loadedSize int64
 }
 
 // Prefix is prepended to generated keys so leaked values are identifiable.
@@ -53,6 +59,9 @@ func NewStore(path string) (*Store, error) {
 	}
 	if err := json.Unmarshal(b, &s.users); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if fi, err := os.Stat(path); err == nil {
+		s.loadedMod, s.loadedSize = fi.ModTime(), fi.Size()
 	}
 	return s, nil
 }
@@ -86,7 +95,15 @@ func (s *Store) save() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), s.path)
+	if err := os.Rename(tmp.Name(), s.path); err != nil {
+		return err
+	}
+	// Track what we just wrote so the auto-reload watcher does not churn on
+	// our own saves.
+	if fi, err := os.Stat(s.path); err == nil {
+		s.loadedMod, s.loadedSize = fi.ModTime(), fi.Size()
+	}
+	return nil
 }
 
 // CreateUser adds a user.
@@ -185,6 +202,65 @@ func (s *Store) Verify(presented string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// StartAutoReload polls the store file every interval and swaps the in-memory
+// users whenever the file changed on disk (mtime or size), so keys created or
+// revoked while the proxy runs are picked up without a restart. Write errors
+// and malformed JSON keep the last good state. The returned stop function
+// terminates the watcher; it is safe to call more than once. A nil receiver,
+// empty path, or non-positive interval disables the watcher.
+func (s *Store) StartAutoReload(interval time.Duration) (stop func()) {
+	if s == nil || s.path == "" || interval <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				s.reloadIfChanged()
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// reloadIfChanged re-reads the store file when its mtime or size differ from
+// what was last loaded. Failures are ignored: the in-memory users stay as-is.
+func (s *Store) reloadIfChanged() {
+	fi, err := os.Stat(s.path)
+	if err != nil {
+		return
+	}
+	s.mu.RLock()
+	mod, size := s.loadedMod, s.loadedSize
+	s.mu.RUnlock()
+	if fi.ModTime().Equal(mod) && fi.Size() == size {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Another goroutine (e.g. our own save) may have refreshed the tracking
+	// state between the unlock above and this lock.
+	if fi.ModTime().Equal(s.loadedMod) && fi.Size() == s.loadedSize {
+		return
+	}
+	b, err := os.ReadFile(s.path)
+	if err != nil {
+		return
+	}
+	var users []User
+	if err := json.Unmarshal(b, &users); err != nil {
+		return
+	}
+	s.users = users
+	s.loadedMod, s.loadedSize = fi.ModTime(), fi.Size()
 }
 
 // Users lists user names.

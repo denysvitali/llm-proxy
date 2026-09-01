@@ -252,10 +252,11 @@ function FooterNote() {
   )
 }
 
-// Holds the previous render at reduced opacity while a refetch is in flight,
-// instead of flashing a loading state over live data.
-export function Fade({ fetching, children }: { fetching: boolean; children: React.ReactNode }) {
+// Dims the first render only, while there is no data to show yet. Background
+// refetches (live stats updates) keep the previous data fully opaque — dimming
+// those made the page pulse on a busy proxy.
+export function Fade({ pending, children }: { pending: boolean; children: React.ReactNode }) {
   return (
-    <Box style={{ opacity: fetching ? 0.65 : 1, transition: 'opacity 200ms' }}>{children}</Box>
+    <Box style={{ opacity: pending ? 0.65 : 1, transition: 'opacity 200ms' }}>{children}</Box>
   )
 }

@@ -22,7 +22,7 @@ export default function SetupPage() {
   const ov = q.data
 
   return (
-    <Fade fetching={q.isFetching}>
+    <Fade pending={q.isPending}>
       {!ov ? (
         <Group justify="center" py="xl">
           <Loader size="sm" />

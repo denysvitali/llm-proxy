@@ -152,7 +152,7 @@ export default function ModelsPage() {
   }
 
   return (
-    <Fade fetching={q.isFetching}>
+    <Fade pending={q.isPending}>
       <Stack gap="md">
         <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm">
           <div>

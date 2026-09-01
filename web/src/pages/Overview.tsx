@@ -123,7 +123,7 @@ export default function OverviewPage() {
     volumeData.some((point) => Number(point.series0) > 0 || Number(point.series1) > 0)
 
   return (
-    <Fade fetching={statsQ.isFetching || ovQ.isFetching || errorsQ.isFetching}>
+    <Fade pending={statsQ.isPending || ovQ.isPending || errorsQ.isPending}>
       <Stack gap="lg">
         <Title order={4} mb={-6}>
           Fleet overview

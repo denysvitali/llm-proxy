@@ -59,7 +59,7 @@ export default function ProvidersPage() {
   })
 
   return (
-    <Fade fetching={ovQ.isFetching || statsQ.isFetching}>
+    <Fade pending={ovQ.isPending || statsQ.isPending}>
       <Stack gap="md">
         <div>
           <Title order={4} mb={2}>Providers</Title>

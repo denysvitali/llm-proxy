@@ -21,11 +21,23 @@ export function useLiveStatsUpdates() {
     let wsFailures = 0
     let stopped = false
 
-    const onEvent = (data: unknown) => {
-      if ((data as string).startsWith('{"type":"stats-updated"}')) {
+    // Every completed upstream request triggers a stats-updated event. On a
+    // busy proxy those arrive several times a second; refetching on each one
+    // makes the dashboard visibly pulse. Coalesce bursts into one refetch.
+    let invalidateTimer: number | undefined
+    const scheduleInvalidate = () => {
+      window.clearTimeout(invalidateTimer)
+      invalidateTimer = window.setTimeout(() => {
+        invalidateTimer = undefined
         void queryClient.invalidateQueries({ queryKey: ['stats'] })
         void queryClient.invalidateQueries({ queryKey: ['stats-series'] })
         void queryClient.invalidateQueries({ queryKey: ['overview'] })
+      }, 500)
+    }
+
+    const onEvent = (data: unknown) => {
+      if ((data as string).startsWith('{"type":"stats-updated"}')) {
+        scheduleInvalidate()
       }
     }
 
@@ -73,6 +85,7 @@ export function useLiveStatsUpdates() {
     return () => {
       stopped = true
       window.clearTimeout(reconnectTimer)
+      window.clearTimeout(invalidateTimer)
       socket?.close()
       eventSource?.close()
     }
