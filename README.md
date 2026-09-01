@@ -176,8 +176,9 @@ Valkey, the proof is stored in that shared service so every replica can use
 the same verification. Without shared Redis/Valkey, a separate owner-only
 file beside `zcode-auth.json` is used for a local single-replica deployment.
 A fresh proxy verification takes precedence over a stale client-supplied
-`X-Aliyun-Captcha-Verify-Param`; the fixed ZCode identity headers are always
-used.
+`X-Aliyun-Captcha-Verify-Param`. The proxy emits a stable, session-specific
+device identity and the current ZCode platform/release headers; inbound
+clients cannot override those identity fields.
 
 The backend forwards Anthropic requests to
 `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages` and OpenAI

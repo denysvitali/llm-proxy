@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -118,7 +119,15 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Aliyun-Captcha-Verify-Param": "fresh-param",
 			"X-ZCode-App-Version":           zcodeAppVersion,
 			"X-ZCode-Agent":                 "glm",
-			"X-Title":                       "Z Code@test",
+			"User-Agent":                    "ZCode/" + zcodeAppVersion,
+			"HTTP-Referer":                  "https://zcode.z.ai",
+			"X-Title":                       "Z Code@electron",
+			"X-Platform":                    runtime.GOOS + "-" + runtime.GOARCH,
+			"X-Release-Channel":             "production",
+			"X-Client-Language":             "en",
+			"X-Client-Timezone":             "UTC",
+			"X-Os-Category":                 runtime.GOOS,
+			"X-Device-Mid":                  deviceMID("secret"),
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
@@ -140,6 +149,8 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Aliyun-Captcha-Verify-Param": []string{"fresh-param"},
 			"X-ZCode-App-Version":           []string{"3.7.7"},
 			"X-Title":                       []string{"Z Code@test"},
+			"X-Device-Mid":                  []string{"untrusted-device"},
+			"X-Platform":                    []string{"untrusted-platform"},
 			"X-ZCode-Api-Key":               []string{"must-not-forward"},
 		},
 	})
@@ -147,6 +158,19 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 	_ = response.Body.Close()
+}
+
+func TestDeviceMIDIsStableAndSessionSpecific(t *testing.T) {
+	first := deviceMID("session-one")
+	if got := deviceMID(" session-one "); got != first {
+		t.Fatalf("deviceMID() = %q after whitespace, want stable %q", got, first)
+	}
+	if got := deviceMID("session-two"); got == first {
+		t.Fatalf("deviceMID() = %q for distinct sessions, want distinct identifiers", got)
+	}
+	if len(first) != 36 || first[8] != '-' || first[13] != '-' || first[18] != '-' || first[23] != '-' {
+		t.Fatalf("deviceMID() = %q, want UUID shape", first)
+	}
 }
 
 type invalidatingTokenAndCaptchaSource struct {

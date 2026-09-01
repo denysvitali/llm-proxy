@@ -8,10 +8,12 @@ package zcode
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -29,7 +31,7 @@ const (
 	// zcodeAppVersion and the identity headers below match the headers used by
 	// the ZCode client. They are fixed so an arbitrary inbound client cannot
 	// create an inconsistent identity that triggers the gateway's abuse checks.
-	zcodeAppVersion = "3.0.1"
+	zcodeAppVersion = "3.10.0"
 
 	aliyunCaptchaHeader = "X-Aliyun-Captcha-Verify-Param"
 )
@@ -133,7 +135,13 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	httpReq.Header.Set("X-ZCode-App-Version", zcodeAppVersion)
 	httpReq.Header.Set("X-ZCode-Agent", "glm")
 	httpReq.Header.Set("X-Title", "Z Code@electron")
-	httpReq.Header.Set("HTTP-Referer", "https://zcode.z.ai/")
+	httpReq.Header.Set("HTTP-Referer", "https://zcode.z.ai")
+	httpReq.Header.Set("X-Platform", runtime.GOOS+"-"+runtime.GOARCH)
+	httpReq.Header.Set("X-Release-Channel", "production")
+	httpReq.Header.Set("X-Client-Language", "en")
+	httpReq.Header.Set("X-Client-Timezone", "UTC")
+	httpReq.Header.Set("X-Os-Category", runtime.GOOS)
+	httpReq.Header.Set("X-Device-Mid", deviceMID(token))
 	accept := "application/json"
 	if req.Streaming {
 		accept = "text/event-stream"
@@ -172,10 +180,9 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
 
-// copyRuntimeHeaders forwards only headers that describe the ZCode client or
-// its already-solved CAPTCHA. Credentials and hop-by-hop headers are never
-// copied from the client request; the backend owns Authorization and the
-// transport owns connection headers.
+// copyRuntimeHeaders forwards only request correlation headers. Credentials,
+// client identity, and hop-by-hop headers are never copied from the inbound
+// request: a stable identity is required by ZCode's unusual-activity checks.
 func copyRuntimeHeaders(dst, src http.Header) {
 	for name, values := range src {
 		if !isRuntimeHeader(name) || strings.EqualFold(name, aliyunCaptchaHeader) {
@@ -198,18 +205,23 @@ func isRuntimeHeader(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	switch lower {
 	case strings.ToLower(aliyunCaptchaHeader),
-		"x-title",
-		"http-referer",
 		"x-request-id",
 		"x-query-id",
-		"x-session-id",
-		"x-device-mid",
-		"x-os-category",
-		"x-os-version":
+		"x-session-id":
 		return true
 	default:
 		return false
 	}
+}
+
+// deviceMID returns a stable, non-secret UUID-shaped identifier for a ZCode
+// session. It prevents unrelated inbound client identities from making a
+// single proxy process appear as a constantly changing device.
+func deviceMID(token string) string {
+	sum := sha256.Sum256([]byte("llm-proxy/zcode/device/" + strings.TrimSpace(token)))
+	sum[6] = (sum[6] & 0x0f) | 0x40
+	sum[8] = (sum[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // inspectCaptchaRejection identifies the ZCode responses that make the
