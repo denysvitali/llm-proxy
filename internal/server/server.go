@@ -27,29 +27,29 @@ import (
 // Server wires configuration, authentication, and backends into the proxy
 // HTTP handler. Safe for concurrent use.
 type Server struct {
-	cfg            *config.Config
-	log            logrus.FieldLogger
-	auth           *auth.Store // nil disables client authentication
-	backends       []backend.Backend
-	byName         map[string]backend.Backend
-	updates        *updateHub
-	metrics        *Metrics
-	stats          *Stats
-	grokAuth       *grokbackend.Manager
-	workBuddyAuth  *workbuddybackend.Manager
-	codexAuth      *codexbackend.Manager
-	zcodeAuth      *zcodebackend.Manager
-	catalogs       catalogCache
-	grokUsageMu    sync.Mutex
-	grokUsageValue *grokbackend.UsageView
+	cfg             *config.Config
+	log             logrus.FieldLogger
+	auth            *auth.Store // nil disables client authentication
+	backends        []backend.Backend
+	byName          map[string]backend.Backend
+	updates         *updateHub
+	metrics         *Metrics
+	stats           *Stats
+	grokAuth        *grokbackend.Manager
+	workBuddyAuth   *workbuddybackend.Manager
+	codexAuth       *codexbackend.Manager
+	zcodeAuth       *zcodebackend.Manager
+	catalogs        catalogCache
+	grokUsageMu     sync.Mutex
+	grokUsageValue  *grokbackend.UsageView
 	zcodeUsageMu    sync.Mutex
 	zcodeUsagePlans []zcodebackend.PlanUsage
 	zcodeUsageAt    time.Time
 }
 
 const (
-	grokUsageBackendName = "grok"
-	grokUsageTTL         = time.Minute
+	grokUsageBackendName  = "grok"
+	grokUsageTTL          = time.Minute
 	zcodeUsageBackendName = "zcode"
 	zcodeUsageTTL         = time.Minute
 )
