@@ -114,6 +114,10 @@ func runServe(cfg *config.Config) error {
 		if err != nil {
 			return err
 		}
+		// Watch the key store so `llm-proxy keys create` / revocations take
+		// effect without a restart.
+		stopReload := store.StartAutoReload(2 * time.Second)
+		defer stopReload()
 	}
 
 	grokTokens := grokbackend.NewManager(cfg.GrokAuthFile)

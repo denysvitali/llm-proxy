@@ -206,14 +206,33 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	default:
 	}
+	var solverErr error
 	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
-		return m.freshCaptchaVerifyParam(ctx)
+		param, err := m.freshCaptchaVerifyParam(ctx)
+		if err == nil {
+			return param, nil
+		}
+		// A configured solver is an optimization, not a reason to discard a
+		// still-valid browser proof. This matters during a sidecar restart or
+		// when the solver is intentionally unavailable in a single-replica
+		// deployment.
+		solverErr = err
 	}
+	if param, err := m.cachedCaptchaVerifyParam(ctx); err == nil {
+		return param, nil
+	}
+	if solverErr != nil {
+		return "", solverErr
+	}
+	return "", captchaVerificationRequiredError()
+}
+
+func (m *Manager) cachedCaptchaVerifyParam(ctx context.Context) (string, error) {
 	if m.captcha != nil {
 		param, issuedAt, err := m.captcha.Get(ctx)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+				return "", captchaVerificationRequiredError()
 			}
 			return "", fmt.Errorf("read ZCode CAPTCHA verification parameter: %w", err)
 		}
@@ -222,7 +241,7 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 			return param, nil
 		}
 		_ = m.captcha.DeleteIfMatch(ctx, param, issuedAt)
-		return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+		return "", captchaVerificationRequiredError()
 	}
 	if record, err := readCaptchaRecord(m.captchaPath()); err == nil {
 		age := time.Since(record.IssuedAt)
@@ -231,7 +250,11 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		}
 		removeCaptchaRecord(m.captchaPath(), record)
 	}
-	return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+	return "", captchaVerificationRequiredError()
+}
+
+func captchaVerificationRequiredError() error {
+	return errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
 }
 
 // RefreshCaptchaVerifyParam returns a distinct proof after an upstream 3007.

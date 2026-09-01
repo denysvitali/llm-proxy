@@ -306,6 +306,42 @@ func TestSendRetriesCaptchaChallengeWithFreshSolverProof(t *testing.T) {
 	}
 }
 
+func TestSendRetriesAliyunBlockPageWithFreshSolverProof(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		wantParam := "first-param"
+		if requests == 2 {
+			wantParam = "fresh-param"
+		}
+		if got := r.Header.Get(aliyunCaptchaHeader); got != wantParam {
+			t.Errorf("request %d CAPTCHA = %q, want %q", requests, got, wantParam)
+		}
+		if requests == 1 {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = fmt.Fprint(w, `<!doctype html><title>405</title><p>Sorry, your request has been blocked as it may cause potential threats to the server's security.</p>`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"type":"message","content":[]}`)
+	}))
+	defer server.Close()
+
+	source := &refreshingTokenAndCaptchaSource{}
+	client := New(server.URL, "unused")
+	client.Tokens = source
+	response, err := client.Send(context.Background(), &backend.Request{
+		Kind:    backend.KindAnthropic,
+		RawBody: []byte(`{"model":"glm-5.3-flash","messages":[]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.Status != http.StatusOK || requests != 2 || source.refreshed != 1 {
+		t.Fatalf("status=%d requests=%d refreshed=%d", response.Status, requests, source.refreshed)
+	}
+}
+
 func TestModels(t *testing.T) {
 	models, err := New("", "secret").Models(context.Background())
 	if err != nil {

@@ -42,11 +42,16 @@ type Server struct {
 	catalogs       catalogCache
 	grokUsageMu    sync.Mutex
 	grokUsageValue *grokbackend.UsageView
+	zcodeUsageMu    sync.Mutex
+	zcodeUsagePlans []zcodebackend.PlanUsage
+	zcodeUsageAt    time.Time
 }
 
 const (
 	grokUsageBackendName = "grok"
 	grokUsageTTL         = time.Minute
+	zcodeUsageBackendName = "zcode"
+	zcodeUsageTTL         = time.Minute
 )
 
 // New builds a Server. backends must already be constructed from cfg entries

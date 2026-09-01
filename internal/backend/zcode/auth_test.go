@@ -197,6 +197,23 @@ func TestCaptchaVerifyParamUsesAutomaticSolverPerRequest(t *testing.T) {
 	}
 }
 
+func TestCaptchaVerifyParamFallsBackToBrowserProofWhenSolverIsUnavailable(t *testing.T) {
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	if err := manager.SetCaptchaVerifyParam("browser-proof"); err != nil {
+		t.Fatal(err)
+	}
+	manager.CaptchaSolverURL = "http://127.0.0.1:1/token"
+	manager.HTTPClient = &http.Client{Timeout: 100 * time.Millisecond}
+
+	got, err := manager.CaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatalf("CaptchaVerifyParam() error = %v", err)
+	}
+	if got != "browser-proof" {
+		t.Fatalf("CaptchaVerifyParam() = %q, want browser-proof", got)
+	}
+}
+
 func jwtWithExpiration(expiration time.Time) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, expiration.Unix())))

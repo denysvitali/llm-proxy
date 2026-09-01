@@ -288,6 +288,10 @@ push to `main` and for `v*` tags.
    `llm-proxy keys list alice` shows existing keys (never their secrets);
    `llm-proxy keys set-state alice <key-id> --disable` revokes one.
 
+   The proxy watches the key-store file and reloads it within a few seconds,
+   so keys minted or revoked while `serve` is running take effect without a
+   restart.
+
 ### Claude Code
 
 Point Claude Code at the proxy with the user key from the previous step:

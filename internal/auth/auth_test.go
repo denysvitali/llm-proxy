@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/auth"
 )
@@ -298,4 +299,172 @@ func TestVerifyHashGarbageNeverMatches(t *testing.T) {
 			t.Errorf("VerifyHash(%q, \"pw\") = true, want false for garbage/tampered hash", stored)
 		}
 	}
+}
+
+// waitFor polls cond until it holds or the timeout elapses, so tests do not
+// depend on watcher timing beyond a generous upper bound.
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %v", timeout)
+}
+
+// writeStoreFile writes raw JSON to path, mimicking an out-of-band writer
+// (another process running `llm-proxy keys`, or a hand edit).
+func writeStoreFile(t *testing.T, path string, users []auth.User) {
+	t.Helper()
+	raw, err := json.MarshalIndent(users, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// userWithKey builds a User whose single key verifies plain.
+func userWithKey(name, keyName, plain string) auth.User {
+	return auth.User{
+		Name: name,
+		Keys: []auth.Key{{
+			ID:        "0123456789abcdef",
+			Name:      keyName,
+			Hash:      auth.HashKey(plain),
+			CreatedAt: time.Now().UTC(),
+		}},
+	}
+}
+
+func TestAutoReload(t *testing.T) {
+	const interval = 5 * time.Millisecond
+
+	t.Run("new key picked up", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "keys.json")
+		watcher, err := auth.NewStore(path) // file does not exist yet
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		stop := watcher.StartAutoReload(interval)
+		defer stop()
+
+		// Another process mints a key via its own Store instance.
+		writer, err := auth.NewStore(path)
+		if err != nil {
+			t.Fatalf("writer NewStore: %v", err)
+		}
+		if err := writer.CreateUser("alice"); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		plain, err := writer.CreateKey("alice", "laptop")
+		if err != nil {
+			t.Fatalf("CreateKey: %v", err)
+		}
+
+		waitFor(t, 2*time.Second, func() bool {
+			u, ok := watcher.Verify(plain)
+			return ok && u == "alice"
+		})
+	})
+
+	t.Run("removed key stops authenticating", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "keys.json")
+		writeStoreFile(t, path, []auth.User{userWithKey("bob", "old", "llx_removed")})
+		watcher, err := auth.NewStore(path)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		stop := watcher.StartAutoReload(interval)
+		defer stop()
+
+		if u, ok := watcher.Verify("llx_removed"); !ok || u != "bob" {
+			t.Fatalf("Verify before removal = (%q, %v), want (bob, true)", u, ok)
+		}
+		writeStoreFile(t, path, nil) // key revoked out-of-band
+
+		waitFor(t, 2*time.Second, func() bool {
+			_, ok := watcher.Verify("llx_removed")
+			return !ok
+		})
+	})
+
+	t.Run("disabled key stops authenticating", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "keys.json")
+		writeStoreFile(t, path, []auth.User{userWithKey("carol", "cli", "llx_disabled")})
+		watcher, err := auth.NewStore(path)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		stop := watcher.StartAutoReload(interval)
+		defer stop()
+
+		users := []auth.User{userWithKey("carol", "cli", "llx_disabled")}
+		users[0].Keys[0].Disabled = true
+		writeStoreFile(t, path, users)
+
+		waitFor(t, 2*time.Second, func() bool {
+			_, ok := watcher.Verify("llx_disabled")
+			return !ok
+		})
+	})
+
+	t.Run("malformed file keeps last good state", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "keys.json")
+		writeStoreFile(t, path, []auth.User{userWithKey("dave", "main", "llx_keepme")})
+		watcher, err := auth.NewStore(path)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		stop := watcher.StartAutoReload(interval)
+		defer stop()
+
+		if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// Give the watcher ample chances to observe the corrupt file.
+		time.Sleep(20 * interval)
+		if u, ok := watcher.Verify("llx_keepme"); !ok || u != "dave" {
+			t.Errorf("Verify after malformed rewrite = (%q, %v), want (dave, true); last good state lost", u, ok)
+		}
+	})
+
+	t.Run("own saves do not clobber state", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "keys.json")
+		watcher, err := auth.NewStore(path)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		if err := watcher.CreateUser("erin"); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		stop := watcher.StartAutoReload(interval)
+		defer stop()
+
+		plain, err := watcher.CreateKey("erin", "phone")
+		if err != nil {
+			t.Fatalf("CreateKey: %v", err)
+		}
+		// The watcher reloads the file its own save() just wrote; the key
+		// must still verify after that churn.
+		time.Sleep(20 * interval)
+		if u, ok := watcher.Verify(plain); !ok || u != "erin" {
+			t.Errorf("Verify(own key) = (%q, %v), want (erin, true)", u, ok)
+		}
+	})
+}
+
+func TestStartAutoReloadNoop(t *testing.T) {
+	// Nil store, empty path, and non-positive interval must all be safe no-ops
+	// returning a callable stop.
+	var nilStore *auth.Store
+	nilStore.StartAutoReload(time.Millisecond)()
+
+	s, _ := newTestStore(t)
+	s.StartAutoReload(0)()
+	s.StartAutoReload(-time.Second)()
 }

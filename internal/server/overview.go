@@ -11,6 +11,7 @@ import (
 	"time"
 
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
+	zcodebackend "github.com/denysvitali/llm-proxy/internal/backend/zcode"
 )
 
 // Build identity shown by the overview API and SPA.
@@ -56,8 +57,8 @@ type overviewPage struct {
 	Backends      []overviewBackend `json:"backends"`
 	Routes        []overviewRoute   `json:"routes"`
 	Stats         []ModelStat       `json:"stats,omitempty"`
-	GrokUsage     usageMetadata `json:"grokUsage"`
-	ZcodeUsage    usageMetadata `json:"zcodeUsage"`
+	GrokUsage     usageMetadata     `json:"grokUsage"`
+	ZcodeUsage    usageMetadata     `json:"zcodeUsage"`
 	HasDefault    bool              `json:"hasDefault"`
 	DefaultRoute  overviewRoute     `json:"defaultRoute"`
 	ExampleModel  string            `json:"exampleModel"`
@@ -222,6 +223,27 @@ func (s *Server) zcodeUsageMetadata(r *http.Request) usageMetadata {
 		return usageMetadata{Configured: true, Available: false, Error: err.Error()}
 	}
 	return usageMetadata{Configured: true, Available: true}
+}
+
+func (s *Server) zcodeUsage(ctx context.Context) ([]zcodebackend.PlanUsage, error) {
+	if s.zcodeAuth == nil {
+		return nil, errUsageUnavailable
+	}
+
+	s.zcodeUsageMu.Lock()
+	defer s.zcodeUsageMu.Unlock()
+
+	if !s.zcodeUsageAt.IsZero() && time.Since(s.zcodeUsageAt) < zcodeUsageTTL {
+		return append([]zcodebackend.PlanUsage(nil), s.zcodeUsagePlans...), nil
+	}
+
+	plans, err := s.zcodeAuth.PlanUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.zcodeUsagePlans = append([]zcodebackend.PlanUsage(nil), plans...)
+	s.zcodeUsageAt = time.Now()
+	return append([]zcodebackend.PlanUsage(nil), s.zcodeUsagePlans...), nil
 }
 
 func (s *Server) grokUsage(ctx context.Context, refresh bool) (grokbackend.UsageView, error) {

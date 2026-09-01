@@ -312,13 +312,22 @@ func inspectCaptchaRejection(status int, body io.ReadCloser) (bool, io.ReadClose
 	var envelope struct {
 		Code json.Number `json:"code"`
 	}
-	if err := json.Unmarshal(b, &envelope); err != nil {
-		return false, replay
+	if err := json.Unmarshal(b, &envelope); err == nil && envelope.Code.String() == "3007" {
+		return true, replay
 	}
 	// 3007 is the CAPTCHA challenge. 3012 is also used for account
 	// entitlement/activity rejection and does not mean the proof is bad; the
 	// current ZCode client therefore preserves the proof for 3012 responses.
-	return envelope.Code.String() == "3007", replay
+	// Aliyun's edge security layer emits an HTML 405 page instead of ZCode's
+	// JSON challenge when it blocks the request. Treat that page the same way
+	// so a fresh solver proof can recover the request.
+	return status == http.StatusMethodNotAllowed && isAliyunBlockPage(b), replay
+}
+
+func isAliyunBlockPage(body []byte) bool {
+	lower := bytes.ToLower(body)
+	return bytes.Contains(lower, []byte("<title>405</title>")) &&
+		bytes.Contains(lower, []byte("request has been blocked"))
 }
 
 // Models returns the models included in the Start Plan catalog known to this
