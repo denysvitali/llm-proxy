@@ -177,6 +177,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 		if param != "" {
 			httpReq.Header.Set(aliyunCaptchaHeader, param)
+			httpReq.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
 		}
 		copyRuntimeHeaders(httpReq.Header, req.Header)
 		return httpReq, nil

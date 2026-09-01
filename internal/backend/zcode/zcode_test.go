@@ -111,6 +111,7 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{
 			"X-Aliyun-Captcha-Verify-Param": "fresh-param",
+			aliyunCaptchaRegionHeader:       aliyunCaptchaRegion,
 			"X-ZCode-App-Version":           zcodeAppVersion,
 			"X-ZCode-Agent":                 "glm",
 			"User-Agent":                    "ZCode/" + zcodeAppVersion,
@@ -145,8 +146,8 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		if got := r.Header.Get("X-Device-Mid"); got != "" {
 			t.Errorf("X-Device-Mid = %q, want omitted from model requests", got)
 		}
-		if got := r.Header.Get(aliyunCaptchaRegionHeader); got != "" {
-			t.Errorf("%s = %q, want omitted from model requests", aliyunCaptchaRegionHeader, got)
+		if got := r.Header.Get(aliyunCaptchaRegionHeader); got != aliyunCaptchaRegion {
+			t.Errorf("%s = %q, want %q", aliyunCaptchaRegionHeader, got, aliyunCaptchaRegion)
 		}
 		_, _ = fmt.Fprint(w, `{"ok":true}`)
 	}))
