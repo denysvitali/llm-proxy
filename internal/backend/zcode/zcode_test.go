@@ -112,6 +112,43 @@ func TestSendNativeEndpoints(t *testing.T) {
 	}
 }
 
+func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for name, want := range map[string]string{
+			"X-Aliyun-Captcha-Verify-Param": "fresh-param",
+			"X-ZCode-App-Version":           "3.7.7",
+			"X-ZCode-Agent":                 "glm",
+			"X-Title":                       "Z Code@test",
+		} {
+			if got := r.Header.Get(name); got != want {
+				t.Errorf("%s = %q, want %q", name, got, want)
+			}
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Errorf("Authorization = %q, want bearer token", got)
+		}
+		if got := r.Header.Get("X-ZCode-Api-Key"); got != "" {
+			t.Errorf("X-ZCode-Api-Key was forwarded: %q", got)
+		}
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	response, err := New(server.URL, "secret").Send(context.Background(), &backend.Request{
+		Kind: backend.KindAnthropic,
+		Header: http.Header{
+			"X-Aliyun-Captcha-Verify-Param": []string{"fresh-param"},
+			"X-ZCode-App-Version":           []string{"3.7.7"},
+			"X-Title":                       []string{"Z Code@test"},
+			"X-ZCode-Api-Key":               []string{"must-not-forward"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	_ = response.Body.Close()
+}
+
 func TestModels(t *testing.T) {
 	models, err := New("", "secret").Models(context.Background())
 	if err != nil {
@@ -155,6 +192,16 @@ func (s staticTokenSource) AccessToken(context.Context) (string, error) {
 	return string(s), nil
 }
 
+type staticTokenAndCaptchaSource struct{}
+
+func (staticTokenAndCaptchaSource) AccessToken(context.Context) (string, error) {
+	return "session-token", nil
+}
+
+func (staticTokenAndCaptchaSource) CaptchaVerifyParam(context.Context) (string, error) {
+	return "source-param", nil
+}
+
 func TestSendUsesTokenSourceInsteadOfConfiguredKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer session-token" {
@@ -166,6 +213,27 @@ func TestSendUsesTokenSourceInsteadOfConfiguredKey(t *testing.T) {
 
 	client := New(server.URL, "stale-configured-key")
 	client.Tokens = staticTokenSource("session-token")
+	response, err := client.Send(context.Background(), &backend.Request{
+		Kind:    backend.KindOpenAIChat,
+		RawBody: []byte(`{"model":"glm-5.3-flash"}`),
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	_ = response.Body.Close()
+}
+
+func TestSendUsesCaptchaSourceWhenClientDidNotProvideOne(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(aliyunCaptchaHeader); got != "source-param" {
+			t.Errorf("captcha header = %q, want source-param", got)
+		}
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "stale-configured-key")
+	client.Tokens = staticTokenAndCaptchaSource{}
 	response, err := client.Send(context.Background(), &backend.Request{
 		Kind:    backend.KindOpenAIChat,
 		RawBody: []byte(`{"model":"glm-5.3-flash"}`),

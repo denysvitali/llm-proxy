@@ -26,6 +26,10 @@ const (
 
 	defaultPollInterval = 2 * time.Second
 	loginTimeout        = 15 * time.Minute
+	// captchaTTL is deliberately shorter than the verification parameter's
+	// usual lifetime. A fresh browser verification is cheap compared with
+	// sending a stale parameter and receiving code 3007 from ZCode.
+	captchaTTL = 40 * time.Second
 )
 
 // Credentials is the ZCode session returned after browser authorization.
@@ -95,6 +99,9 @@ type Manager struct {
 	Issuer     string
 	HTTPClient *http.Client
 	mu         sync.Mutex
+	captchaMu  sync.RWMutex
+	captcha    string
+	captchaAt  time.Time
 }
 
 func NewManager(path string) *Manager {
@@ -131,6 +138,41 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 		return "", errors.New("ZCode session expired; sign in again from the dashboard")
 	}
 	return credentials.AccessToken, nil
+}
+
+// SetCaptchaVerifyParam stores a browser-generated Aliyun verification
+// parameter for the short period in which ZCode accepts it. The parameter is
+// not written to disk: it is a disposable proof, not an account credential.
+func (m *Manager) SetCaptchaVerifyParam(param string) error {
+	param = strings.TrimSpace(param)
+	if param == "" {
+		return errors.New("cannot save an empty ZCode CAPTCHA verification parameter")
+	}
+	if len(param) > 64<<10 {
+		return errors.New("ZCode CAPTCHA verification parameter is too large")
+	}
+	m.captchaMu.Lock()
+	m.captcha = param
+	m.captchaAt = time.Now()
+	m.captchaMu.Unlock()
+	return nil
+}
+
+// CaptchaVerifyParam returns the currently cached browser verification
+// parameter. It implements the optional source used by the ZCode backend.
+func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+	m.captchaMu.RLock()
+	param, issuedAt := m.captcha, m.captchaAt
+	m.captchaMu.RUnlock()
+	if param != "" && time.Since(issuedAt) < captchaTTL {
+		return param, nil
+	}
+	return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
 }
 
 type oauthEnvelope struct {

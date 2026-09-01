@@ -135,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login/codex", s.codexLogin)
 	mux.HandleFunc("GET /login/zcode", s.zcodeLoginPage)
 	mux.HandleFunc("POST /login/zcode", s.zcodeLogin)
+	mux.HandleFunc("POST /login/zcode/captcha", s.zcodeCaptcha)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics.handler())

@@ -23,7 +23,21 @@ const (
 
 	// anthropicVersion is required by the Anthropic Messages API.
 	anthropicVersion = "2023-06-01"
+
+	// zcodeAppVersion and the identity headers below match the headers used by
+	// the ZCode client. The inbound request can override runtime values when it
+	// already comes from a ZCode client.
+	zcodeAppVersion = "3.0.1"
+
+	aliyunCaptchaHeader = "X-Aliyun-Captcha-Verify-Param"
 )
+
+// captchaSource is implemented by the ZCode account manager. Keeping this
+// interface local avoids making CAPTCHA state part of the generic backend
+// contract used by unrelated providers.
+type captchaSource interface {
+	CaptchaVerifyParam(context.Context) (string, error)
+}
 
 // defaultModels is the model included in the currently published Start Plan
 // entitlement. Explicit route entries can address another model if ZCode
@@ -109,6 +123,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 	httpReq.Header.Set("Authorization", bearerToken(token))
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", "ZCode/"+zcodeAppVersion)
+	httpReq.Header.Set("X-ZCode-App-Version", zcodeAppVersion)
+	httpReq.Header.Set("X-ZCode-Agent", "glm")
+	httpReq.Header.Set("X-Title", "Z Code@electron")
+	httpReq.Header.Set("HTTP-Referer", "https://zcode.z.ai/")
 	accept := "application/json"
 	if req.Streaming {
 		accept = "text/event-stream"
@@ -117,11 +136,64 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if req.Kind == backend.KindAnthropic {
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	}
+	if param := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader)); param != "" {
+		httpReq.Header.Set(aliyunCaptchaHeader, param)
+	} else if source, ok := c.Tokens.(captchaSource); ok {
+		param, err := source.CaptchaVerifyParam(ctx)
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set(aliyunCaptchaHeader, param)
+	}
+	copyRuntimeHeaders(httpReq.Header, req.Header)
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to ZCode failed: %w", err)
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
+// copyRuntimeHeaders forwards only headers that describe the ZCode client or
+// its already-solved CAPTCHA. Credentials and hop-by-hop headers are never
+// copied from the client request; the backend owns Authorization and the
+// transport owns connection headers.
+func copyRuntimeHeaders(dst, src http.Header) {
+	for name, values := range src {
+		if !isRuntimeHeader(name) {
+			continue
+		}
+		copied := false
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				if !copied {
+					dst.Del(name)
+					copied = true
+				}
+				dst.Add(name, value)
+			}
+		}
+	}
+}
+
+func isRuntimeHeader(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	switch lower {
+	case strings.ToLower(aliyunCaptchaHeader),
+		"x-title",
+		"http-referer",
+		"x-request-id",
+		"x-query-id",
+		"x-session-id",
+		"x-device-mid",
+		"x-os-category",
+		"x-os-version",
+		"x-zcode-app-version",
+		"x-zcode-agent",
+		"x-zcode-trace-id":
+		return true
+	default:
+		return false
+	}
 }
 
 // Models returns the models included in the Start Plan catalog known to this

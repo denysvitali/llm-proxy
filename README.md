@@ -168,6 +168,12 @@ page open until it confirms success. The resulting ZCode session is stored at
 `zcode_auth_file` at the top level to change the path. Revisit the same page
 when the session expires.
 
+After signing in, click **Verify browser session** on that page before making a
+model request. ZCode's plan gateway requires the short-lived Aliyun browser
+verification parameter; the proxy keeps it in memory for about 40 seconds and
+will ask you to verify again after it expires. Clients that already provide
+`X-Aliyun-Captcha-Verify-Param` and ZCode runtime headers are forwarded as well.
+
 The backend forwards Anthropic requests to
 `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages` and OpenAI
 Chat Completions requests to
@@ -525,7 +531,8 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
 | GET/POST | `/login/workbuddy`          | Web-only WorkBuddy account sign-in |
 | GET/POST | `/login/codex`              | ChatGPT device-code sign-in for Codex |
-| GET/POST | `/login/zcode`              | Web-only ZCode account sign-in |
+| GET/POST | `/login/zcode`              | Web-only ZCode account sign-in and browser verification |
+| POST     | `/login/zcode/captcha`      | Stores the current browser verification parameter |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |

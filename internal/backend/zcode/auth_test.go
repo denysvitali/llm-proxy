@@ -121,6 +121,35 @@ func TestAccessTokenRequiresUnexpiredSession(t *testing.T) {
 	}
 }
 
+func TestCaptchaVerifyParamIsShortLivedAndNotPersisted(t *testing.T) {
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	if _, err := manager.CaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA verification is required") {
+		t.Fatalf("CaptchaVerifyParam() error = %v, want missing-verification error", err)
+	}
+	if err := manager.SetCaptchaVerifyParam(" fresh-param "); err != nil {
+		t.Fatalf("SetCaptchaVerifyParam() error = %v", err)
+	}
+	got, err := manager.CaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatalf("CaptchaVerifyParam() error = %v", err)
+	}
+	if got != "fresh-param" {
+		t.Errorf("CaptchaVerifyParam() = %q, want fresh-param", got)
+	}
+	manager.captchaMu.Lock()
+	manager.captchaAt = time.Now().Add(-captchaTTL)
+	manager.captchaMu.Unlock()
+	if _, err := manager.CaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA verification is required") {
+		t.Fatalf("expired CaptchaVerifyParam() error = %v, want missing-verification error", err)
+	}
+	if err := manager.SetCaptchaVerifyParam(" "); err == nil {
+		t.Error("SetCaptchaVerifyParam(whitespace) succeeded, want error")
+	}
+	if _, err := os.Stat(manager.Store.Path); !os.IsNotExist(err) {
+		t.Fatalf("CAPTCHA value was persisted at %s", manager.Store.Path)
+	}
+}
+
 func jwtWithExpiration(expiration time.Time) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, expiration.Unix())))
