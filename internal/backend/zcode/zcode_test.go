@@ -195,7 +195,7 @@ func (s *invalidatingTokenAndCaptchaSource) InvalidateCaptcha(param string) {
 	s.invalidated = param
 }
 
-func TestSendInvalidatesRejectedCaptchaAndPreservesBody(t *testing.T) {
+func TestSendPreservesCaptchaOnUnusualActivityRejection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get(aliyunCaptchaHeader); got != "source-param" {
 			t.Errorf("captcha header = %q, want source-param", got)
@@ -220,6 +220,26 @@ func TestSendInvalidatesRejectedCaptchaAndPreservesBody(t *testing.T) {
 	if string(body) != `{"code":3012,"msg":"request has been blocked due to unusual activity."}` {
 		t.Errorf("response body = %q, want original rejection", body)
 	}
+	if source.invalidated != "" {
+		t.Errorf("invalidated captcha = %q on 3012, want proof preserved", source.invalidated)
+	}
+}
+
+func TestSendInvalidatesCaptchaOnVerificationFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
+	}))
+	defer server.Close()
+
+	source := &invalidatingTokenAndCaptchaSource{}
+	client := New(server.URL, "unused")
+	client.Tokens = source
+	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	_ = response.Body.Close()
 	if source.invalidated != "source-param" {
 		t.Errorf("invalidated captcha = %q, want source-param", source.invalidated)
 	}

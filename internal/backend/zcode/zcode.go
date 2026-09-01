@@ -286,7 +286,10 @@ func inspectCaptchaRejection(status int, body io.ReadCloser) (bool, io.ReadClose
 	if err := json.Unmarshal(b, &envelope); err != nil {
 		return false, replay
 	}
-	return envelope.Code.String() == "3007" || envelope.Code.String() == "3012", replay
+	// 3007 is the CAPTCHA challenge. 3012 is also used for account
+	// entitlement/activity rejection and does not mean the proof is bad; the
+	// current ZCode client therefore preserves the proof for 3012 responses.
+	return envelope.Code.String() == "3007", replay
 }
 
 // Models returns the models included in the Start Plan catalog known to this
