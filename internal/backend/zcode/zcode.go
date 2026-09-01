@@ -52,6 +52,10 @@ type captchaInvalidator interface {
 	InvalidateCaptcha(string)
 }
 
+type captchaRefresher interface {
+	RefreshCaptchaVerifyParam(context.Context, string) (string, error)
+}
+
 // defaultModels is the model included in the currently published Start Plan
 // entitlement. Explicit route entries can address another model if ZCode
 // enables it for the account.
@@ -130,37 +134,6 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, fmt.Errorf("zcode backend has no ZCode session configured")
 	}
 	requestBody := transformStartPlanRequest(req.RawBody)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Authorization", bearerToken(token))
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", "ZCode/"+zcodeAppVersion)
-	httpReq.Header.Set("X-ZCode-App-Version", zcodeAppVersion)
-	httpReq.Header.Set("X-ZCode-Agent", "glm")
-	httpReq.Header.Set("X-Title", "Z Code@electron")
-	httpReq.Header.Set("HTTP-Referer", "https://zcode.z.ai")
-	httpReq.Header.Set("X-Platform", runtime.GOOS+"-"+zcodeArch())
-	httpReq.Header.Set("X-Release-Channel", "production")
-	httpReq.Header.Set("X-Client-Language", "en")
-	httpReq.Header.Set("X-Client-Timezone", "UTC")
-	httpReq.Header.Set("X-Os-Category", runtime.GOOS)
-	if release := kernelRelease(); release != "" {
-		httpReq.Header.Set("X-Os-Version", release)
-	}
-	httpReq.Header.Set("X-Device-Mid", deviceMID(token))
-	httpReq.Header.Set("X-Request-Id", randomUUID())
-	httpReq.Header.Set("X-ZCode-Session-Type", "main")
-	httpReq.Header.Set("X-ZCode-Trace-Id", randomUUID())
-	accept := "application/json"
-	if req.Streaming {
-		accept = "text/event-stream"
-	}
-	httpReq.Header.Set("Accept", accept)
-	if req.Kind == backend.KindAnthropic {
-		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
-	}
 	captchaParam := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader))
 	if source, ok := c.Tokens.(captchaSource); ok {
 		// Prefer the proxy's newest proof. Client applications can retain a
@@ -173,11 +146,47 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			return nil, sourceErr
 		}
 	}
-	if captchaParam != "" {
-		httpReq.Header.Set(aliyunCaptchaHeader, captchaParam)
-		httpReq.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
+	buildRequest := func(param string) (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(requestBody))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Authorization", bearerToken(token))
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("User-Agent", "ZCode/"+zcodeAppVersion)
+		httpReq.Header.Set("X-ZCode-App-Version", zcodeAppVersion)
+		httpReq.Header.Set("X-ZCode-Agent", "glm")
+		httpReq.Header.Set("X-Title", "Z Code@electron")
+		httpReq.Header.Set("HTTP-Referer", "https://zcode.z.ai")
+		httpReq.Header.Set("X-Platform", runtime.GOOS+"-"+zcodeArch())
+		httpReq.Header.Set("X-Release-Channel", "production")
+		httpReq.Header.Set("X-Client-Language", "en")
+		httpReq.Header.Set("X-Client-Timezone", "UTC")
+		httpReq.Header.Set("X-Os-Category", runtime.GOOS)
+		if release := kernelRelease(); release != "" {
+			httpReq.Header.Set("X-Os-Version", release)
+		}
+		httpReq.Header.Set("X-Device-Mid", deviceMID(token))
+		httpReq.Header.Set("X-Request-Id", randomUUID())
+		httpReq.Header.Set("X-ZCode-Session-Type", "main")
+		httpReq.Header.Set("X-ZCode-Trace-Id", randomUUID())
+		accept := "application/json"
+		if req.Streaming {
+			accept = "text/event-stream"
+		}
+		httpReq.Header.Set("Accept", accept)
+		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
+		if param != "" {
+			httpReq.Header.Set(aliyunCaptchaHeader, param)
+			httpReq.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
+		}
+		copyRuntimeHeaders(httpReq.Header, req.Header)
+		return httpReq, nil
 	}
-	copyRuntimeHeaders(httpReq.Header, req.Header)
+	httpReq, err := buildRequest(captchaParam)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to ZCode failed: %w", err)
@@ -187,6 +196,26 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if captchaRejected {
 		if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
 			invalidator.InvalidateCaptcha(captchaParam)
+		}
+		if refresher, ok := c.Tokens.(captchaRefresher); ok {
+			freshParam, refreshErr := refresher.RefreshCaptchaVerifyParam(ctx, captchaParam)
+			if refreshErr == nil && freshParam != "" && freshParam != captchaParam {
+				_ = resp.Body.Close()
+				retryReq, buildErr := buildRequest(freshParam)
+				if buildErr != nil {
+					return nil, buildErr
+				}
+				resp, err = c.HTTP.Do(retryReq)
+				if err != nil {
+					return nil, fmt.Errorf("retry request to ZCode after CAPTCHA refresh failed: %w", err)
+				}
+				captchaRejected, resp.Body = inspectCaptchaRejection(resp.StatusCode, resp.Body)
+				if captchaRejected {
+					if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
+						invalidator.InvalidateCaptcha(freshParam)
+					}
+				}
+			}
 		}
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil

@@ -245,6 +245,67 @@ func TestSendInvalidatesCaptchaOnVerificationFailure(t *testing.T) {
 	}
 }
 
+type refreshingTokenAndCaptchaSource struct {
+	invalidated []string
+	refreshed   int
+}
+
+func (s *refreshingTokenAndCaptchaSource) AccessToken(context.Context) (string, error) {
+	return "session-token", nil
+}
+
+func (s *refreshingTokenAndCaptchaSource) CaptchaVerifyParam(context.Context) (string, error) {
+	return "first-param", nil
+}
+
+func (s *refreshingTokenAndCaptchaSource) InvalidateCaptcha(param string) {
+	s.invalidated = append(s.invalidated, param)
+}
+
+func (s *refreshingTokenAndCaptchaSource) RefreshCaptchaVerifyParam(context.Context, string) (string, error) {
+	s.refreshed++
+	return "fresh-param", nil
+}
+
+func TestSendRetriesCaptchaChallengeWithFreshSolverProof(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		wantParam := "first-param"
+		if requests == 2 {
+			wantParam = "fresh-param"
+		}
+		if got := r.Header.Get(aliyunCaptchaHeader); got != wantParam {
+			t.Errorf("request %d CAPTCHA = %q, want %q", requests, got, wantParam)
+		}
+		if requests == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"type":"message","content":[]}`)
+	}))
+	defer server.Close()
+
+	source := &refreshingTokenAndCaptchaSource{}
+	client := New(server.URL, "unused")
+	client.Tokens = source
+	response, err := client.Send(context.Background(), &backend.Request{
+		Kind:    backend.KindAnthropic,
+		RawBody: []byte(`{"model":"glm-5.3-flash","messages":[]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.Status != http.StatusOK || requests != 2 || source.refreshed != 1 {
+		t.Fatalf("status=%d requests=%d refreshed=%d", response.Status, requests, source.refreshed)
+	}
+	if !reflect.DeepEqual(source.invalidated, []string{"first-param"}) {
+		t.Fatalf("invalidated = %#v", source.invalidated)
+	}
+}
+
 func TestModels(t *testing.T) {
 	models, err := New("", "secret").Models(context.Background())
 	if err != nil {

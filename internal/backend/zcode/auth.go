@@ -106,11 +106,12 @@ func (s *Store) Save(credentials *Credentials) error {
 // to the backend. There is no refresh token in this flow; expired sessions
 // can be replaced by visiting the login page again.
 type Manager struct {
-	Store      *Store
-	Issuer     string
-	HTTPClient *http.Client
-	mu         sync.Mutex
-	captcha    CaptchaStore
+	Store            *Store
+	Issuer           string
+	HTTPClient       *http.Client
+	CaptchaSolverURL string
+	mu               sync.Mutex
+	captcha          CaptchaStore
 }
 
 type captchaRecord struct {
@@ -131,10 +132,11 @@ func NewManagerWithCaptchaStore(path string, captcha CaptchaStore) *Manager {
 		path = filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json")
 	}
 	return &Manager{
-		Store:      &Store{Path: path},
-		Issuer:     Issuer,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
-		captcha:    captcha,
+		Store:            &Store{Path: path},
+		Issuer:           Issuer,
+		HTTPClient:       &http.Client{Timeout: 30 * time.Second},
+		CaptchaSolverURL: strings.TrimSpace(os.Getenv("LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL")),
+		captcha:          captcha,
 	}
 }
 
@@ -204,6 +206,9 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	default:
 	}
+	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
+		return m.freshCaptchaVerifyParam(ctx)
+	}
 	if m.captcha != nil {
 		param, issuedAt, err := m.captcha.Get(ctx)
 		if err != nil {
@@ -227,6 +232,46 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		removeCaptchaRecord(m.captchaPath(), record)
 	}
 	return "", errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+}
+
+// RefreshCaptchaVerifyParam returns a distinct proof after an upstream 3007.
+// Manual browser proofs cannot be refreshed without user interaction, while
+// the optional localhost solver mints one-use proofs on demand.
+func (m *Manager) RefreshCaptchaVerifyParam(ctx context.Context, rejected string) (string, error) {
+	if strings.TrimSpace(m.CaptchaSolverURL) == "" {
+		return "", errors.New("automatic ZCode CAPTCHA solver is not configured")
+	}
+	return m.freshCaptchaVerifyParam(ctx)
+}
+
+func (m *Manager) freshCaptchaVerifyParam(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSpace(m.CaptchaSolverURL), nil)
+	if err != nil {
+		return "", fmt.Errorf("create ZCode CAPTCHA solver request: %w", err)
+	}
+	resp, err := m.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request ZCode CAPTCHA solver: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return "", fmt.Errorf("read ZCode CAPTCHA solver response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("ZCode CAPTCHA solver returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		VerifyParam string `json:"verify_param"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("decode ZCode CAPTCHA solver response: %w", err)
+	}
+	result.VerifyParam = strings.TrimSpace(result.VerifyParam)
+	if result.VerifyParam == "" || len(result.VerifyParam) > 64<<10 {
+		return "", errors.New("ZCode CAPTCHA solver returned an invalid verification parameter")
+	}
+	return result.VerifyParam, nil
 }
 
 // InvalidateCaptcha clears a rejected proof, but only when it is still the

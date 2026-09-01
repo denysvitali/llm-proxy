@@ -170,6 +170,33 @@ func TestCaptchaVerifyParamIsShortLivedAndShared(t *testing.T) {
 	}
 }
 
+func TestCaptchaVerifyParamUsesAutomaticSolverPerRequest(t *testing.T) {
+	calls := 0
+	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		_, _ = fmt.Fprintf(w, `{"verify_param":"proof-%d"}`, calls)
+	}))
+	defer solver.Close()
+
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	manager.CaptchaSolverURL = solver.URL
+	manager.HTTPClient = solver.Client()
+	first, err := manager.CaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.CaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "proof-1" || second != "proof-2" || calls != 2 {
+		t.Fatalf("proofs = %q, %q; calls=%d", first, second, calls)
+	}
+}
+
 func jwtWithExpiration(expiration time.Time) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, expiration.Unix())))
