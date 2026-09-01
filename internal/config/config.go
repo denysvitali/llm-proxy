@@ -101,7 +101,10 @@ type Config struct {
 	WorkBuddyAuthFile string `mapstructure:"workbuddy_auth_file"`
 	// CodexAuthFile stores the ChatGPT OAuth session used by the Codex
 	// subscription backend. It is populated by device-code login.
-	CodexAuthFile string          `mapstructure:"codex_auth_file"`
+	CodexAuthFile string `mapstructure:"codex_auth_file"`
+	// ZCodeAuthFile stores the ZCode OAuth session used by the Start Plan
+	// backend. It is populated by browser login and is not an API key.
+	ZCodeAuthFile string          `mapstructure:"zcode_auth_file"`
 	Server        ServerConfig    `mapstructure:"server"`
 	Auth          AuthConfig      `mapstructure:"auth"`
 	Backends      []BackendConfig `mapstructure:"backends"`
@@ -136,6 +139,12 @@ func (c *Config) Defaults() {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			c.CodexAuthFile = filepath.Join(home, ".config", "llm-proxy", "codex-auth.json")
+		}
+	}
+	if c.ZCodeAuthFile == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			c.ZCodeAuthFile = filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json")
 		}
 	}
 	if c.Server.Listen == "" {

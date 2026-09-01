@@ -202,6 +202,10 @@ func TestLoadDefaultsWhenNoFileExists(t *testing.T) {
 		t.Errorf("Server.MaxBodyBytes = %d, want 16777216", cfg.Server.MaxBodyBytes)
 	}
 	home := os.Getenv("HOME")
+	wantZCodePath := filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json")
+	if cfg.ZCodeAuthFile != wantZCodePath {
+		t.Errorf("ZCodeAuthFile = %q, want %q", cfg.ZCodeAuthFile, wantZCodePath)
+	}
 	wantStatsPath := filepath.Join(home, ".local", "state", "llm-proxy", "stats.json")
 	if cfg.Stats.PersistFile != wantStatsPath {
 		t.Errorf("Stats.PersistFile = %q, want %q", cfg.Stats.PersistFile, wantStatsPath)

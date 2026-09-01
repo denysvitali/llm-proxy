@@ -136,7 +136,7 @@ func TestSendRejectsMissingKeyAndUnsupportedKind(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "")
-	if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat}); err == nil || !strings.Contains(err.Error(), "no ZCode JWT") {
+	if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat}); err == nil || !strings.Contains(err.Error(), "no ZCode session") {
 		t.Fatalf("Send without key error = %v, want missing-key error", err)
 	}
 
@@ -147,6 +147,33 @@ func TestSendRejectsMissingKeyAndUnsupportedKind(t *testing.T) {
 	if reached {
 		t.Error("upstream called for invalid credentials or unsupported kind")
 	}
+}
+
+type staticTokenSource string
+
+func (s staticTokenSource) AccessToken(context.Context) (string, error) {
+	return string(s), nil
+}
+
+func TestSendUsesTokenSourceInsteadOfConfiguredKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer session-token" {
+			t.Errorf("Authorization = %q, want session token", got)
+		}
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "stale-configured-key")
+	client.Tokens = staticTokenSource("session-token")
+	response, err := client.Send(context.Background(), &backend.Request{
+		Kind:    backend.KindOpenAIChat,
+		RawBody: []byte(`{"model":"glm-5.3-flash"}`),
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	_ = response.Body.Close()
 }
 
 func TestBearerTokenAcceptsPrefixedKey(t *testing.T) {

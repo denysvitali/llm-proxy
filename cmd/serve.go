@@ -17,6 +17,7 @@ import (
 	codexbackend "github.com/denysvitali/llm-proxy/internal/backend/codex"
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	workbuddybackend "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
+	zcodebackend "github.com/denysvitali/llm-proxy/internal/backend/zcode"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/denysvitali/llm-proxy/internal/server"
 	"github.com/denysvitali/llm-proxy/internal/tracing"
@@ -55,16 +56,16 @@ func init() {
 // buildBackends constructs the enabled backends in configuration order via
 // the backend registry.
 func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
-	return buildBackendsWithTokenSources(cfg, grokbackend.NewManager(cfg.GrokAuthFile), workbuddybackend.NewSession(cfg.WorkBuddyAuthFile), codexbackend.NewManager(cfg.CodexAuthFile))
+	return buildBackendsWithTokenSources(cfg, grokbackend.NewManager(cfg.GrokAuthFile), workbuddybackend.NewSession(cfg.WorkBuddyAuthFile), codexbackend.NewManager(cfg.CodexAuthFile), zcodebackend.NewManager(cfg.ZCodeAuthFile))
 }
 
-func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyTokens, codexTokens backend.TokenSource) ([]backend.Backend, error) {
+func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyTokens, codexTokens, zcodeTokens backend.TokenSource) ([]backend.Backend, error) {
 	out := make([]backend.Backend, 0, len(cfg.Backends))
 	for _, bc := range cfg.EnabledBackends() {
 		b, err := backend.New(bc.Type, backend.Options{
 			BaseURL:     bc.BaseURL,
 			APIKey:      bc.ResolveKey(os.Getenv),
-			TokenSource: tokensForBackend(bc.Type, grokTokens, workBuddyTokens, codexTokens),
+			TokenSource: tokensForBackend(bc.Type, grokTokens, workBuddyTokens, codexTokens, zcodeTokens),
 			FreeOnly:    bc.FreeOnly,
 		})
 		if err != nil {
@@ -75,7 +76,7 @@ func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyToke
 	return out, nil
 }
 
-func tokensForBackend(name string, grokTokens, workBuddyTokens, codexTokens backend.TokenSource) backend.TokenSource {
+func tokensForBackend(name string, grokTokens, workBuddyTokens, codexTokens, zcodeTokens backend.TokenSource) backend.TokenSource {
 	if name == "grok" {
 		return grokTokens
 	}
@@ -84,6 +85,9 @@ func tokensForBackend(name string, grokTokens, workBuddyTokens, codexTokens back
 	}
 	if name == "codex" {
 		return codexTokens
+	}
+	if name == "zcode" {
+		return zcodeTokens
 	}
 	return nil
 }
@@ -115,7 +119,8 @@ func runServe(cfg *config.Config) error {
 	grokTokens := grokbackend.NewManager(cfg.GrokAuthFile)
 	workBuddyTokens := workbuddybackend.NewManager(cfg.WorkBuddyAuthFile)
 	codexTokens := codexbackend.NewManager(cfg.CodexAuthFile)
-	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workBuddyTokens, codexTokens)
+	zcodeTokens := zcodebackend.NewManager(cfg.ZCodeAuthFile)
+	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workBuddyTokens, codexTokens, zcodeTokens)
 	if err != nil {
 		return err
 	}
@@ -136,7 +141,7 @@ func runServe(cfg *config.Config) error {
 		}()
 	}
 
-	srv := server.NewWithAllAccountAuth(cfg, log, store, backends, grokTokens, workBuddyTokens, codexTokens)
+	srv := server.NewWithAllAccountAuth(cfg, log, store, backends, grokTokens, workBuddyTokens, codexTokens, zcodeTokens)
 	defer func() { _ = srv.Close() }()
 
 	httpServer := &http.Server{

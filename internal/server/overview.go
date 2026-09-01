@@ -87,7 +87,7 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 			Name:    bc.Type,
 			Enabled: bc.IsEnabled(),
 			Host:    baseURLHost(bc.BaseURL),
-			HasKey:  bc.Type != "grok" && bc.Type != "codex" && bc.ResolveKey(os.Getenv) != "",
+			HasKey:  bc.Type != "grok" && bc.Type != "codex" && bc.Type != "zcode" && bc.ResolveKey(os.Getenv) != "",
 		}
 		switch bc.Type {
 		case "grok":
@@ -100,6 +100,10 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 		case "codex":
 			entry.AuthLabel = "ChatGPT account"
 			entry.AuthConfigured = s.codexAuth != nil && s.codexAuth.HasSession()
+			entry.HasKey = false
+		case "zcode":
+			entry.AuthLabel = "ZCode account"
+			entry.AuthConfigured = s.zcodeAuth != nil && s.zcodeAuth.HasSession()
 			entry.HasKey = false
 		default:
 			entry.AuthLabel = "API key"

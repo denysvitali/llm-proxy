@@ -8,7 +8,7 @@ configured backends, translating between API shapes when needed.
 Access control is two-sided: end users authenticate to the proxy with their own
 API keys (each user can hold any number of keys), while ordinary upstream
 provider keys are configured once, per backend, server-side. Subscription-backed
-Grok, WorkBuddy, and Codex instead use account sessions signed in from the web dashboard,
+Grok, WorkBuddy, Codex, and ZCode instead use account sessions signed in from the web dashboard,
 not upstream API keys.
 
 > [!IMPORTANT]
@@ -28,7 +28,7 @@ not upstream API keys.
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
-| `zcode`     | ZCode Start Plan                 | Anthropic Messages, Chat Completions     | Uses a ZCode JWT and the Start Plan gateway; Responses requests are translated server-side. |
+| `zcode`     | ZCode Start Plan                 | Anthropic Messages, Chat Completions     | Browser sign-in stores a ZCode session; Responses requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
@@ -144,14 +144,12 @@ clients use the proxy's normal translation paths.
 
 ### ZCode Start Plan
 
-The `zcode` backend uses the ZCode Start Plan JWT from the ZCode OAuth flow.
-It does not use a Z.ai API key. Set the JWT in an environment variable and
-route the claimed model to it:
+The `zcode` backend uses the ZCode Start Plan account session. It does not
+use a Z.ai API key or require a JWT in the configuration. Enable it with:
 
 ```yaml
 backends:
   - type: zcode
-    api_key_env: ZCODE_JWT
 
 routes:
   glm-5.3-flash:
@@ -160,9 +158,15 @@ routes:
 ```
 
 ```bash
-export ZCODE_JWT='your-zcode-jwt'
 ./llm-proxy serve
 ```
+
+Open `http://127.0.0.1:8090/login/zcode` (or use the **Sign in with ZCode**
+link on the dashboard), complete the browser authorization, and leave the
+page open until it confirms success. The resulting ZCode session is stored at
+`~/.config/llm-proxy/zcode-auth.json` with mode `0600`; override
+`zcode_auth_file` at the top level to change the path. Revisit the same page
+when the session expires.
 
 The backend forwards Anthropic requests to
 `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages` and OpenAI
@@ -256,6 +260,8 @@ push to `main` and for `v*` tags.
    the proxy. Grok account sign-in is available from this web page only.
    For a `codex` backend, open `http://127.0.0.1:8090/login/codex` and complete
    the ChatGPT device-code flow instead.
+   For a `zcode` backend, open `http://127.0.0.1:8090/login/zcode` and complete
+   the browser authorization instead.
 
 3. Create a user and mint an API key. The plaintext key starts with `llx_`,
    grants access to everything the proxy can reach, and is shown exactly once:
@@ -435,10 +441,11 @@ flags are applied afterwards.
 | `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
 | `workbuddy_auth_file`        | `LLM_PROXY_WORKBUDDY_AUTH_FILE`    | `~/.config/llm-proxy/workbuddy-auth.json` | Account session created by the WorkBuddy browser sign-in flow. |
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
+| `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
 | `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
-| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key; for `zcode`, this should contain the ZCode JWT (not a Z.ai API key). |
-| `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key; for `zcode`, this is the ZCode JWT (not a Z.ai API key). |
+| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`) use their web sign-in sessions instead. |
+| `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
 | `backends[].fallbacks`       | —                                    | —                        | Alternate backends (with optional model rewrites) tried when this backend fails before anything reaches the client. |
@@ -518,6 +525,7 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
 | GET/POST | `/login/workbuddy`          | Web-only WorkBuddy account sign-in |
 | GET/POST | `/login/codex`              | ChatGPT device-code sign-in for Codex |
+| GET/POST | `/login/zcode`              | Web-only ZCode account sign-in |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |

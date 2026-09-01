@@ -78,6 +78,13 @@ export default function SetupPage() {
             </Alert>
           )}
 
+          {ov.backends.some((b) => b.name === 'zcode') && (
+            <Alert color="violet" variant="light" title="ZCode uses your account">
+              ZCode does not use an upstream API key.{' '}
+              <a href="/login/zcode">Sign in with ZCode</a> to connect your Start Plan.
+            </Alert>
+          )}
+
           <Card withBorder radius="lg" p={0}>
             <Tabs defaultValue="claude" keepMounted={false}>
               <Tabs.List px="md" pt={6}>

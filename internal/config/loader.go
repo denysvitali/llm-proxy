@@ -35,6 +35,7 @@ func Load() (*Config, error) {
 	if home, err := os.UserHomeDir(); err == nil {
 		v.SetDefault("grok_auth_file", filepath.Join(home, ".config", "grok-proxy", "auth.json"))
 		v.SetDefault("codex_auth_file", filepath.Join(home, ".config", "llm-proxy", "codex-auth.json"))
+		v.SetDefault("zcode_auth_file", filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json"))
 	}
 	v.SetDefault("log_level", "info")
 	v.SetDefault("log_format", "text")

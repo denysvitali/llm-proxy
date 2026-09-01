@@ -30,10 +30,12 @@ const (
 // enables it for the account.
 var defaultModels = []string{"glm-5.3-flash"}
 
-// Client sends requests to the ZCode plan gateway using a ZCode JWT.
+// Client sends requests to the ZCode plan gateway using either a configured
+// JWT or, preferably, a TokenSource populated by the browser sign-in flow.
 type Client struct {
 	BaseURL string
 	Key     string
+	Tokens  backend.TokenSource
 	HTTP    *http.Client
 }
 
@@ -60,7 +62,9 @@ func New(baseURL, key string) *Client {
 
 func init() {
 	backend.Register("zcode", func(opts backend.Options) (backend.Backend, error) {
-		return New(opts.BaseURL, opts.APIKey), nil
+		client := New(opts.BaseURL, opts.APIKey)
+		client.Tokens = opts.TokenSource
+		return client, nil
 	})
 }
 
@@ -84,18 +88,26 @@ func endpoint(kind backend.Kind) (string, bool) {
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
-	if c.Key == "" {
-		return nil, fmt.Errorf("zcode backend has no ZCode JWT configured")
-	}
 	path, ok := endpoint(req.Kind)
 	if !ok {
 		return nil, fmt.Errorf("zcode backend does not support kind %q", req.Kind)
+	}
+	token := c.Key
+	if c.Tokens != nil {
+		var err error
+		token, err = c.Tokens.AccessToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("zcode backend has no ZCode session configured")
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(req.RawBody))
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Authorization", bearerToken(c.Key))
+	httpReq.Header.Set("Authorization", bearerToken(token))
 	httpReq.Header.Set("Content-Type", "application/json")
 	accept := "application/json"
 	if req.Streaming {
