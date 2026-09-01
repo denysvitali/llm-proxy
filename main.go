@@ -1,6 +1,7 @@
 // llm-proxy speaks both the Anthropic Messages API and the OpenAI APIs
 // (Chat Completions, Responses), authenticates proxy users with API keys,
-// and routes to upstream backends (OpenCode Zen, Grok, Venice, Nous, Apodex).
+// and routes to upstream backends (OpenCode Zen, Grok, Venice, Nous, Apodex,
+// and abliteration.ai).
 package main
 
 import (

@@ -21,6 +21,7 @@ not upstream API keys.
 
 | Backend   | Upstream                          | Native APIs                              | Notes                                                        |
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
 | `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
@@ -34,6 +35,24 @@ not upstream API keys.
 When an inbound request targets an API shape the routed backend does not speak
 natively, the proxy translates the request and — streaming included — the
 response.
+
+### abliteration.ai
+
+[abliteration.ai](https://abliteration.ai/docs) provides native OpenAI Chat
+Completions, OpenAI Responses, and Anthropic Messages endpoints at
+`https://api.abliteration.ai/v1`. Configure it with an API key from the
+abliteration.ai console:
+
+```yaml
+backends:
+  - type: abliteration
+    api_key_env: ABLITERATION_API_KEY
+```
+
+The proxy fetches the live `GET /v1/models` catalog. The available model IDs
+include `abliterated-model`, `abliterated-model-large-v2`, and
+`abliterated-model-large`; use a qualified route such as
+`abliteration/abliterated-model` to pin this backend.
 
 ### Apodex
 
@@ -382,7 +401,7 @@ flags are applied afterwards.
 | `grok_auth_file`             | `LLM_PROXY_GROK_AUTH_FILE`         | `~/.config/grok-proxy/auth.json` | xAI account session file used by the Grok subscription backend. This is not an API key. |
 | `workbuddy_auth_file`        | `LLM_PROXY_WORKBUDDY_AUTH_FILE`    | `~/.config/llm-proxy/workbuddy-auth.json` | Account session created by the WorkBuddy browser sign-in flow. |
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `nous`, `openrouter`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `nous`, `openrouter`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key (not supported for `grok`, `workbuddy`, or `codex`). |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key (not supported for `grok`, `workbuddy`, or `codex`). |

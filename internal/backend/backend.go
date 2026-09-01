@@ -46,7 +46,7 @@ type Response struct {
 // concurrent use.
 type Backend interface {
 	// Name returns the backend identifier used in config and metrics
-	// ("venice", "opencode", "opencode-go", "grok", "codex", "nous", "apodex").
+	// ("abliteration", "venice", "opencode", "opencode-go", "grok", "codex", "nous", "apodex").
 	Name() string
 	// Models lists model IDs this backend serves. Used by /v1/models and the
 	// dashboard; backends with no catalog may return a static list.
