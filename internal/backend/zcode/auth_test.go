@@ -214,6 +214,30 @@ func TestCaptchaVerifyParamFallsBackToBrowserProofWhenSolverIsUnavailable(t *tes
 	}
 }
 
+func TestCaptchaVerifyParamPrefersBrowserProofOverSolver(t *testing.T) {
+	calls := 0
+	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = fmt.Fprint(w, `{"verify_param":"solver-proof"}`)
+	}))
+	defer solver.Close()
+
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	manager.CaptchaSolverURL = solver.URL
+	manager.HTTPClient = solver.Client()
+	if err := manager.SetCaptchaVerifyParam("browser-proof"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := manager.CaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatalf("CaptchaVerifyParam() error = %v", err)
+	}
+	if got != "browser-proof" || calls != 0 {
+		t.Fatalf("proof = %q, solver calls = %d; want browser-proof and no solver call", got, calls)
+	}
+}
+
 func jwtWithExpiration(expiration time.Time) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, expiration.Unix())))

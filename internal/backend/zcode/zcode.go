@@ -31,10 +31,10 @@ const (
 	// anthropicVersion is required by the Anthropic Messages API.
 	anthropicVersion = "2023-06-01"
 
-	// zcodeAppVersion and the identity headers below match the headers used by
-	// the ZCode client. They are fixed so an arbitrary inbound client cannot
+	// zcodeAppVersion and the identity headers below match the current ZCode
+	// desktop client. They are fixed so an arbitrary inbound client cannot
 	// create an inconsistent identity that triggers the gateway's abuse checks.
-	zcodeAppVersion = "3.10.0"
+	zcodeAppVersion = "3.10.2"
 
 	aliyunCaptchaHeader       = "X-Aliyun-Captcha-Verify-Param"
 	aliyunCaptchaRegionHeader = "X-Aliyun-Captcha-Verify-Region"
@@ -166,7 +166,6 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		if release := kernelRelease(); release != "" {
 			httpReq.Header.Set("X-Os-Version", release)
 		}
-		httpReq.Header.Set("X-Device-Mid", deviceMID(token))
 		httpReq.Header.Set("X-Request-Id", randomUUID())
 		httpReq.Header.Set("X-ZCode-Session-Type", "main")
 		httpReq.Header.Set("X-ZCode-Trace-Id", randomUUID())
@@ -178,7 +177,6 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 		if param != "" {
 			httpReq.Header.Set(aliyunCaptchaHeader, param)
-			httpReq.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
 		}
 		copyRuntimeHeaders(httpReq.Header, req.Header)
 		return httpReq, nil

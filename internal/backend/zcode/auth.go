@@ -206,6 +206,13 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	default:
 	}
+	// A proof just completed in the browser is the proof associated with the
+	// user's current ZCode session. Use it before consulting the optional
+	// solver; otherwise a stale or misconfigured solver can silently replace a
+	// valid browser proof and cause Aliyun to return its HTML 405 block page.
+	if param, err := m.cachedCaptchaVerifyParam(ctx); err == nil {
+		return param, nil
+	}
 	var solverErr error
 	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
 		param, err := m.freshCaptchaVerifyParam(ctx)
@@ -217,9 +224,6 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		// when the solver is intentionally unavailable in a single-replica
 		// deployment.
 		solverErr = err
-	}
-	if param, err := m.cachedCaptchaVerifyParam(ctx); err == nil {
-		return param, nil
 	}
 	if solverErr != nil {
 		return "", solverErr

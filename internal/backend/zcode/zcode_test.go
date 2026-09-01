@@ -110,20 +110,18 @@ func TestSendNativeEndpoints(t *testing.T) {
 func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{
-			"X-Aliyun-Captcha-Verify-Param":  "fresh-param",
-			"X-Aliyun-Captcha-Verify-Region": aliyunCaptchaRegion,
-			"X-ZCode-App-Version":            zcodeAppVersion,
-			"X-ZCode-Agent":                  "glm",
-			"User-Agent":                     "ZCode/" + zcodeAppVersion,
-			"HTTP-Referer":                   "https://zcode.z.ai",
-			"X-Title":                        "Z Code@electron",
-			"X-Platform":                     runtime.GOOS + "-" + zcodeArch(),
-			"X-Release-Channel":              "production",
-			"X-Client-Language":              "en",
-			"X-Client-Timezone":              "UTC",
-			"X-Os-Category":                  runtime.GOOS,
-			"X-Device-Mid":                   deviceMID("secret"),
-			"X-ZCode-Session-Type":           "main",
+			"X-Aliyun-Captcha-Verify-Param": "fresh-param",
+			"X-ZCode-App-Version":           zcodeAppVersion,
+			"X-ZCode-Agent":                 "glm",
+			"User-Agent":                    "ZCode/" + zcodeAppVersion,
+			"HTTP-Referer":                  "https://zcode.z.ai",
+			"X-Title":                       "Z Code@electron",
+			"X-Platform":                    runtime.GOOS + "-" + zcodeArch(),
+			"X-Release-Channel":             "production",
+			"X-Client-Language":             "en",
+			"X-Client-Timezone":             "UTC",
+			"X-Os-Category":                 runtime.GOOS,
+			"X-ZCode-Session-Type":          "main",
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
@@ -143,6 +141,12 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		}
 		if got := r.Header.Get("X-ZCode-Api-Key"); got != "" {
 			t.Errorf("X-ZCode-Api-Key was forwarded: %q", got)
+		}
+		if got := r.Header.Get("X-Device-Mid"); got != "" {
+			t.Errorf("X-Device-Mid = %q, want omitted from model requests", got)
+		}
+		if got := r.Header.Get(aliyunCaptchaRegionHeader); got != "" {
+			t.Errorf("%s = %q, want omitted from model requests", aliyunCaptchaRegionHeader, got)
 		}
 		_, _ = fmt.Fprint(w, `{"ok":true}`)
 	}))
