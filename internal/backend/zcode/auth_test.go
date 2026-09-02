@@ -260,3 +260,21 @@ func jwtWithExpiration(expiration time.Time) string {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, expiration.Unix())))
 	return header + "." + payload + ".signature"
 }
+
+func TestNewManagerWithCaptchaStoreNormalizesTypedNilStore(t *testing.T) {
+	// serve.go builds the Valkey store as a *ValkeyCaptchaStore that stays
+	// nil without stats.redis_url; wrapping that typed nil in the CaptchaStore
+	// interface must not count as a configured store, or every model request
+	// panics inside Take and proof reads bypass the sidecar file.
+	manager := NewManagerWithCaptchaStore(filepath.Join(t.TempDir(), "zcode-auth.json"), nil)
+	if manager.captcha != nil {
+		t.Fatalf("manager.captcha = %#v, want nil for a typed-nil store", manager.captcha)
+	}
+	if err := manager.SetCaptchaVerifyParam("sidecar-proof"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := manager.TakeCaptchaVerifyParam(context.Background())
+	if err != nil || got != "sidecar-proof" {
+		t.Fatalf("TakeCaptchaVerifyParam() = %q, %v; want the sidecar proof without a shared store", got, err)
+	}
+}

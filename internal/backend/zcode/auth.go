@@ -139,6 +139,12 @@ func NewManagerWithCaptchaStore(path string, captcha CaptchaStore) *Manager {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json")
 	}
+	// A typed-nil *ValkeyCaptchaStore wrapped in the interface is non-nil to
+	// `captcha != nil` checks, which made every model request panic inside
+	// Take. Normalize it to a true nil so the sidecar file path is used.
+	if store, ok := captcha.(*ValkeyCaptchaStore); ok && store == nil {
+		captcha = nil
+	}
 	return &Manager{
 		Store:            &Store{Path: path},
 		Issuer:           Issuer,
