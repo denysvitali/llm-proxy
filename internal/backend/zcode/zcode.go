@@ -35,6 +35,7 @@ const (
 	// desktop client. They are fixed so an arbitrary inbound client cannot
 	// create an inconsistent identity that triggers the gateway's abuse checks.
 	zcodeAppVersion = "3.10.2"
+	zcodeLanguage   = "en-US"
 
 	aliyunCaptchaHeader       = "X-Aliyun-Captcha-Verify-Param"
 	aliyunCaptchaRegionHeader = "X-Aliyun-Captcha-Verify-Region"
@@ -46,6 +47,10 @@ const (
 // contract used by unrelated providers.
 type captchaSource interface {
 	CaptchaVerifyParam(context.Context) (string, error)
+}
+
+type captchaConsumer interface {
+	TakeCaptchaVerifyParam(context.Context) (string, error)
 }
 
 type captchaInvalidator interface {
@@ -135,7 +140,17 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 	requestBody := transformStartPlanRequest(req.RawBody)
 	captchaParam := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader))
-	if source, ok := c.Tokens.(captchaSource); ok {
+	if consumer, ok := c.Tokens.(captchaConsumer); ok {
+		// Browser proofs are one-use credentials. Account managers consume a
+		// cached proof before sending so concurrent requests cannot reuse the
+		// same Aliyun certifyId and trigger an unusual-activity block.
+		param, sourceErr := consumer.TakeCaptchaVerifyParam(ctx)
+		if sourceErr == nil {
+			captchaParam = param
+		} else if captchaParam == "" {
+			return nil, sourceErr
+		}
+	} else if source, ok := c.Tokens.(captchaSource); ok {
 		// Prefer the proxy's newest proof. Client applications can retain a
 		// previous header across retries, while the manager knows which proof
 		// was most recently generated for this proxy session.
@@ -160,12 +175,13 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("HTTP-Referer", "https://zcode.z.ai")
 		httpReq.Header.Set("X-Platform", runtime.GOOS+"-"+zcodeArch())
 		httpReq.Header.Set("X-Release-Channel", "production")
-		httpReq.Header.Set("X-Client-Language", "en")
+		httpReq.Header.Set("X-Client-Language", zcodeLanguage)
 		httpReq.Header.Set("X-Client-Timezone", "UTC")
 		httpReq.Header.Set("X-Os-Category", runtime.GOOS)
-		if release := kernelRelease(); release != "" {
-			httpReq.Header.Set("X-Os-Version", release)
-		}
+		// Do not send the proxy host's kernel release. It identifies the
+		// Kubernetes node, not the ZCode client, and can change when a request
+		// lands on another replica. The official client treats this as an
+		// optional client-platform header.
 		httpReq.Header.Set("X-Request-Id", randomUUID())
 		httpReq.Header.Set("X-ZCode-Session-Type", "main")
 		httpReq.Header.Set("X-ZCode-Trace-Id", randomUUID())
@@ -180,6 +196,12 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			httpReq.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
 		}
 		copyRuntimeHeaders(httpReq.Header, req.Header)
+		// The official client strips its internal sess_/query_ prefixes before
+		// putting these attribution values on the wire. Normalize inbound
+		// values and create stable proxy defaults when the API client omitted
+		// them.
+		httpReq.Header.Set("X-Session-Id", attributionHeaderValue(req.Header.Get("X-Session-Id"), "sess_", deviceMID(token)))
+		httpReq.Header.Set("X-Query-Id", attributionHeaderValue(req.Header.Get("X-Query-Id"), "query_", randomUUID()))
 		return httpReq, nil
 	}
 	httpReq, err := buildRequest(captchaParam)
@@ -261,6 +283,17 @@ func zcodeArch() string {
 		return "x64"
 	}
 	return runtime.GOARCH
+}
+
+func attributionHeaderValue(value, prefix, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	if strings.HasPrefix(value, prefix) && len(value) > len(prefix) {
+		return value[len(prefix):]
+	}
+	return value
 }
 
 func kernelRelease() string {

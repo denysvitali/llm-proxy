@@ -47,7 +47,7 @@ func (m *Manager) PlanUsage(ctx context.Context) ([]PlanUsage, error) {
 	req.Header.Set("HTTP-Referer", "https://zcode.z.ai")
 	req.Header.Set("X-Platform", runtime.GOOS+"-"+zcodeArch())
 	req.Header.Set("X-Release-Channel", "production")
-	req.Header.Set("X-Client-Language", "en")
+	req.Header.Set("X-Client-Language", zcodeLanguage)
 	req.Header.Set("X-Client-Timezone", "UTC")
 	req.Header.Set("X-Os-Category", runtime.GOOS)
 	if release := kernelRelease(); release != "" {

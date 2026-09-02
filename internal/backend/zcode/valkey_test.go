@@ -50,6 +50,16 @@ func TestValkeyCaptchaStoreSharesAndExpiresProof(t *testing.T) {
 		t.Fatalf("Get after delete error = %v, want not-exist", err)
 	}
 
+	if err := first.Set(context.Background(), "one-use-param", time.Now()); err != nil {
+		t.Fatalf("Set one-use: %v", err)
+	}
+	if got, _, err := second.Take(context.Background()); err != nil || got != "one-use-param" {
+		t.Fatalf("Take from second replica = %q, %v; want one-use-param", got, err)
+	}
+	if _, _, err := first.Take(context.Background()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("second Take error = %v, want not-exist", err)
+	}
+
 	if err := first.Set(context.Background(), "expiring-param", time.Now()); err != nil {
 		t.Fatalf("Set expiring: %v", err)
 	}

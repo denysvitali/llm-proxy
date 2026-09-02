@@ -50,7 +50,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.w
         setStatus('Verification received. Saving it to the proxy…');
         fetch('/login/zcode/captcha',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({verify_param:param})})
           .then(function(response){return response.json().then(function(body){return {ok:response.ok,body:body};});})
-          .then(function(result){if(!result.ok)throw new Error(result.body.error||'proxy rejected the verification');verificationActive=false;setStatus('Browser verification saved. It is valid for about 40 seconds.','ok');button.disabled=false;})
+          .then(function(result){if(!result.ok)throw new Error(result.body.error||'proxy rejected the verification');verificationActive=false;setStatus('Browser verification saved for the next model request.','ok');button.disabled=false;})
           .catch(function(error){startRequested=false;verificationActive=false;setStatus('Could not save verification: '+error.message,'err');button.disabled=false;});
       },
       fail:function(){startRequested=false;verificationActive=false;setStatus('Browser verification failed. Retry when ready.','err');button.disabled=false;},

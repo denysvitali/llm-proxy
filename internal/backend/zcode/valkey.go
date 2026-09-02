@@ -23,6 +23,15 @@ end
 return 0
 `)
 
+var takeCaptcha = redis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if not current then
+  return ''
+end
+redis.call('DEL', KEYS[1])
+return current
+`)
+
 // ValkeyCaptchaStore stores one disposable ZCode proof in Redis-compatible
 // Valkey. The server-side TTL is an additional bound beyond the timestamp in
 // the value, so an abandoned proof is removed automatically.
@@ -65,6 +74,33 @@ func (s *ValkeyCaptchaStore) Get(ctx context.Context) (string, time.Time, error)
 	}
 	if err != nil {
 		return "", time.Time{}, err
+	}
+	var record captchaRecord
+	if err := json.Unmarshal(b, &record); err != nil {
+		return "", time.Time{}, fmt.Errorf("decode ZCode CAPTCHA verification parameter: %w", err)
+	}
+	return record.VerifyParam, record.IssuedAt, nil
+}
+
+// Take atomically returns and deletes the current proof. A proof must not be
+// handed to two concurrent model requests, even when they run on different
+// proxy replicas.
+func (s *ValkeyCaptchaStore) Take(ctx context.Context) (string, time.Time, error) {
+	value, err := takeCaptcha.Run(ctx, s.client, []string{s.key}).Result()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	var b []byte
+	switch value := value.(type) {
+	case string:
+		b = []byte(value)
+	case []byte:
+		b = value
+	default:
+		return "", time.Time{}, fmt.Errorf("decode ZCode CAPTCHA verification parameter: unexpected Redis value %T", value)
+	}
+	if len(b) == 0 {
+		return "", time.Time{}, os.ErrNotExist
 	}
 	var record captchaRecord
 	if err := json.Unmarshal(b, &record); err != nil {

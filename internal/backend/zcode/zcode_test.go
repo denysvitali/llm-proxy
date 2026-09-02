@@ -119,10 +119,11 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Title":                       "Z Code@electron",
 			"X-Platform":                    runtime.GOOS + "-" + zcodeArch(),
 			"X-Release-Channel":             "production",
-			"X-Client-Language":             "en",
+			"X-Client-Language":             zcodeLanguage,
 			"X-Client-Timezone":             "UTC",
 			"X-Os-Category":                 runtime.GOOS,
 			"X-ZCode-Session-Type":          "main",
+			"X-Session-Id":                  deviceMID("secret"),
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
@@ -134,8 +135,11 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		if got := r.Header.Get("X-ZCode-Trace-Id"); got == "" {
 			t.Error("X-ZCode-Trace-Id is empty")
 		}
-		if runtime.GOOS == "linux" && r.Header.Get("X-Os-Version") == "" {
-			t.Error("X-Os-Version is empty on Linux")
+		if got := r.Header.Get("X-Os-Version"); got != "" {
+			t.Errorf("X-Os-Version = %q, want omitted proxy host fingerprint", got)
+		}
+		if got := r.Header.Get("X-Query-Id"); got == "" {
+			t.Error("X-Query-Id is empty")
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Errorf("Authorization = %q, want bearer token", got)
@@ -169,6 +173,18 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 	_ = response.Body.Close()
+}
+
+func TestAttributionHeaderValueNormalizesInternalPrefixes(t *testing.T) {
+	if got := attributionHeaderValue("sess_session-1", "sess_", "fallback"); got != "session-1" {
+		t.Errorf("session attribution = %q, want session-1", got)
+	}
+	if got := attributionHeaderValue("query_query-1", "query_", "fallback"); got != "query-1" {
+		t.Errorf("query attribution = %q, want query-1", got)
+	}
+	if got := attributionHeaderValue(" ", "sess_", "fallback"); got != "fallback" {
+		t.Errorf("empty attribution = %q, want fallback", got)
+	}
 }
 
 func TestDeviceMIDIsStableAndSessionSpecific(t *testing.T) {

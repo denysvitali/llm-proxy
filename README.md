@@ -170,15 +170,17 @@ when the session expires.
 
 After signing in, click **Verify browser session** on that page before making a
 model request. ZCode's plan gateway requires the short-lived Aliyun browser
-verification parameter; the proxy keeps it for about 40 seconds and will ask
-you to verify again after it expires. When `stats.redis_url` points to Redis or
-Valkey, the proof is stored in that shared service so every replica can use
-the same verification. Without shared Redis/Valkey, a separate owner-only
-file beside `zcode-auth.json` is used for a local single-replica deployment.
+verification parameter; the proxy stores one proof for up to about 40 seconds
+and consumes it for one model request, matching ZCode's one-use verification
+flow. Verify again before the next request unless the optional CAPTCHA solver
+is configured. When `stats.redis_url` points to Redis or Valkey, the proof is
+stored in that shared service so exactly one replica can consume it. Without
+shared Redis/Valkey, a separate owner-only file beside `zcode-auth.json` is
+used for a local single-replica deployment.
 A fresh proxy verification takes precedence over a stale client-supplied
-`X-Aliyun-Captcha-Verify-Param`. The proxy emits the current ZCode
-platform/release headers and keeps client identity fields under proxy control;
-inbound clients cannot override them.
+`X-Aliyun-Captcha-Verify-Param`. The proxy emits the current ZCode platform
+headers and keeps client identity fields under proxy control; inbound clients
+cannot override them.
 
 The backend forwards requests to
 `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`. Chat

@@ -43,6 +43,13 @@ type CaptchaStore interface {
 	DeleteIfMatch(context.Context, string, time.Time) error
 }
 
+// captchaTaker is implemented by stores that can atomically hand a proof to
+// one request. It is deliberately separate from CaptchaStore so existing
+// private store implementations remain source-compatible.
+type captchaTaker interface {
+	Take(context.Context) (string, time.Time, error)
+}
+
 // Credentials is the ZCode session returned after browser authorization.
 // The token is a ZCode JWT, not a Z.ai API key.
 type Credentials struct {
@@ -111,6 +118,7 @@ type Manager struct {
 	HTTPClient       *http.Client
 	CaptchaSolverURL string
 	mu               sync.Mutex
+	captchaMu        sync.Mutex
 	captcha          CaptchaStore
 }
 
@@ -192,8 +200,12 @@ func (m *Manager) SetCaptchaVerifyParamContext(ctx context.Context, param string
 		if err := m.captcha.Set(ctx, param, issuedAt); err != nil {
 			return fmt.Errorf("save ZCode CAPTCHA verification parameter: %w", err)
 		}
-	} else if err := writePrivateFile(m.captchaPath(), append(record, '\n')); err != nil {
-		return fmt.Errorf("save ZCode CAPTCHA verification parameter: %w", err)
+	} else {
+		m.captchaMu.Lock()
+		defer m.captchaMu.Unlock()
+		if err := writePrivateFile(m.captchaPath(), append(record, '\n')); err != nil {
+			return fmt.Errorf("save ZCode CAPTCHA verification parameter: %w", err)
+		}
 	}
 	return nil
 }
@@ -231,6 +243,81 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 	return "", captchaVerificationRequiredError()
 }
 
+// TakeCaptchaVerifyParam returns a proof for one model request and consumes
+// cached browser proofs atomically. Aliyun verification parameters are
+// one-use credentials; reusing the same certifyId across model calls is
+// treated as suspicious activity by the upstream gateway. Solver proofs are
+// already minted one per call, so they do not need to be stored.
+func (m *Manager) TakeCaptchaVerifyParam(ctx context.Context) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+	if param, err := m.takeCachedCaptchaVerifyParam(ctx); err == nil {
+		return param, nil
+	}
+	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
+		if param, err := m.freshCaptchaVerifyParam(ctx); err == nil {
+			return param, nil
+		} else {
+			return "", err
+		}
+	}
+	return "", captchaVerificationRequiredError()
+}
+
+func (m *Manager) takeCachedCaptchaVerifyParam(ctx context.Context) (string, error) {
+	if m.captcha != nil {
+		if taker, ok := m.captcha.(captchaTaker); ok {
+			param, issuedAt, err := taker.Take(ctx)
+			if err != nil {
+				return "", err
+			}
+			if isFreshCaptcha(param, issuedAt) {
+				return strings.TrimSpace(param), nil
+			}
+			return "", captchaVerificationRequiredError()
+		}
+
+		// Fallback for an older store implementation. The built-in Valkey
+		// store implements the atomic path above; this branch is only a
+		// compatibility fallback and may race if its implementation is shared.
+		param, issuedAt, err := m.captcha.Get(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !isFreshCaptcha(param, issuedAt) {
+			_ = m.captcha.DeleteIfMatch(ctx, param, issuedAt)
+			return "", captchaVerificationRequiredError()
+		}
+		if err := m.captcha.DeleteIfMatch(ctx, param, issuedAt); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(param), nil
+	}
+
+	m.captchaMu.Lock()
+	defer m.captchaMu.Unlock()
+	record, err := readCaptchaRecord(m.captchaPath())
+	if err != nil {
+		return "", err
+	}
+	if !isFreshCaptcha(record.VerifyParam, record.IssuedAt) {
+		_ = os.Remove(m.captchaPath())
+		return "", captchaVerificationRequiredError()
+	}
+	if err := os.Remove(m.captchaPath()); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(record.VerifyParam), nil
+}
+
+func isFreshCaptcha(param string, issuedAt time.Time) bool {
+	age := time.Since(issuedAt)
+	return strings.TrimSpace(param) != "" && age >= 0 && age < captchaTTL
+}
+
 func (m *Manager) cachedCaptchaVerifyParam(ctx context.Context) (string, error) {
 	if m.captcha != nil {
 		param, issuedAt, err := m.captcha.Get(ctx)
@@ -247,6 +334,8 @@ func (m *Manager) cachedCaptchaVerifyParam(ctx context.Context) (string, error) 
 		_ = m.captcha.DeleteIfMatch(ctx, param, issuedAt)
 		return "", captchaVerificationRequiredError()
 	}
+	m.captchaMu.Lock()
+	defer m.captchaMu.Unlock()
 	if record, err := readCaptchaRecord(m.captchaPath()); err == nil {
 		age := time.Since(record.IssuedAt)
 		if record.VerifyParam != "" && age >= 0 && age < captchaTTL {
@@ -322,6 +411,8 @@ func (m *Manager) InvalidateCaptchaContext(ctx context.Context, param string) {
 		}
 		return
 	}
+	m.captchaMu.Lock()
+	defer m.captchaMu.Unlock()
 	record, err := readCaptchaRecord(m.captchaPath())
 	if err == nil && record.VerifyParam == param {
 		removeCaptchaRecord(m.captchaPath(), record)

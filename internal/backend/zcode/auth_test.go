@@ -170,6 +170,23 @@ func TestCaptchaVerifyParamIsShortLivedAndShared(t *testing.T) {
 	}
 }
 
+func TestTakeCaptchaVerifyParamConsumesBrowserProofOnce(t *testing.T) {
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	if err := manager.SetCaptchaVerifyParam("browser-proof"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := manager.TakeCaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatalf("first TakeCaptchaVerifyParam() error = %v", err)
+	}
+	if got != "browser-proof" {
+		t.Fatalf("first proof = %q, want browser-proof", got)
+	}
+	if _, err := manager.TakeCaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA verification is required") {
+		t.Fatalf("second TakeCaptchaVerifyParam() error = %v, want consumed-proof error", err)
+	}
+}
+
 func TestCaptchaVerifyParamUsesAutomaticSolverPerRequest(t *testing.T) {
 	calls := 0
 	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
