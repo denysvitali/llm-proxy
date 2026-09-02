@@ -50,9 +50,7 @@ func (m *Manager) PlanUsage(ctx context.Context) ([]PlanUsage, error) {
 	req.Header.Set("X-Client-Language", zcodeLanguage)
 	req.Header.Set("X-Client-Timezone", "UTC")
 	req.Header.Set("X-Os-Category", runtime.GOOS)
-	if release := kernelRelease(); release != "" {
-		req.Header.Set("X-Os-Version", release)
-	}
+	req.Header.Set("X-Os-Version", zcodeOSVersion)
 	req.Header.Set("X-Device-Mid", deviceMID(token))
 
 	resp, err := m.HTTPClient.Do(req)

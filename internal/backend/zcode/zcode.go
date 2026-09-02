@@ -15,9 +15,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -36,6 +36,18 @@ const (
 	// create an inconsistent identity that triggers the gateway's abuse checks.
 	zcodeAppVersion = "3.10.2"
 	zcodeLanguage   = "en-US"
+
+	// zcodeOSVersion is the kernel release advertised to the plan gateway.
+	// The official client reports its host kernel; the proxy pins one value
+	// instead so every replica presents the same stable device identity.
+	zcodeOSVersion = "6.8.0-92-generic"
+
+	// unusualActivityCooldown is how long model requests pause after the plan
+	// gateway reports code 3012 ("request has been blocked due to unusual
+	// activity"). The block targets the account itself, outlives CAPTCHA
+	// proofs, and escalates when blocked sessions keep hammering the gateway,
+	// so the proxy backs off instead of retrying.
+	unusualActivityCooldown = 15 * time.Minute
 
 	aliyunCaptchaHeader       = "X-Aliyun-Captcha-Verify-Param"
 	aliyunCaptchaRegionHeader = "X-Aliyun-Captcha-Verify-Region"
@@ -73,6 +85,9 @@ type Client struct {
 	Key     string
 	Tokens  backend.TokenSource
 	HTTP    *http.Client
+
+	blockedMu    sync.Mutex
+	blockedUntil time.Time
 }
 
 // New constructs a ZCode client. BaseURL overrides the gateway root and is
@@ -138,6 +153,12 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("zcode backend has no ZCode session configured")
 	}
+	if until, blocked := c.unusualActivityBlock(); blocked {
+		// Fail fast — and before consuming a browser proof — while the plan
+		// gateway's unusual-activity block is active. Surfacing this as a
+		// backend error also lets server-level fallback routes take over.
+		return nil, fmt.Errorf("ZCode plan gateway rejected the session for unusual activity (code 3012); requests are paused until %s to let the block clear", until.UTC().Format(time.RFC3339))
+	}
 	requestBody := transformStartPlanRequest(req.RawBody)
 	captchaParam := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader))
 	if consumer, ok := c.Tokens.(captchaConsumer); ok {
@@ -178,10 +199,12 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("X-Client-Language", zcodeLanguage)
 		httpReq.Header.Set("X-Client-Timezone", "UTC")
 		httpReq.Header.Set("X-Os-Category", runtime.GOOS)
-		// Do not send the proxy host's kernel release. It identifies the
-		// Kubernetes node, not the ZCode client, and can change when a request
-		// lands on another replica. The official client treats this as an
-		// optional client-platform header.
+		// X-Os-Version and X-Device-Mid are part of the official client's
+		// fingerprint header set. The OS version is pinned rather than read
+		// from the proxy host so every replica presents the same stable
+		// device; the node kernel changes with scheduling.
+		httpReq.Header.Set("X-Os-Version", zcodeOSVersion)
+		httpReq.Header.Set("X-Device-Mid", deviceMID(token))
 		httpReq.Header.Set("X-Request-Id", randomUUID())
 		httpReq.Header.Set("X-ZCode-Session-Type", "main")
 		httpReq.Header.Set("X-ZCode-Trace-Id", randomUUID())
@@ -212,9 +235,12 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, fmt.Errorf("request to ZCode failed: %w", err)
 	}
-	var captchaRejected bool
-	captchaRejected, resp.Body = inspectCaptchaRejection(resp.StatusCode, resp.Body)
-	if captchaRejected {
+	var inspection rejectionInspection
+	inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
+	if inspection.unusualActivity {
+		c.markUnusualActivity()
+	}
+	if inspection.captcha {
 		if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
 			invalidator.InvalidateCaptcha(captchaParam)
 		}
@@ -230,8 +256,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 				if err != nil {
 					return nil, fmt.Errorf("retry request to ZCode after CAPTCHA refresh failed: %w", err)
 				}
-				captchaRejected, resp.Body = inspectCaptchaRejection(resp.StatusCode, resp.Body)
-				if captchaRejected {
+				inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
+				if inspection.unusualActivity {
+					c.markUnusualActivity()
+				}
+				if inspection.captcha {
 					if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
 						invalidator.InvalidateCaptcha(freshParam)
 					}
@@ -240,6 +269,23 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		}
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
+// unusualActivityBlock reports the time until which model requests should
+// pause after a code-3012 unusual-activity rejection.
+func (c *Client) unusualActivityBlock() (time.Time, bool) {
+	c.blockedMu.Lock()
+	defer c.blockedMu.Unlock()
+	if c.blockedUntil.IsZero() || time.Now().After(c.blockedUntil) {
+		return time.Time{}, false
+	}
+	return c.blockedUntil, true
+}
+
+func (c *Client) markUnusualActivity() {
+	c.blockedMu.Lock()
+	defer c.blockedMu.Unlock()
+	c.blockedUntil = time.Now().Add(unusualActivityCooldown)
 }
 
 // copyRuntimeHeaders forwards only request correlation headers. Credentials,
@@ -296,17 +342,6 @@ func attributionHeaderValue(value, prefix, fallback string) string {
 	return value
 }
 
-func kernelRelease() string {
-	if runtime.GOOS != "linux" {
-		return ""
-	}
-	b, err := os.ReadFile("/proc/sys/kernel/osrelease")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
 func randomUUID() string {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -328,32 +363,52 @@ func deviceMID(token string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
-// inspectCaptchaRejection identifies the ZCode responses that make the
-// current proof unusable. Error responses are buffered and restored so the
-// normal server path still relays ZCode's original body to the client.
-func inspectCaptchaRejection(status int, body io.ReadCloser) (bool, io.ReadCloser) {
+// rejectionInspection classifies a buffered ZCode error response: a bad
+// CAPTCHA proof that a fresh one can replace, and/or an unusual-activity
+// block against the account itself.
+type rejectionInspection struct {
+	captcha         bool
+	unusualActivity bool
+}
+
+// inspectRejection identifies the ZCode responses that make the current
+// proof unusable or that flag the account itself. Error responses are
+// buffered and restored so the normal server path still relays ZCode's
+// original body to the client.
+func inspectRejection(status int, body io.ReadCloser) (rejectionInspection, io.ReadCloser) {
+	var inspection rejectionInspection
 	if status != http.StatusBadRequest && status != http.StatusMethodNotAllowed {
-		return false, body
+		return inspection, body
 	}
 	b, err := io.ReadAll(io.LimitReader(body, 1<<20))
 	_ = body.Close()
 	replay := io.NopCloser(bytes.NewReader(b))
 	if err != nil {
-		return false, replay
+		return inspection, replay
 	}
 	var envelope struct {
 		Code json.Number `json:"code"`
 	}
-	if err := json.Unmarshal(b, &envelope); err == nil && envelope.Code.String() == "3007" {
-		return true, replay
+	if err := json.Unmarshal(b, &envelope); err == nil {
+		switch envelope.Code.String() {
+		case "3007":
+			// 3007 is the CAPTCHA challenge: the proof is bad and a fresh
+			// one can recover the request.
+			inspection.captcha = true
+		case "3012":
+			// 3012 marks the session as unusual activity. A fresh proof does
+			// not lift it, so preserve the proof and let the caller back off
+			// instead of retrying.
+			inspection.unusualActivity = true
+		}
 	}
-	// 3007 is the CAPTCHA challenge. 3012 is also used for account
-	// entitlement/activity rejection and does not mean the proof is bad; the
-	// current ZCode client therefore preserves the proof for 3012 responses.
 	// Aliyun's edge security layer emits an HTML 405 page instead of ZCode's
 	// JSON challenge when it blocks the request. Treat that page the same way
 	// so a fresh solver proof can recover the request.
-	return status == http.StatusMethodNotAllowed && isAliyunBlockPage(b), replay
+	if status == http.StatusMethodNotAllowed && isAliyunBlockPage(b) {
+		inspection.captcha = true
+	}
+	return inspection, replay
 }
 
 func isAliyunBlockPage(body []byte) bool {

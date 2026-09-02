@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 )
@@ -122,8 +123,10 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Client-Language":             zcodeLanguage,
 			"X-Client-Timezone":             "UTC",
 			"X-Os-Category":                 runtime.GOOS,
+			"X-Os-Version":                  zcodeOSVersion,
 			"X-ZCode-Session-Type":          "main",
 			"X-Session-Id":                  deviceMID("secret"),
+			"X-Device-Mid":                  deviceMID("secret"),
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
@@ -135,9 +138,6 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		if got := r.Header.Get("X-ZCode-Trace-Id"); got == "" {
 			t.Error("X-ZCode-Trace-Id is empty")
 		}
-		if got := r.Header.Get("X-Os-Version"); got != "" {
-			t.Errorf("X-Os-Version = %q, want omitted proxy host fingerprint", got)
-		}
 		if got := r.Header.Get("X-Query-Id"); got == "" {
 			t.Error("X-Query-Id is empty")
 		}
@@ -146,9 +146,6 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		}
 		if got := r.Header.Get("X-ZCode-Api-Key"); got != "" {
 			t.Errorf("X-ZCode-Api-Key was forwarded: %q", got)
-		}
-		if got := r.Header.Get("X-Device-Mid"); got != "" {
-			t.Errorf("X-Device-Mid = %q, want omitted from model requests", got)
 		}
 		if got := r.Header.Get(aliyunCaptchaRegionHeader); got != aliyunCaptchaRegion {
 			t.Errorf("%s = %q, want %q", aliyunCaptchaRegionHeader, got, aliyunCaptchaRegion)
@@ -217,7 +214,9 @@ func (s *invalidatingTokenAndCaptchaSource) InvalidateCaptcha(param string) {
 }
 
 func TestSendPreservesCaptchaOnUnusualActivityRejection(t *testing.T) {
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		if got := r.Header.Get(aliyunCaptchaHeader); got != "source-param" {
 			t.Errorf("captcha header = %q, want source-param", got)
 		}
@@ -243,6 +242,102 @@ func TestSendPreservesCaptchaOnUnusualActivityRejection(t *testing.T) {
 	}
 	if source.invalidated != "" {
 		t.Errorf("invalidated captcha = %q on 3012, want proof preserved", source.invalidated)
+	}
+
+	// The rejection arms a cooldown: the next request fails fast without
+	// reaching ZCode, so a blocked session stops hammering the gateway and
+	// server-level fallback routes can take over.
+	second, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if err == nil || !strings.Contains(err.Error(), "unusual activity") {
+		t.Fatalf("second Send() error = %v, want unusual-activity cooldown error", err)
+	}
+	if second != nil {
+		t.Fatal("second Send() returned a response during the cooldown")
+	}
+	if requests != 1 {
+		t.Errorf("upstream requests = %d during cooldown, want 1", requests)
+	}
+
+	// Once the cooldown expires, requests reach ZCode again.
+	client.blockedUntil = time.Now().Add(-time.Second)
+	third, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if err != nil {
+		t.Fatalf("Send() after cooldown error = %v", err)
+	}
+	_ = third.Body.Close()
+	if requests != 2 || third.Status != http.StatusMethodNotAllowed {
+		t.Fatalf("requests = %d status = %d after cooldown, want 2 and 405", requests, third.Status)
+	}
+}
+
+type countingCaptchaConsumer struct {
+	taken int
+}
+
+func (s *countingCaptchaConsumer) AccessToken(context.Context) (string, error) {
+	return "session-token", nil
+}
+
+func (s *countingCaptchaConsumer) TakeCaptchaVerifyParam(context.Context) (string, error) {
+	s.taken++
+	return fmt.Sprintf("proof-%d", s.taken), nil
+}
+
+func TestSendCooldownDoesNotConsumeCaptchaProof(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = fmt.Fprint(w, `{"code":3012,"msg":"request has been blocked due to unusual activity."}`)
+	}))
+	defer server.Close()
+
+	consumer := &countingCaptchaConsumer{}
+	client := New(server.URL, "unused")
+	client.Tokens = consumer
+	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	_ = response.Body.Close()
+	if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic}); err == nil {
+		t.Fatal("second Send() during cooldown succeeded, want fail-fast error")
+	}
+	if consumer.taken != 1 {
+		t.Errorf("browser proofs consumed = %d, want 1 (cooldown must not burn proofs)", consumer.taken)
+	}
+}
+
+func TestInspectRejectionClassification(t *testing.T) {
+	const blockPage = `<!doctype html><title>405</title><p>Sorry, your request has been blocked as it may cause potential threats to the server's security.</p>`
+	for _, test := range []struct {
+		name                string
+		status              int
+		body                string
+		wantCaptcha         bool
+		wantUnusualActivity bool
+	}{
+		{name: "captcha challenge", status: http.StatusBadRequest, body: `{"code":3007,"msg":"captcha verify failed"}`, wantCaptcha: true},
+		{name: "unusual activity on 405", status: http.StatusMethodNotAllowed, body: `{"code":3012,"msg":"request has been blocked due to unusual activity."}`, wantUnusualActivity: true},
+		{name: "unusual activity on 400", status: http.StatusBadRequest, body: `{"code":3012,"msg":"request has been blocked due to unusual activity."}`, wantUnusualActivity: true},
+		{name: "aliyun html block page", status: http.StatusMethodNotAllowed, body: blockPage, wantCaptcha: true},
+		{name: "other error code", status: http.StatusMethodNotAllowed, body: `{"code":1302,"msg":"rate limit"}`},
+		{name: "success untouched", status: http.StatusOK, body: `{"type":"message"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inspection, replay := inspectRejection(test.status, io.NopCloser(strings.NewReader(test.body)))
+			replayed, err := io.ReadAll(replay)
+			if err != nil {
+				t.Fatalf("read replay: %v", err)
+			}
+			if string(replayed) != test.body {
+				t.Errorf("replayed body = %q, want %q", replayed, test.body)
+			}
+			if inspection.captcha != test.wantCaptcha {
+				t.Errorf("captcha = %v, want %v", inspection.captcha, test.wantCaptcha)
+			}
+			if inspection.unusualActivity != test.wantUnusualActivity {
+				t.Errorf("unusualActivity = %v, want %v", inspection.unusualActivity, test.wantUnusualActivity)
+			}
+		})
 	}
 }
 

@@ -182,6 +182,14 @@ A fresh proxy verification takes precedence over a stale client-supplied
 headers and keeps client identity fields under proxy control; inbound clients
 cannot override them.
 
+ZCode's risk control can also block the whole session with code 3012
+("request has been blocked due to unusual activity"). That block targets the
+account rather than the proof — re-verifying does not lift it — so the proxy
+relays the first rejection verbatim and then pauses `zcode` requests for
+15 minutes instead of hammering the gateway and burning browser proofs.
+During the pause requests fail fast with an explanatory error and fall back
+to other backends when `fallbacks` are configured.
+
 The backend forwards requests to
 `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`. Chat
 Completions and Responses requests are translated to Anthropic Messages
