@@ -126,7 +126,7 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Os-Category":                 runtime.GOOS,
 			"X-Os-Version":                  zcodeOSVersion,
 			"X-ZCode-Session-Type":          "main",
-			"X-Session-Id":                  deviceMID("secret"),
+			"X-Session-Id":                  sessionID("secret"),
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
@@ -134,12 +134,18 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		}
 		if got := r.Header.Get("X-Request-Id"); got == "" {
 			t.Error("X-Request-Id is empty")
+		} else if got == "reused-request-id" {
+			t.Error("X-Request-Id reused the inbound client value")
 		}
 		if got := r.Header.Get("X-ZCode-Trace-Id"); got == "" {
 			t.Error("X-ZCode-Trace-Id is empty")
+		} else if got == "reused-trace-id" {
+			t.Error("X-ZCode-Trace-Id reused the inbound client value")
 		}
 		if got := r.Header.Get("X-Query-Id"); got == "" {
 			t.Error("X-Query-Id is empty")
+		} else if got == "reused-query-id" {
+			t.Error("X-Query-Id reused the inbound client value")
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Errorf("Authorization = %q, want bearer token", got)
@@ -169,6 +175,9 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Platform":                     []string{"untrusted-platform"},
 			"X-Aliyun-Captcha-Verify-Region": []string{"untrusted-region"},
 			"X-ZCode-Api-Key":                []string{"must-not-forward"},
+			"X-Request-Id":                   []string{"reused-request-id"},
+			"X-ZCode-Trace-Id":               []string{"reused-trace-id"},
+			"X-Query-Id":                     []string{"reused-query-id"},
 		},
 	})
 	if err != nil {
@@ -288,6 +297,9 @@ func TestDeviceMIDIsStableAndSessionSpecific(t *testing.T) {
 	}
 	if len(first) != 36 || first[8] != '-' || first[13] != '-' || first[18] != '-' || first[23] != '-' {
 		t.Fatalf("deviceMID() = %q, want UUID shape", first)
+	}
+	if got := sessionID("session-one"); got == first {
+		t.Fatalf("sessionID() = %q, want a value distinct from deviceMID %q", got, first)
 	}
 }
 
