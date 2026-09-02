@@ -126,7 +126,6 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Os-Version":                  zcodeOSVersion,
 			"X-ZCode-Session-Type":          "main",
 			"X-Session-Id":                  deviceMID("secret"),
-			"X-Device-Mid":                  deviceMID("secret"),
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
@@ -146,6 +145,11 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		}
 		if got := r.Header.Get("X-ZCode-Api-Key"); got != "" {
 			t.Errorf("X-ZCode-Api-Key was forwarded: %q", got)
+		}
+		// The official model-request header builders (gin/fin in the ZCode
+		// runtimes) do not include X-Device-Mid; only claim/billing do.
+		if got := r.Header.Get("X-Device-Mid"); got != "" {
+			t.Errorf("X-Device-Mid = %q, want omitted from model requests", got)
 		}
 		if got := r.Header.Get(aliyunCaptchaRegionHeader); got != aliyunCaptchaRegion {
 			t.Errorf("%s = %q, want %q", aliyunCaptchaRegionHeader, got, aliyunCaptchaRegion)

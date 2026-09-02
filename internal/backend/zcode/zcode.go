@@ -199,12 +199,14 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("X-Client-Language", zcodeLanguage)
 		httpReq.Header.Set("X-Client-Timezone", "UTC")
 		httpReq.Header.Set("X-Os-Category", runtime.GOOS)
-		// X-Os-Version and X-Device-Mid are part of the official client's
-		// fingerprint header set. The OS version is pinned rather than read
-		// from the proxy host so every replica presents the same stable
-		// device; the node kernel changes with scheduling.
+		// Static analysis of the official runtimes (desktop appfull/ and the
+		// zcode.cjs agent runtime): model requests build headers via the
+		// gin/fin builders, which include X-Os-Version (host os.release())
+		// but NOT X-Device-Mid — that header only exists on the non-model
+		// endpoints that use buildZCodeSourceHeadersFromContext. The OS
+		// version is pinned rather than read from the proxy host so every
+		// replica presents the same stable value.
 		httpReq.Header.Set("X-Os-Version", zcodeOSVersion)
-		httpReq.Header.Set("X-Device-Mid", deviceMID(token))
 		httpReq.Header.Set("X-Request-Id", randomUUID())
 		httpReq.Header.Set("X-ZCode-Session-Type", "main")
 		httpReq.Header.Set("X-ZCode-Trace-Id", randomUUID())
