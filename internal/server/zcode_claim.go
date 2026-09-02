@@ -41,3 +41,18 @@ func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, status, outcome)
 }
+
+// zcodeOffers lists the claimable offers ZCode advertises for the signed-in
+// account, so a plan_id can be picked before POSTing /api/zcode/claim.
+func (s *Server) zcodeOffers(w http.ResponseWriter, r *http.Request) {
+	if s.zcodeAuth == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ZCode account management is unavailable"})
+		return
+	}
+	plans, err := s.zcodeAuth.PreviewPlans(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
+}
