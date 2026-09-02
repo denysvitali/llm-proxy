@@ -42,6 +42,33 @@ var zcodeSystemBlocks = []map[string]any{
 // section ordering.
 const zcodeDesktopContext = "# ZCode Desktop Context\n\n### Files & URLs\n- Return local web URLs as Markdown links (e.g., [label](http://127.0.0.1:8080)).\n- File should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Unless otherwise specified, return local file references as Markdown links (e.g., [name.md](/absolute/path/to/name.md)).\n\n### Inline Code Comments\n- Use the ::code-comment{...} directive when you need to attach feedback directly to specific code lines.\n- Emit one directive per inline comment; emit none when there are no actionable inline comments.\n- Required attributes: title (short label), body (one-paragraph explanation), file (path to the file).\n- Optional attributes: start, end (1-based line numbers), priority (0-3).\n- file should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Keep line ranges tight; end defaults to start.\n- Example: ::code-comment{title=\"[P2] Off-by-one\" body=\"Loop iterates past the end when length is 0.\" file=\"/path/to/foo.ts\" start=10 end=11 priority=2}"
 
+// zcodeIdentity carries the device/session attribution the official client
+// stamps onto every model request. DeviceMid is the stable per-session
+// identifier; SessionID is the prefix-normalized session value shared by the
+// X-Session-Id header and the request metadata.
+type zcodeIdentity struct {
+	DeviceMid string
+	SessionID string
+}
+
+// zcodeMetadataUserID reproduces the official client's Iko() builder: the
+// Anthropic metadata.user_id is a JSON string with the device mid, an empty
+// account UUID, and the normalized session id. Inbound clients (e.g. Claude
+// Code) put their own account/session identifiers there — user_<hash>_account_
+// <uuid>_session_<uuid> — which must never reach the plan gateway, so the
+// official shape replaces whatever the client sent.
+func zcodeMetadataUserID(identity zcodeIdentity) string {
+	encoded, err := json.Marshal(struct {
+		DeviceID    string `json:"device_id"`
+		AccountUUID string `json:"account_uuid"`
+		SessionID   string `json:"session_id"`
+	}{DeviceID: identity.DeviceMid, AccountUUID: "", SessionID: identity.SessionID})
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
 // zcodeEnvironmentBlock mirrors the official client's buildEnvInfoSection:
 // the "- You are powered by the model named X." line is the last line of the
 // Environment block itself, not a separate system block.
@@ -67,14 +94,20 @@ func canonicalZCodeModel(model string) string {
 // transformStartPlanRequest mirrors the body mutations performed by current
 // ZCode clients. The plan gateway inspects the ZCode identity system blocks and
 // rejects otherwise valid Anthropic requests with code 3012 when they are
-// absent. Parse failures remain untouched so upstream can return its own error.
-func transformStartPlanRequest(body []byte) []byte {
+// absent. Metadata is replaced wholesale with the official device identity —
+// the official body builder emits only metadata.user_id, so any client
+// attribution (Claude Code account/session UUIDs and friends) is dropped.
+// Parse failures remain untouched so upstream can return its own error.
+func transformStartPlanRequest(body []byte, identity zcodeIdentity) []byte {
 	if len(body) == 0 {
 		return body
 	}
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
 		return body
+	}
+	if userID := zcodeMetadataUserID(identity); userID != "" {
+		request["metadata"] = map[string]any{"user_id": userID}
 	}
 
 	system := make([]any, 0, len(zcodeSystemBlocks)+2)

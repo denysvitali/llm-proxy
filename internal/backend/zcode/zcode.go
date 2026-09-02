@@ -54,6 +54,15 @@ const (
 	aliyunCaptchaRegion       = "sgp"
 )
 
+// zcodeSessionPrefixes and zcodeQueryPrefixes are the internal prefixes the
+// official client strips (wrt/Sko) before putting session and query attribution
+// on the wire — in the X-Session-Id/X-Query-Id headers and in the request
+// metadata alike.
+var (
+	zcodeSessionPrefixes = []string{"sess_", "subagent_agent_"}
+	zcodeQueryPrefixes   = []string{"query_"}
+)
+
 // captchaSource is implemented by the ZCode account manager. Keeping this
 // interface local avoids making CAPTCHA state part of the generic backend
 // contract used by unrelated providers.
@@ -159,7 +168,8 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		// backend error also lets server-level fallback routes take over.
 		return nil, fmt.Errorf("ZCode plan gateway rejected the session for unusual activity (code 3012); requests are paused until %s to let the block clear", until.UTC().Format(time.RFC3339))
 	}
-	requestBody := transformStartPlanRequest(req.RawBody)
+	identity := requestIdentity(token, req.Header)
+	requestBody := transformStartPlanRequest(req.RawBody, identity)
 	captchaParam := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader))
 	if consumer, ok := c.Tokens.(captchaConsumer); ok {
 		// Browser proofs are one-use credentials. Account managers consume a
@@ -225,8 +235,8 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		// putting these attribution values on the wire. Normalize inbound
 		// values and create stable proxy defaults when the API client omitted
 		// them.
-		httpReq.Header.Set("X-Session-Id", attributionHeaderValue(req.Header.Get("X-Session-Id"), "sess_", deviceMID(token)))
-		httpReq.Header.Set("X-Query-Id", attributionHeaderValue(req.Header.Get("X-Query-Id"), "query_", randomUUID()))
+		httpReq.Header.Set("X-Session-Id", identity.SessionID)
+		httpReq.Header.Set("X-Query-Id", normalizedAttribution(req.Header.Get("X-Query-Id"), zcodeQueryPrefixes, randomUUID()))
 		return httpReq, nil
 	}
 	httpReq, err := buildRequest(captchaParam)
@@ -333,16 +343,43 @@ func zcodeArch() string {
 	return runtime.GOARCH
 }
 
-func attributionHeaderValue(value, prefix, fallback string) string {
+// normalizedAttribution strips the official client's internal prefixes from an
+// inbound attribution value, mirroring wrt/Sko: a prefix is removed only when
+// something follows it, so a bare prefix stays intact.
+func normalizedAttribution(value string, prefixes []string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback
 	}
-	if strings.HasPrefix(value, prefix) && len(value) > len(prefix) {
-		return value[len(prefix):]
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) && len(value) > len(prefix) {
+			return value[len(prefix):]
+		}
 	}
 	return value
 }
+
+// requestIdentity derives the device/session attribution for one request: the
+// stable per-token device mid, and the session id the inbound client asked for
+// (prefix-normalized) or the device mid when the client sent none.
+func requestIdentity(token string, header http.Header) zcodeIdentity {
+	deviceMid := deviceMID(token)
+	return zcodeIdentity{
+		DeviceMid: deviceMid,
+		SessionID: normalizedAttribution(header.Get("X-Session-Id"), zcodeSessionPrefixes, deviceMid),
+	}
+}
+
+// PreviewRequest exposes the body Send would put on the wire so the admin
+// request inspector shows the transformed request instead of the inbound one.
+// The identity here is derived from the configured key; browser token sources
+// are not consulted because resolving them can perform IO, which is Send's
+// job — deployments using a token source preview a placeholder device mid.
+func (c *Client) PreviewRequest(req *backend.Request) ([]byte, error) {
+	return transformStartPlanRequest(req.RawBody, requestIdentity(c.Key, req.Header)), nil
+}
+
+var _ backend.RequestPreviewer = (*Client)(nil)
 
 func randomUUID() string {
 	var raw [16]byte

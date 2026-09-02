@@ -180,7 +180,10 @@ used for a local single-replica deployment.
 A fresh proxy verification takes precedence over a stale client-supplied
 `X-Aliyun-Captcha-Verify-Param`. The proxy emits the current ZCode platform
 headers and keeps client identity fields under proxy control; inbound clients
-cannot override them.
+cannot override them. Request-body attribution is replaced the same way:
+`metadata.user_id` (where API clients such as Claude Code embed their own
+account and session identifiers) is rewritten to the official ZCode device
+identity, so client identifiers never reach the plan gateway.
 
 ZCode's risk control can also block the whole session with code 3012
 ("request has been blocked due to unusual activity"). That block targets the

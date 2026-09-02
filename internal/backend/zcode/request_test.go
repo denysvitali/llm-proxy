@@ -8,7 +8,7 @@ import (
 
 func TestTransformStartPlanRequestAddsGatewayIdentityAndCacheControl(t *testing.T) {
 	original := []byte(`{"model":"glm-5.3-flash","system":[{"type":"text","text":"client system"}],"messages":[{"role":"user","content":"hello"}]}`)
-	transformed := transformStartPlanRequest(original)
+	transformed := transformStartPlanRequest(original, zcodeIdentity{DeviceMid: "device-mid", SessionID: "session-1"})
 
 	var body map[string]any
 	if err := json.Unmarshal(transformed, &body); err != nil {
@@ -47,8 +47,52 @@ func TestTransformStartPlanRequestAddsGatewayIdentityAndCacheControl(t *testing.
 
 func TestTransformStartPlanRequestPreservesMalformedBody(t *testing.T) {
 	original := []byte(`{"model":`)
-	if got := transformStartPlanRequest(original); string(got) != string(original) {
+	if got := transformStartPlanRequest(original, zcodeIdentity{DeviceMid: "device-mid", SessionID: "session-1"}); string(got) != string(original) {
 		t.Errorf("malformed body changed to %q", got)
+	}
+}
+
+func TestTransformStartPlanRequestReplacesClientMetadata(t *testing.T) {
+	// Claude Code stamps metadata.user_id with user_<hash>_account_<uuid>_
+	// session_<uuid>; the official client replaces it with a device identity
+	// JSON string and drops every other metadata key. The transform must do
+	// the same so client identifiers never reach the plan gateway.
+	original := []byte(`{"model":"glm-5.3-flash","metadata":{"user_id":"user_5f3a_account_1e2d3c4b-5a6b-7c8d-9e0f-1a2b3c4d5e6f_session_0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","other":"keep-out"},"messages":[]}`)
+	transformed := transformStartPlanRequest(original, zcodeIdentity{DeviceMid: "device-mid", SessionID: "session-1"})
+
+	var body map[string]any
+	if err := json.Unmarshal(transformed, &body); err != nil {
+		t.Fatalf("decode transformed request: %v", err)
+	}
+	metadata, ok := body["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata = %#v, want object", body["metadata"])
+	}
+	wantUserID := `{"device_id":"device-mid","account_uuid":"","session_id":"session-1"}`
+	if got := metadata["user_id"]; got != wantUserID {
+		t.Errorf("metadata.user_id = %v, want %s", got, wantUserID)
+	}
+	if len(metadata) != 1 {
+		t.Errorf("metadata = %#v, want exactly the user_id key", metadata)
+	}
+	if strings.Contains(string(transformed), "_account_") || strings.Contains(string(transformed), "keep-out") {
+		t.Errorf("transformed body leaks client identifiers: %s", transformed)
+	}
+}
+
+func TestTransformStartPlanRequestAddsMetadataWhenClientSentNone(t *testing.T) {
+	// The official client always emits metadata.user_id for Anthropic model
+	// requests, so requests without inbound metadata gain the device identity.
+	original := []byte(`{"model":"glm-5.3-flash","messages":[]}`)
+	transformed := transformStartPlanRequest(original, zcodeIdentity{DeviceMid: "device-mid", SessionID: "session-1"})
+
+	var body map[string]any
+	if err := json.Unmarshal(transformed, &body); err != nil {
+		t.Fatalf("decode transformed request: %v", err)
+	}
+	metadata, ok := body["metadata"].(map[string]any)
+	if !ok || metadata["user_id"] != `{"device_id":"device-mid","account_uuid":"","session_id":"session-1"}` {
+		t.Fatalf("metadata = %#v, want synthesized device identity", body["metadata"])
 	}
 }
 
@@ -64,7 +108,7 @@ func TestTransformStartPlanRequestCanonicalizesAndPassesThroughModels(t *testing
 		{name: "unknown model passes through", model: "glm-4.7", want: "glm-4.7"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			transformed := transformStartPlanRequest([]byte(`{"model":"` + strings.TrimSpace(test.model) + `","messages":[]}`))
+			transformed := transformStartPlanRequest([]byte(`{"model":"`+strings.TrimSpace(test.model)+`","messages":[]}`), zcodeIdentity{DeviceMid: "device-mid", SessionID: "session-1"})
 			var body map[string]any
 			if err := json.Unmarshal(transformed, &body); err != nil {
 				t.Fatalf("decode transformed request: %v", err)
@@ -77,7 +121,7 @@ func TestTransformStartPlanRequestCanonicalizesAndPassesThroughModels(t *testing
 }
 
 func TestTransformStartPlanRequestOmitsModelLineWithoutModel(t *testing.T) {
-	transformed := transformStartPlanRequest([]byte(`{"messages":[]}`))
+	transformed := transformStartPlanRequest([]byte(`{"messages":[]}`), zcodeIdentity{DeviceMid: "device-mid", SessionID: "session-1"})
 	var body map[string]any
 	if err := json.Unmarshal(transformed, &body); err != nil {
 		t.Fatalf("decode transformed request: %v", err)

@@ -3,6 +3,7 @@ package zcode
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +43,7 @@ func TestSupportsAndDefaults(t *testing.T) {
 func TestSendNativeEndpoints(t *testing.T) {
 	const requestBody = `{"model":"glm-5.3-flash","messages":[]}`
 	const responseBody = `{"id":"response-id"}`
-	wantRequestBody := transformStartPlanRequest([]byte(requestBody))
+	wantRequestBody := transformStartPlanRequest([]byte(requestBody), requestIdentity("secret", nil))
 	for _, test := range []struct {
 		name             string
 		kind             backend.Kind
@@ -176,14 +177,103 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	_ = response.Body.Close()
 }
 
-func TestAttributionHeaderValueNormalizesInternalPrefixes(t *testing.T) {
-	if got := attributionHeaderValue("sess_session-1", "sess_", "fallback"); got != "session-1" {
-		t.Errorf("session attribution = %q, want session-1", got)
+func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
+	// Claude Code's inbound body carries its own account and session
+	// identifiers in metadata.user_id; the wire body must replace them with
+	// the official device identity shape instead of forwarding them.
+	const claudeCodeBody = `{"model":"glm-5.3-flash","metadata":{"user_id":"user_5f3a_account_6c9f1d2e-account-uuid_session_1b2c3d4e-session-uuid"},"messages":[{"role":"user","content":"hello"}]}`
+	var upstreamBody []byte
+	var upstreamSessionHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamBody, _ = io.ReadAll(r.Body)
+		upstreamSessionHeader = r.Header.Get("X-Session-Id")
+		_, _ = fmt.Fprint(w, `{"type":"message","content":[]}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "secret")
+	response, err := client.Send(context.Background(), &backend.Request{
+		Kind:    backend.KindAnthropic,
+		RawBody: []byte(claudeCodeBody),
+		Header:  http.Header{"X-Session-Id": []string{"sess_proxy-session-1"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
 	}
-	if got := attributionHeaderValue("query_query-1", "query_", "fallback"); got != "query-1" {
-		t.Errorf("query attribution = %q, want query-1", got)
+	defer func() { _ = response.Body.Close() }()
+
+	var sent map[string]any
+	if err := json.Unmarshal(upstreamBody, &sent); err != nil {
+		t.Fatalf("decode upstream body: %v", err)
 	}
-	if got := attributionHeaderValue(" ", "sess_", "fallback"); got != "fallback" {
+	metadata, ok := sent["metadata"].(map[string]any)
+	if !ok || len(metadata) != 1 {
+		t.Fatalf("metadata = %#v, want exactly the user_id key", sent["metadata"])
+	}
+	wantUserID := zcodeMetadataUserID(zcodeIdentity{DeviceMid: deviceMID("secret"), SessionID: "proxy-session-1"})
+	if got := metadata["user_id"]; got != wantUserID {
+		t.Errorf("metadata.user_id = %v, want %v", got, wantUserID)
+	}
+	if strings.Contains(string(upstreamBody), "account-uuid") || strings.Contains(string(upstreamBody), "user_5f3a") {
+		t.Errorf("upstream body leaks client identifiers: %s", upstreamBody)
+	}
+	if upstreamSessionHeader != "proxy-session-1" {
+		t.Errorf("X-Session-Id = %q, want prefix-stripped proxy-session-1", upstreamSessionHeader)
+	}
+}
+
+func TestPreviewRequestMatchesSentBody(t *testing.T) {
+	const claudeCodeBody = `{"model":"glm-5.3-flash","metadata":{"user_id":"user_5f3a_account_6c9d-session-uuid"},"messages":[]}`
+	var sentBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sentBody, _ = io.ReadAll(r.Body)
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "secret")
+	preview, err := client.PreviewRequest(&backend.Request{
+		Kind:    backend.KindAnthropic,
+		RawBody: []byte(claudeCodeBody),
+		Header:  http.Header{"X-Session-Id": []string{"sess_preview-session"}},
+	})
+	if err != nil {
+		t.Fatalf("PreviewRequest() error = %v", err)
+	}
+	response, err := client.Send(context.Background(), &backend.Request{
+		Kind:    backend.KindAnthropic,
+		RawBody: []byte(claudeCodeBody),
+		Header:  http.Header{"X-Session-Id": []string{"sess_preview-session"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	_ = response.Body.Close()
+	if !bytes.Equal(preview, sentBody) {
+		t.Errorf("preview body = %s, want the body Send put on the wire: %s", preview, sentBody)
+	}
+}
+
+func TestNormalizedAttributionStripsInternalPrefixes(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		value    string
+		prefixes []string
+		want     string
+	}{
+		{name: "session prefix", value: "sess_session-1", prefixes: zcodeSessionPrefixes, want: "session-1"},
+		{name: "subagent prefix", value: "subagent_agent_worker-1", prefixes: zcodeSessionPrefixes, want: "worker-1"},
+		{name: "query prefix", value: "query_query-1", prefixes: zcodeQueryPrefixes, want: "query-1"},
+		{name: "bare prefix falls back", value: "sess_", prefixes: zcodeSessionPrefixes, want: "sess_"},
+		{name: "unknown value untouched", value: "client-session", prefixes: zcodeSessionPrefixes, want: "client-session"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := normalizedAttribution(test.value, test.prefixes, "fallback"); got != test.want {
+				t.Errorf("normalizedAttribution() = %q, want %q", got, test.want)
+			}
+		})
+	}
+	if got := normalizedAttribution(" ", zcodeSessionPrefixes, "fallback"); got != "fallback" {
 		t.Errorf("empty attribution = %q, want fallback", got)
 	}
 }
