@@ -24,7 +24,23 @@ var zcodeSystemBlocks = []map[string]any{
 		"text":          "\nYou are an interactive ZCode agent that helps users with software engineering tasks.\n\nIMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.\n\n# Harness\n- Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.\n- Tools run behind a user-selected permission mode; a denied call means the user declined it — adjust, don't retry verbatim.\n- The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results. Hooks may intercept tool calls; treat hook output as user feedback.\n- Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.\n- Reference code as `file_path:line_number` — it's clickable.",
 		"cache_control": map[string]any{"type": "ephemeral"},
 	},
+	{
+		"type":          "text",
+		"text":          zcodeDesktopContext,
+		"cache_control": map[string]any{"type": "ephemeral"},
+	},
 }
+
+// zcodeDesktopContext is the "ZCode Desktop Context" system section the
+// official desktop client injects (buildDesktopContextSection) when the
+// server-side desktopContextPrompt rollout is enabled — which
+// /api/v1/client/configs currently reports for this account
+// ({"config_version":"desktop-sp-v1","enabled":true}). The proxy claims the
+// desktop persona (X-Title "Z Code@electron"), so it must carry the section
+// too; verbatim text, joined with single newlines ("" array entries become
+// blank lines), positioned before the Environment block like the official
+// section ordering.
+const zcodeDesktopContext = "# ZCode Desktop Context\n\n### Files & URLs\n- Return local web URLs as Markdown links (e.g., [label](http://127.0.0.1:8080)).\n- File should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Unless otherwise specified, return local file references as Markdown links (e.g., [name.md](/absolute/path/to/name.md)).\n\n### Inline Code Comments\n- Use the ::code-comment{...} directive when you need to attach feedback directly to specific code lines.\n- Emit one directive per inline comment; emit none when there are no actionable inline comments.\n- Required attributes: title (short label), body (one-paragraph explanation), file (path to the file).\n- Optional attributes: start, end (1-based line numbers), priority (0-3).\n- file should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Keep line ranges tight; end defaults to start.\n- Example: ::code-comment{title=\"[P2] Off-by-one\" body=\"Loop iterates past the end when length is 0.\" file=\"/path/to/foo.ts\" start=10 end=11 priority=2}"
 
 // zcodeEnvironmentBlock mirrors the official client's buildEnvInfoSection:
 // the "- You are powered by the model named X." line is the last line of the

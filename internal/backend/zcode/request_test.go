@@ -15,16 +15,20 @@ func TestTransformStartPlanRequestAddsGatewayIdentityAndCacheControl(t *testing.
 		t.Fatalf("decode transformed request: %v", err)
 	}
 	system, ok := body["system"].([]any)
-	if !ok || len(system) != 4 {
-		t.Fatalf("system blocks = %#v, want 4 blocks", body["system"])
+	if !ok || len(system) != 5 {
+		t.Fatalf("system blocks = %#v, want 5 blocks", body["system"])
 	}
 	encodedSystem, _ := json.Marshal(system)
-	for _, want := range []string{"You are ZCode", "powered by the model named GLM-5.3-Flash", "client system"} {
+	for _, want := range []string{"You are ZCode", "# ZCode Desktop Context", "::code-comment", "powered by the model named GLM-5.3-Flash", "client system"} {
 		if !strings.Contains(string(encodedSystem), want) {
 			t.Errorf("system blocks do not contain %q", want)
 		}
 	}
-	envBlock := system[2].(map[string]any)
+	desktopBlock := system[2].(map[string]any)
+	if desktopText, _ := desktopBlock["text"].(string); desktopText != zcodeDesktopContext {
+		t.Errorf("desktop context block = %q, want verbatim official text", desktopText)
+	}
+	envBlock := system[3].(map[string]any)
 	if envText, _ := envBlock["text"].(string); !strings.HasSuffix(envText, "- You are powered by the model named GLM-5.3-Flash.") {
 		t.Errorf("model line must be the last line of the Environment block, got %q", envText)
 	}
