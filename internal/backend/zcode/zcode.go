@@ -48,6 +48,11 @@ const (
 	// proofs, and escalates when blocked sessions keep hammering the gateway,
 	// so the proxy backs off instead of retrying.
 	unusualActivityCooldown = 15 * time.Minute
+	// unusualActivityCooldownMax bounds the backoff growth: observed blocks
+	// outlive the fixed cooldown by far (a session stayed blocked 4 h after a
+	// 3012 on 2026-09-02), and repeated probes while blocked only deepen the
+	// block, so consecutive 3012s double the pause up to this ceiling.
+	unusualActivityCooldownMax = 6 * time.Hour
 
 	aliyunCaptchaHeader       = "X-Aliyun-Captcha-Verify-Param"
 	aliyunCaptchaRegionHeader = "X-Aliyun-Captcha-Verify-Region"
@@ -95,8 +100,9 @@ type Client struct {
 	Tokens  backend.TokenSource
 	HTTP    *http.Client
 
-	blockedMu    sync.Mutex
-	blockedUntil time.Time
+	blockedMu      sync.Mutex
+	blockedUntil   time.Time
+	blockedStrikes int
 }
 
 // New constructs a ZCode client. BaseURL overrides the gateway root and is
@@ -283,6 +289,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			}
 		}
 	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		// The gateway answered normally again: any past unusual-activity
+		// strikes are forgotten so the next block starts from the base pause.
+		c.clearUnusualActivity()
+	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
 
@@ -297,10 +308,33 @@ func (c *Client) unusualActivityBlock() (time.Time, bool) {
 	return c.blockedUntil, true
 }
 
+// markUnusualActivity arms the post-3012 cooldown. Consecutive rejections
+// double the pause, capped at unusualActivityCooldownMax, because the plan
+// gateway's block escalates when a blocked session keeps probing and outlives
+// a fixed 15-minute pause in practice. A later successful model request
+// clears the strikes.
 func (c *Client) markUnusualActivity() {
 	c.blockedMu.Lock()
 	defer c.blockedMu.Unlock()
-	c.blockedUntil = time.Now().Add(unusualActivityCooldown)
+	pause := unusualActivityCooldown
+	for i := 0; i < c.blockedStrikes && pause < unusualActivityCooldownMax; i++ {
+		pause *= 2
+	}
+	if pause > unusualActivityCooldownMax {
+		pause = unusualActivityCooldownMax
+	}
+	c.blockedStrikes++
+	c.blockedUntil = time.Now().Add(pause)
+}
+
+// clearUnusualActivity resets the cooldown and its strike count once a model
+// request succeeds again, restoring the initial 15-minute pause for any
+// future block.
+func (c *Client) clearUnusualActivity() {
+	c.blockedMu.Lock()
+	defer c.blockedMu.Unlock()
+	c.blockedUntil = time.Time{}
+	c.blockedStrikes = 0
 }
 
 // copyRuntimeHeaders forwards only request correlation headers. Credentials,

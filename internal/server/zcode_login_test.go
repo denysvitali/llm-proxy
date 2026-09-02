@@ -59,3 +59,40 @@ func TestZCodeCaptchaEndpointStoresParameter(t *testing.T) {
 		t.Errorf("CaptchaVerifyParam() = %q, want fresh-param", got)
 	}
 }
+
+func TestZCodeCaptchaEndpointRejectsBrowserProofWhenSolverConfigured(t *testing.T) {
+	isolatePrometheus(t)
+	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
+	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	manager.CaptchaSolverURL = "http://127.0.0.1:1/token"
+	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, nil, manager)
+	req := httptest.NewRequest(http.MethodPost, "/login/zcode/captcha", bytes.NewBufferString(`{"verify_param":"browser-proof"}`))
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "automatic CAPTCHA solving is configured") {
+		t.Errorf("body does not explain why browser proofs are disabled: %s", rec.Body.String())
+	}
+	if param, err := manager.CaptchaVerifyParam(context.Background()); err == nil || strings.Contains(param, "browser-proof") {
+		t.Errorf("CaptchaVerifyParam() = %q, %v; want the browser proof rejected, not stored", param, err)
+	}
+}
+
+func TestZCodeLoginPageWarnsOffBrowserVerificationWhenSolverConfigured(t *testing.T) {
+	isolatePrometheus(t)
+	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
+	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	manager.CaptchaSolverURL = "http://127.0.0.1:1/token"
+	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, nil, manager)
+	req := httptest.NewRequest(http.MethodGet, "/login/zcode", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "solves ZCode's browser verification automatically") {
+		t.Errorf("login page does not tell solver deployments to skip manual verification: %s", rec.Body.String())
+	}
+}

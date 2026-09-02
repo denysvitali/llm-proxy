@@ -214,7 +214,7 @@ func TestCaptchaVerifyParamUsesAutomaticSolverPerRequest(t *testing.T) {
 	}
 }
 
-func TestCaptchaVerifyParamFallsBackToBrowserProofWhenSolverIsUnavailable(t *testing.T) {
+func TestCaptchaVerifyParamErrorsWhenSolverIsUnavailable(t *testing.T) {
 	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
 	if err := manager.SetCaptchaVerifyParam("browser-proof"); err != nil {
 		t.Fatal(err)
@@ -222,16 +222,27 @@ func TestCaptchaVerifyParamFallsBackToBrowserProofWhenSolverIsUnavailable(t *tes
 	manager.CaptchaSolverURL = "http://127.0.0.1:1/token"
 	manager.HTTPClient = &http.Client{Timeout: 100 * time.Millisecond}
 
-	got, err := manager.CaptchaVerifyParam(context.Background())
+	// A configured solver is authoritative. Falling back to the cached
+	// browser proof is what armed the 2026-09-02 unusual-activity blocks, so
+	// a broken solver must surface its error instead.
+	if _, err := manager.CaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA solver") {
+		t.Fatalf("CaptchaVerifyParam() error = %v, want solver error", err)
+	}
+	if _, err := manager.TakeCaptchaVerifyParam(context.Background()); err == nil || !strings.Contains(err.Error(), "CAPTCHA solver") {
+		t.Fatalf("TakeCaptchaVerifyParam() error = %v, want solver error", err)
+	}
+	// The browser proof must not have been consumed by either failed attempt.
+	manager.CaptchaSolverURL = ""
+	got, err := manager.TakeCaptchaVerifyParam(context.Background())
 	if err != nil {
-		t.Fatalf("CaptchaVerifyParam() error = %v", err)
+		t.Fatalf("TakeCaptchaVerifyParam() after clearing solver error = %v", err)
 	}
 	if got != "browser-proof" {
-		t.Fatalf("CaptchaVerifyParam() = %q, want browser-proof", got)
+		t.Fatalf("TakeCaptchaVerifyParam() = %q, want the untouched browser-proof", got)
 	}
 }
 
-func TestCaptchaVerifyParamPrefersBrowserProofOverSolver(t *testing.T) {
+func TestCaptchaVerifyParamPrefersSolverOverBrowserProof(t *testing.T) {
 	calls := 0
 	solver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -246,12 +257,24 @@ func TestCaptchaVerifyParamPrefersBrowserProofOverSolver(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Browser proofs are solved in the operator's browser and presented from
+	// the proxy's egress; every manual verification preceded a code-3012
+	// block on 2026-09-02. With a solver configured, only solver proofs go
+	// out and the cached browser proof stays untouched.
 	got, err := manager.CaptchaVerifyParam(context.Background())
 	if err != nil {
 		t.Fatalf("CaptchaVerifyParam() error = %v", err)
 	}
-	if got != "browser-proof" || calls != 0 {
-		t.Fatalf("proof = %q, solver calls = %d; want browser-proof and no solver call", got, calls)
+	if got != "solver-proof" || calls != 1 {
+		t.Fatalf("proof = %q, solver calls = %d; want solver-proof and one solver call", got, calls)
+	}
+	manager.CaptchaSolverURL = ""
+	remaining, err := manager.TakeCaptchaVerifyParam(context.Background())
+	if err != nil {
+		t.Fatalf("TakeCaptchaVerifyParam() after clearing solver error = %v", err)
+	}
+	if remaining != "browser-proof" {
+		t.Fatalf("TakeCaptchaVerifyParam() = %q, want browser-proof to remain cached", remaining)
 	}
 }
 

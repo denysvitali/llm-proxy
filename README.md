@@ -169,29 +169,44 @@ page open until it confirms success. The resulting ZCode session is stored at
 when the session expires.
 
 After signing in, click **Verify browser session** on that page before making a
-model request. ZCode's plan gateway requires the short-lived Aliyun browser
-verification parameter; the proxy stores one proof for up to about 40 seconds
-and consumes it for one model request, matching ZCode's one-use verification
-flow. Verify again before the next request unless the optional CAPTCHA solver
-is configured. When `stats.redis_url` points to Redis or Valkey, the proof is
-stored in that shared service so exactly one replica can consume it. Without
-shared Redis/Valkey, a separate owner-only file beside `zcode-auth.json` is
-used for a local single-replica deployment.
-A fresh proxy verification takes precedence over a stale client-supplied
-`X-Aliyun-Captcha-Verify-Param`. The proxy emits the current ZCode platform
-headers and keeps client identity fields under proxy control; inbound clients
-cannot override them. Request-body attribution is replaced the same way:
-`metadata.user_id` (where API clients such as Claude Code embed their own
-account and session identifiers) is rewritten to the official ZCode device
-identity, so client identifiers never reach the plan gateway.
+model request — but only when the optional CAPTCHA solver is **not** configured.
+ZCode's plan gateway requires the short-lived Aliyun browser verification
+parameter; the proxy stores one proof for up to about 40 seconds and consumes it
+for one model request, matching ZCode's one-use verification flow. Verify again
+before the next request. When `stats.redis_url` points to Redis or Valkey, the
+proof is stored in that shared service so exactly one replica can consume it.
+Without shared Redis/Valkey, a separate owner-only file beside
+`zcode-auth.json` is used for a local single-replica deployment.
+
+When the CAPTCHA solver sidecar is configured
+(`LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL`), manual browser verification is
+disabled: the login page says so and the endpoint rejects posted proofs.
+A browser proof is minted inside the operator's browser, while the model
+request leaves from the proxy's own network; presenting that foreign proof
+correlated with code-3012 unusual-activity blocks (observed 2026-09-02:
+three blocks, each within two minutes of a manual verification, while
+solver-minted proofs kept returning 200). Solver deployments use only
+solver-minted proofs — if the solver is down, model requests fail with the
+solver's error rather than risking an account-level block.
+
+Without a solver, a fresh proxy verification takes precedence over a stale
+client-supplied `X-Aliyun-Captcha-Verify-Param`. The proxy emits the current
+ZCode platform headers and keeps client identity fields under proxy control;
+inbound clients cannot override them. Request-body attribution is replaced the
+same way: `metadata.user_id` (where API clients such as Claude Code embed
+their own account and session identifiers) is rewritten to the official ZCode
+device identity, so client identifiers never reach the plan gateway.
 
 ZCode's risk control can also block the whole session with code 3012
 ("request has been blocked due to unusual activity"). That block targets the
 account rather than the proof — re-verifying does not lift it — so the proxy
-relays the first rejection verbatim and then pauses `zcode` requests for
-15 minutes instead of hammering the gateway and burning browser proofs.
-During the pause requests fail fast with an explanatory error and fall back
-to other backends when `fallbacks` are configured.
+relays the first rejection verbatim and then pauses `zcode` requests instead
+of hammering the gateway and burning browser proofs. The pause starts at
+15 minutes and doubles with each consecutive 3012 (up to 6 hours, reset by
+the next successful request), because observed blocks outlast a fixed
+15-minute window and repeated probing only deepens them. During the pause
+requests fail fast with an explanatory error and fall back to other backends
+when `fallbacks` are configured.
 
 The backend forwards requests to
 `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`. Chat

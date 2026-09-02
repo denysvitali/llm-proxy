@@ -389,6 +389,41 @@ func (s *countingCaptchaConsumer) TakeCaptchaVerifyParam(context.Context) (strin
 	return fmt.Sprintf("proof-%d", s.taken), nil
 }
 
+func TestUnusualActivityCooldownDoublesAndCaps(t *testing.T) {
+	client := New("", "unused")
+	var previous time.Duration
+	reachedCap := false
+	for i := 0; i < 12; i++ {
+		client.markUnusualActivity()
+		pause := time.Until(client.blockedUntil)
+		if pause > unusualActivityCooldownMax+time.Second {
+			t.Fatalf("strike %d pause = %v, want capped at %v", i+1, pause, unusualActivityCooldownMax)
+		}
+		if pause >= unusualActivityCooldownMax-time.Second {
+			reachedCap = true
+		} else if i > 0 && pause <= previous {
+			t.Fatalf("strike %d pause = %v did not grow past %v", i+1, pause, previous)
+		}
+		previous = pause
+		// Let the cooldown lapse so the next mark counts as a fresh probe.
+		client.blockedUntil = time.Now().Add(-time.Second)
+	}
+	if !reachedCap {
+		t.Fatalf("12 strikes never reached the %v cap", unusualActivityCooldownMax)
+	}
+
+	// A successful model request forgets the strikes, so the next block
+	// starts from the base pause again.
+	client.clearUnusualActivity()
+	if _, blocked := client.unusualActivityBlock(); blocked {
+		t.Fatal("cooldown still armed after clearUnusualActivity")
+	}
+	client.markUnusualActivity()
+	if pause := time.Until(client.blockedUntil); pause > unusualActivityCooldown {
+		t.Fatalf("pause after reset = %v, want the base %v", pause, unusualActivityCooldown)
+	}
+}
+
 func TestSendCooldownDoesNotConsumeCaptchaProof(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)

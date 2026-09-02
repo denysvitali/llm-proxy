@@ -159,6 +159,14 @@ func (m *Manager) HasSession() bool {
 	return err == nil && credentials != nil && strings.TrimSpace(credentials.AccessToken) != ""
 }
 
+// CaptchaSolverConfigured reports whether an automatic CAPTCHA solver is
+// wired up. Callers use it to steer operators away from the login page's
+// browser verification: browser-minted proofs are not used when the solver
+// exists (see CaptchaVerifyParam).
+func (m *Manager) CaptchaSolverConfigured() bool {
+	return strings.TrimSpace(m.CaptchaSolverURL) != ""
+}
+
 func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -216,35 +224,30 @@ func (m *Manager) SetCaptchaVerifyParamContext(ctx context.Context, param string
 	return nil
 }
 
-// CaptchaVerifyParam returns the currently cached browser verification
-// parameter. It implements the optional source used by the ZCode backend.
+// CaptchaVerifyParam returns the verification parameter for one model
+// request. It implements the optional source used by the ZCode backend.
+//
+// When an automatic solver is configured it is the only source consulted: a
+// solver proof is minted in the same egress context the model request leaves
+// from, while a browser-minted proof was solved from the operator's own
+// browser. Presenting that foreign proof from the proxy correlated with
+// code-3012 unusual-activity blocks on 2026-09-02 (three blocks, each 19-84 s
+// after a manual browser verification), so browser proofs are deliberately
+// not used — and not consumed — when a solver exists. Without a solver, the
+// cached browser proof from /login/zcode remains the only source.
 func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
 	default:
 	}
-	// A proof just completed in the browser is the proof associated with the
-	// user's current ZCode session. Use it before consulting the optional
-	// solver; otherwise a stale or misconfigured solver can silently replace a
-	// valid browser proof and cause Aliyun to return its HTML 405 block page.
+	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
+		// A solver failure surfaces as an error rather than falling back to a
+		// browser proof: the fallback is precisely what armed the blocks.
+		return m.freshCaptchaVerifyParam(ctx)
+	}
 	if param, err := m.cachedCaptchaVerifyParam(ctx); err == nil {
 		return param, nil
-	}
-	var solverErr error
-	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
-		param, err := m.freshCaptchaVerifyParam(ctx)
-		if err == nil {
-			return param, nil
-		}
-		// A configured solver is an optimization, not a reason to discard a
-		// still-valid browser proof. This matters during a sidecar restart or
-		// when the solver is intentionally unavailable in a single-replica
-		// deployment.
-		solverErr = err
-	}
-	if solverErr != nil {
-		return "", solverErr
 	}
 	return "", captchaVerificationRequiredError()
 }
@@ -253,22 +256,22 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 // cached browser proofs atomically. Aliyun verification parameters are
 // one-use credentials; reusing the same certifyId across model calls is
 // treated as suspicious activity by the upstream gateway. Solver proofs are
-// already minted one per call, so they do not need to be stored.
+// already minted one per call, so they do not need to be stored. Like
+// CaptchaVerifyParam, a configured solver is authoritative and browser proofs
+// are left untouched: see the 3012 evidence on CaptchaVerifyParam.
 func (m *Manager) TakeCaptchaVerifyParam(ctx context.Context) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
 	default:
 	}
+	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
+		// A solver failure surfaces as an error rather than falling back to a
+		// browser proof: the fallback is precisely what armed the blocks.
+		return m.freshCaptchaVerifyParam(ctx)
+	}
 	if param, err := m.takeCachedCaptchaVerifyParam(ctx); err == nil {
 		return param, nil
-	}
-	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
-		if param, err := m.freshCaptchaVerifyParam(ctx); err == nil {
-			return param, nil
-		} else {
-			return "", err
-		}
 	}
 	return "", captchaVerificationRequiredError()
 }
