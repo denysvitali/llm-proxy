@@ -97,10 +97,13 @@ func TestSendRoutesByModelProtocol(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
 			c, rec := newRecordingClient(t, http.StatusOK, `{}`)
+			header := make(http.Header)
+			header.Set("X-OpenCode-Session", "session-"+tt.model)
 			resp, err := c.Send(t.Context(), &backend.Request{
 				Kind:      tt.kind,
 				Model:     tt.model,
 				RawBody:   []byte(`{"model":"` + tt.model + `"}`),
+				Header:    header,
 				Streaming: true,
 			})
 			if err != nil {
@@ -113,6 +116,12 @@ func TestSendRoutesByModelProtocol(t *testing.T) {
 			if got := rec.header.Get("Authorization"); got != "Bearer test-key" {
 				t.Errorf("Authorization = %q, want bearer key", got)
 			}
+			if got := rec.header.Get("User-Agent"); got != userAgent {
+				t.Errorf("User-Agent = %q, want %q", got, userAgent)
+			}
+			if got := rec.header.Get("X-OpenCode-Session"); got != "session-"+tt.model {
+				t.Errorf("X-OpenCode-Session = %q, want session value", got)
+			}
 			if got := rec.header.Get("Accept"); got != "text/event-stream" {
 				t.Errorf("Accept = %q, want text/event-stream", got)
 			}
@@ -124,6 +133,68 @@ func TestSendRoutesByModelProtocol(t *testing.T) {
 				t.Errorf("Anthropic-Version = %q, want absent", got)
 			}
 		})
+	}
+}
+
+func TestSendUsesSessionAliasAndDoesNotForwardUnrelatedHeaders(t *testing.T) {
+	c, rec := newRecordingClient(t, http.StatusOK, `{}`)
+	req := &backend.Request{
+		Kind:    backend.KindOpenAIChat,
+		Model:   "kimi-k3",
+		RawBody: []byte(`{"model":"kimi-k3"}`),
+		Header: http.Header{
+			"Session-Id":  []string{"conversation-1"},
+			"User-Agent":  []string{"opencode/1.18.25"},
+			"X-Unrelated": []string{"must-not-leak"},
+		},
+	}
+	resp, err := c.Send(t.Context(), req)
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := rec.header.Get("X-OpenCode-Session"); got != "conversation-1" {
+		t.Errorf("X-OpenCode-Session = %q, want alias value", got)
+	}
+	if got := rec.header.Get("Session-Id"); got != "" {
+		t.Errorf("Session-Id = %q, want alias omitted", got)
+	}
+	if got := rec.header.Get("X-Unrelated"); got != "" {
+		t.Errorf("X-Unrelated = %q, want header omitted", got)
+	}
+	if got := rec.header.Get("User-Agent"); got != userAgent {
+		t.Errorf("User-Agent = %q, want %q", got, userAgent)
+	}
+}
+
+func TestSendGeneratesStableFallbackSessionForRequest(t *testing.T) {
+	c, rec := newRecordingClient(t, http.StatusOK, `{}`)
+	req := &backend.Request{
+		Kind:    backend.KindOpenAIChat,
+		Model:   "kimi-k3",
+		RawBody: []byte(`{"model":"kimi-k3"}`),
+	}
+
+	var first string
+	for i := 0; i < 2; i++ {
+		resp, err := c.Send(t.Context(), req)
+		if err != nil {
+			t.Fatalf("Send #%d returned error: %v", i+1, err)
+		}
+		_ = resp.Body.Close()
+		got := rec.header.Get("X-OpenCode-Session")
+		if got == "" {
+			t.Fatalf("Send #%d omitted generated session", i+1)
+		}
+		if i == 0 {
+			first = got
+			if !strings.HasPrefix(got, "llm-proxy-") {
+				t.Fatalf("generated session = %q, want llm-proxy prefix", got)
+			}
+		} else if got != first {
+			t.Errorf("generated session changed from %q to %q", first, got)
+		}
 	}
 }
 
@@ -149,6 +220,9 @@ func TestModelsFiltersEmptyIDsAndSendsKey(t *testing.T) {
 	}
 	if got := rec.header.Get("Authorization"); got != "Bearer test-key" {
 		t.Errorf("Authorization = %q, want bearer key", got)
+	}
+	if got := rec.header.Get("User-Agent"); got != userAgent {
+		t.Errorf("User-Agent = %q, want %q", got, userAgent)
 	}
 }
 

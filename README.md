@@ -251,6 +251,11 @@ The proxy fetches Go's live model catalog from
 `https://opencode.ai/zen/go/v1/models`. Go models use the qualified
 `opencode-go/<model-id>` form. The proxy sends each model to its documented
 native endpoint and translates client requests when the client API differs.
+OpenCode Go requests identify the proxy with a specific user agent and always
+include `x-opencode-session`. A client-supplied OpenCode or `Session-Id` value
+is preserved for affinity; when neither is present, the proxy creates an
+opaque value for the request and its retries. Supply a stable
+`x-opencode-session` value across turns to retain prompt-cache affinity.
 
 ## Install
 

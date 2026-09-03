@@ -7,6 +7,8 @@ package opencodego
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +24,7 @@ const (
 	defaultBaseURL = "https://opencode.ai/zen/go/v1"
 
 	anthropicVersion = "2023-06-01"
+	userAgent        = "llm-proxy"
 )
 
 // modelKinds is the protocol mapping published in the OpenCode Go endpoint
@@ -122,6 +125,10 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if !ok || !c.SupportsModel(req.Kind, req.Model) {
 		return nil, fmt.Errorf("opencode-go backend does not support kind %q for model %q", req.Kind, req.Model)
 	}
+	session, err := ensureSession(req)
+	if err != nil {
+		return nil, fmt.Errorf("prepare OpenCode Go session: %w", err)
+	}
 
 	body := req.RawBody
 	if req.Kind == backend.KindOpenAIResponses && len(body) > 0 {
@@ -143,6 +150,8 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+	httpReq.Header.Set("x-opencode-session", session)
 	accept := "application/json"
 	if req.Streaming {
 		accept = "text/event-stream"
@@ -174,6 +183,7 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	if c.Key != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	}
+	httpReq.Header.Set("User-Agent", userAgent)
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to OpenCode Go failed: %w", err)
@@ -197,6 +207,33 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 		}
 	}
 	return models, nil
+}
+
+// ensureSession returns the client's OpenCode session when one is supplied.
+// Some Responses clients use Session-Id rather than OpenCode's header, so it
+// is accepted as an input alias but is never forwarded under its original
+// name. Requests without either header receive an opaque fallback value. The
+// value is stored on req so retries of the same request keep their upstream
+// affinity; callers with a multi-turn conversation should send the same
+// x-opencode-session value on each turn for prompt-cache affinity.
+func ensureSession(req *backend.Request) (string, error) {
+	if req.Header == nil {
+		req.Header = make(http.Header)
+	}
+	for _, name := range []string{"X-OpenCode-Session", "X-Session-Id", "Session-Id"} {
+		if session := strings.TrimSpace(req.Header.Get(name)); session != "" {
+			req.Header.Set("X-OpenCode-Session", session)
+			return session, nil
+		}
+	}
+
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	session := "llm-proxy-" + hex.EncodeToString(random[:])
+	req.Header.Set("X-OpenCode-Session", session)
+	return session, nil
 }
 
 type HTTPError struct {
