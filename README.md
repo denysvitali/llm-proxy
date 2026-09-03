@@ -350,6 +350,7 @@ name = "llm-proxy"
 base_url = "http://127.0.0.1:8090/v1"
 wire_api = "responses"
 env_key = "LLM_PROXY_API_KEY"
+requires_openai_auth = false
 ```
 
 Then run Codex with `LLM_PROXY_API_KEY` set to a `llx_...` key and pick any

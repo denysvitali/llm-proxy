@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -45,6 +46,27 @@ func copyUpstreamRequestID(dst, src http.Header) {
 	for _, name := range []string{"X-Request-Id", "Request-Id"} {
 		if v := src.Get(name); v != "" {
 			dst.Set(name, v)
+		}
+	}
+}
+
+// copyCodexResponseHeaders preserves the Responses metadata that Codex reads
+// from HTTP response headers. In particular, x-codex-turn-state must make the
+// round trip or the next turn loses the upstream's sticky-routing state.
+// x-codex-* is an intentionally narrow prefix: it covers rate-limit and
+// safety metadata while avoiding arbitrary provider headers.
+func copyCodexResponseHeaders(dst, src http.Header) {
+	copyUpstreamRequestID(dst, src)
+	for name, values := range src {
+		lower := strings.ToLower(name)
+		if !strings.HasPrefix(lower, "x-codex-") && lower != "openai-model" &&
+			lower != "x-openai-model" && lower != "x-reasoning-included" &&
+			lower != "x-models-etag" {
+			continue
+		}
+		dst.Del(name)
+		for _, value := range values {
+			dst.Add(name, value)
 		}
 	}
 }

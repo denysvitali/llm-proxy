@@ -318,10 +318,18 @@ func TestChatCompletionsUnsupportedBackend(t *testing.T) {
 
 func TestResponsesPassthroughRewritesModel(t *testing.T) {
 	fb := &fakeOABackend{
-		name:   "fakeoa",
-		kinds:  map[backend.Kind]bool{backend.KindOpenAIResponses: true},
-		header: http.Header{"Content-Type": []string{"application/json"}},
-		body:   `{"id":"resp_p","status":"completed","model":"upstream-p","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`,
+		name:  "fakeoa",
+		kinds: map[backend.Kind]bool{backend.KindOpenAIResponses: true},
+		header: http.Header{
+			"Content-Type":                 []string{"application/json"},
+			"OpenAI-Model":                 []string{"gpt-codex"},
+			"X-Codex-Turn-State":           []string{"turn-state-1"},
+			"X-Codex-Primary-Used-Percent": []string{"42"},
+			"X-Reasoning-Included":         []string{"true"},
+			"X-Models-Etag":                []string{"etag-1"},
+			"X-Provider-Secret":            []string{"must-not-leak"},
+		},
+		body: `{"id":"resp_p","status":"completed","model":"upstream-p","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`,
 	}
 	s := newOATestServer(t, fb, map[string]config.ModelRoute{
 		"gpt-p": {Backend: "fakeoa", Model: "upstream-p"},
@@ -333,6 +341,20 @@ func TestResponsesPassthroughRewritesModel(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	for name, want := range map[string]string{
+		"OpenAI-Model":                 "gpt-codex",
+		"X-Codex-Turn-State":           "turn-state-1",
+		"X-Codex-Primary-Used-Percent": "42",
+		"X-Reasoning-Included":         "true",
+		"X-Models-Etag":                "etag-1",
+	} {
+		if got := rec.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if got := rec.Header().Get("X-Provider-Secret"); got != "" {
+		t.Errorf("X-Provider-Secret = %q, want it omitted", got)
 	}
 	if got := rec.Body.String(); got != fb.body {
 		t.Errorf("relayed body = %q, want verbatim upstream body", got)

@@ -219,6 +219,7 @@ func setHeaders(header http.Header, credentials Credentials, streaming bool) {
 		header.Set("ChatGPT-Account-Id", credentials.AccountID)
 	}
 	header.Set("Content-Type", "application/json")
+	header.Set("User-Agent", "llm-proxy")
 	if streaming {
 		header.Set("Accept", "text/event-stream")
 	} else {
@@ -229,8 +230,18 @@ func setHeaders(header http.Header, credentials Credentials, streaming bool) {
 
 func copyCodexHeaders(dst, src http.Header) {
 	for _, name := range []string{
-		"OpenAI-Beta", "Session-Id", "X-Codex-Installation-Id",
+		// These are the headers used by Codex's Responses client for request
+		// identity, sticky routing, feature negotiation, and subagent turns.
+		// Keep the allowlist explicit so proxy credentials and unrelated client
+		// headers never reach the ChatGPT subscription endpoint.
+		"Originator", "User-Agent", "OpenAI-Beta", "Session-Id",
+		"X-Client-Request-Id", "X-Codex-Beta-Features",
+		"X-Codex-Installation-Id", "X-Codex-Turn-State",
+		"X-Codex-Turn-Metadata", "X-Codex-Parent-Thread-Id",
+		"X-Codex-Window-Id", "X-OpenAI-Memgen-Request",
 		"X-OpenAI-Subagent", "X-OpenAI-Client-Metadata",
+		"X-OpenAI-Internal-Codex-Responses-Lite",
+		"X-ResponsesAPI-Include-Timing-Metrics",
 	} {
 		if value := src.Get(name); value != "" {
 			dst.Set(name, value)

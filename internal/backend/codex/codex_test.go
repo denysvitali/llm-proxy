@@ -72,6 +72,66 @@ func TestSendForwardsResponsesRequest(t *testing.T) {
 	}
 }
 
+func TestSendForwardsCodexClientHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for name, want := range map[string]string{
+			"Originator":                             "codex_cli_rs",
+			"User-Agent":                             "codex_cli_rs/0.152.1",
+			"X-Client-Request-Id":                    "req-1",
+			"X-Codex-Beta-Features":                  "feature-a",
+			"X-Codex-Installation-Id":                "install-1",
+			"X-Codex-Turn-State":                     "turn-state-1",
+			"X-Codex-Turn-Metadata":                  `{"thread_id":"thread-1"}`,
+			"X-Codex-Parent-Thread-Id":               "parent-1",
+			"X-Codex-Window-Id":                      "window-1",
+			"X-OpenAI-Memgen-Request":                "memgen-1",
+			"X-OpenAI-Internal-Codex-Responses-Lite": "1",
+			"X-ResponsesAPI-Include-Timing-Metrics":  "true",
+		} {
+			if got := r.Header.Get(name); got != want {
+				t.Errorf("%s = %q, want %q", name, got, want)
+			}
+		}
+		if got := r.Header.Get("X-Not-Forwarded"); got != "" {
+			t.Errorf("X-Not-Forwarded = %q, want it omitted", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: done\n\n"))
+	}))
+	defer server.Close()
+	client := New(server.URL, staticCredentials{Credentials{AccessToken: "token", AccountID: "account"}})
+	client.HTTP = server.Client()
+	body, _ := json.Marshal(map[string]any{"model": "gpt-codex", "stream": true})
+	requestHeaders := make(http.Header)
+	for name, value := range map[string]string{
+		"Originator":                             "codex_cli_rs",
+		"User-Agent":                             "codex_cli_rs/0.152.1",
+		"X-Client-Request-Id":                    "req-1",
+		"X-Codex-Beta-Features":                  "feature-a",
+		"X-Codex-Installation-Id":                "install-1",
+		"X-Codex-Turn-State":                     "turn-state-1",
+		"X-Codex-Turn-Metadata":                  `{"thread_id":"thread-1"}`,
+		"X-Codex-Parent-Thread-Id":               "parent-1",
+		"X-Codex-Window-Id":                      "window-1",
+		"X-OpenAI-Memgen-Request":                "memgen-1",
+		"X-OpenAI-Internal-Codex-Responses-Lite": "1",
+		"X-ResponsesAPI-Include-Timing-Metrics":  "true",
+		"X-Not-Forwarded":                        "secret",
+	} {
+		requestHeaders.Set(name, value)
+	}
+	resp, err := client.Send(t.Context(), &backend.Request{
+		Kind:      backend.KindOpenAIResponses,
+		RawBody:   body,
+		Streaming: true,
+		Header:    requestHeaders,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+}
+
 func TestSendAggregatesNonStreamingResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any

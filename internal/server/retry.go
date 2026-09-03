@@ -371,7 +371,7 @@ func (s *Server) relayNativeStreaming(
 	surface func(w http.ResponseWriter, message string),
 	giveUp func(w http.ResponseWriter, message string),
 ) bool {
-	copyUpstreamRequestID(w.Header(), resp.Header)
+	copyCodexResponseHeaders(w.Header(), resp.Header)
 	contentType := resp.Header.Get("Content-Type")
 	status := resp.Status
 	var body io.Reader = resp.Body
@@ -427,7 +427,7 @@ func (s *Server) relayNativeBuffered(
 	fetch upstreamFetch,
 	giveUp func(w http.ResponseWriter, message string),
 ) {
-	copyUpstreamRequestID(w.Header(), resp.Header)
+	copyCodexResponseHeaders(w.Header(), resp.Header)
 	data, err := s.fetchResponseBody(ctx, rt, resp, fetch, maxTranslatedResponseBody)
 	if err != nil {
 		message := fmt.Sprintf("upstream response could not be read: %v", err)
