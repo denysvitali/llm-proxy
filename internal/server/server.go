@@ -217,39 +217,39 @@ func (s *Server) resolveWithFallbacks(ctx context.Context, model string) (route,
 const maxRouteChain = 4
 
 // resolveChain resolves the primary route and appends the fallbacks that
-// apply to it: those on the matched route entry first, then those configured
-// on the primary backend itself (so qualified IDs like "opencode/model" can
-// fail over too). Fallbacks naming unknown, disabled or repeated backends are
-// skipped; an empty model rewrite keeps the primary's upstream model.
+// apply to it. Fallbacks are taken from the matched route entry, the
+// DefaultRoute, and the primary backend's own fallback list. A qualified
+// "<backend>/<model>" ID pins the request to that exact backend: the caller
+// asked for that upstream specifically, so the backend's own `fallbacks:`
+// list is skipped, and a pinned backend whose live catalog does not list the
+// model answers 404. Falling back to a different provider on a 502/503 from
+// the pinned upstream silently reroutes a deliberate choice to an unrelated
+// model (e.g. opencode-go/glm-5.3-flash → zcode/glm-5.3-flash on a zcode
+// fallback, which fails a different quota and confuses the user about which
+// upstream is slow). Fallbacks naming unknown, disabled or repeated backends
+// are skipped; an empty model rewrite keeps the primary's upstream model.
 func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool) {
 	primary, fallbacks, ok := s.resolveWithFallbacks(ctx, model)
 	if !ok {
 		return nil, false
 	}
-	if bc, ok := s.cfg.BackendByType(primary.backend.Name()); ok {
-		fallbacks = append(fallbacks, bc.Fallbacks...)
+	if _, pinned := qualifiedPin(model, primary.backend.Name()); !pinned {
+		if bc, ok := s.cfg.BackendByType(primary.backend.Name()); ok {
+			fallbacks = append(fallbacks, bc.Fallbacks...)
+		}
 	}
 	// A qualified ID pins one backend, so that backend's live catalog is
 	// authoritative for what the pin may request. A model the catalog no
 	// longer lists must not be forwarded: the upstream's own rejection
 	// (e.g. Zen's 401 "Model x is not supported") reads as an auth failure
-	// to clients, which retry it instead of failing fast. Drop the primary
-	// and let its fallback chain serve the request instead; with none
-	// configured the caller answers 404 like any unroutable model. A
-	// catalog that cannot be fetched stays fail-open so a broken /models
+	// to clients, which retry it instead of failing fast. The caller chose
+	// this backend+model pair, so it answers 404 directly instead of being
+	// silently re-routed to a different provider via the route's fallbacks.
+	// A catalog that cannot be fetched stays fail-open so a broken /models
 	// endpoint cannot 404 known-good models.
 	if upstream, pinned := qualifiedPin(model, primary.backend.Name()); pinned &&
 		s.catalogLacksModel(ctx, primary.backend, upstream) {
-		chain := s.appendFallbacks(nil, fallbacks, upstream)
-		if len(chain) == 0 {
-			return nil, false
-		}
-		// The pinned backend was skipped by the catalog check rather than
-		// failing mid-request, but the request still moved away from it —
-		// count the hand-off so fallbacks_total keeps one meaning: requests
-		// the primary did not serve.
-		s.metrics.fallbacks.WithLabelValues(primary.backend.Name(), chain[0].backend.Name()).Inc()
-		return chain, true
+		return nil, false
 	}
 	return s.appendFallbacks([]route{primary}, fallbacks, primary.model), true
 }

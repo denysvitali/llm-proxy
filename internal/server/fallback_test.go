@@ -135,9 +135,16 @@ func TestNoFallbackAfterContentFlowed(t *testing.T) {
 	})
 }
 
-// TestBackendFallbackAppliesToQualifiedID: qualified IDs bypass routes, so
-// the fallback configured on the backend entry itself is what fails over.
-func TestBackendFallbackAppliesToQualifiedID(t *testing.T) {
+// TestQualifiedIDDoesNotFallback: a qualified "<backend>/<model>" ID pins
+// the request to that exact upstream. Even when the pinned backend's
+// `fallbacks:` list names another provider, a 503 from the pinned backend
+// surfaces as-is — the caller chose that upstream specifically, so falling
+// back to a different provider would silently re-route a deliberate choice
+// to an unrelated model (e.g. opencode-go/glm-5.3-flash → zcode on a zcode
+// fallback, which then fails its own quota). Backend-level fallbacks still
+// apply to unqualified routes; that is covered by the other tests in this
+// file.
+func TestQualifiedIDDoesNotFallback(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		primary := newNamedScripted("fake", backend.KindOpenAIChat,
 			step{resp: unavailableResponse(http.StatusServiceUnavailable, `{"error":{"message":"down"}}`)})
@@ -152,20 +159,20 @@ func TestBackendFallbackAppliesToQualifiedID(t *testing.T) {
 
 		rec := postMsg(t, s, "/v1/messages",
 			`{"model":"fake/m1","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503 relayed from pinned backend", rec.Code)
 		}
-		if got := testutil.ToFloat64(s.metrics.fallbacks.WithLabelValues("fake", "second")); got != 1 {
-			t.Fatalf("fallback metric = %v, want 1", got)
+		if secondary.callCount() != 0 {
+			t.Fatalf("fallback attempts = %d, want 0 (qualified ID must not fall back)", secondary.callCount())
 		}
 	})
 }
 
-// TestBackendFallbackSkipsQualifiedModelMissingFromCatalog: a qualified ID
-// the pinned backend's catalog no longer lists never reaches that backend —
-// no wasted upstream round trip, no relayed 4xx — and the configured
-// fallback serves the request directly.
-func TestBackendFallbackSkipsQualifiedModelMissingFromCatalog(t *testing.T) {
+// TestQualifiedIDMissingFromCatalogAnswers404: a qualified ID whose pinned
+// backend's catalog does not list the model never reaches that backend and
+// never silently re-routes to a different provider — the caller chose this
+// backend+model pair, so the proxy answers 404 instead.
+func TestQualifiedIDMissingFromCatalogAnswers404(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		primary := newNamedScripted("fake", backend.KindOpenAIChat,
 			step{resp: unavailableResponse(http.StatusServiceUnavailable, `{"error":{"message":"down"}}`)})
@@ -181,14 +188,14 @@ func TestBackendFallbackSkipsQualifiedModelMissingFromCatalog(t *testing.T) {
 		// scriptedBackend's catalog lists only "m1", so fake/gone is a miss.
 		rec := postMsg(t, s, "/v1/messages",
 			`{"model":"fake/gone","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 (qualified ID catalog miss must not re-route)", rec.Code)
 		}
 		if primary.callCount() != 0 {
 			t.Fatalf("primary attempts = %d, want 0 (catalog miss must skip the pinned backend)", primary.callCount())
 		}
-		if got := testutil.ToFloat64(s.metrics.fallbacks.WithLabelValues("fake", "second")); got != 1 {
-			t.Fatalf("fallback metric = %v, want 1", got)
+		if secondary.callCount() != 0 {
+			t.Fatalf("fallback attempts = %d, want 0 (qualified ID must not re-route)", secondary.callCount())
 		}
 	})
 }
