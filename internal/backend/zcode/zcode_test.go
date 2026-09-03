@@ -109,6 +109,69 @@ func TestSendNativeEndpoints(t *testing.T) {
 	}
 }
 
+func TestSendNormalizesHTTP200GatewayRejection(t *testing.T) {
+	const rejection = `{"code":3012,"msg":"request has been blocked due to unusual activity."}`
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprintf("streaming-%t", streaming), func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, rejection)
+			}))
+			defer server.Close()
+
+			client := New(server.URL, "secret")
+			response, err := client.Send(context.Background(), &backend.Request{
+				Kind:      backend.KindAnthropic,
+				Streaming: streaming,
+			})
+			if err != nil {
+				t.Fatalf("Send() error = %v", err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.Status != http.StatusMethodNotAllowed {
+				t.Fatalf("response status = %d, want %d", response.Status, http.StatusMethodNotAllowed)
+			}
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatalf("read response body: %v", err)
+			}
+			if string(body) != rejection {
+				t.Fatalf("response body = %q, want %q", body, rejection)
+			}
+
+			if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic}); err == nil || !strings.Contains(err.Error(), "unusual activity") {
+				t.Fatalf("second Send() error = %v, want unusual-activity cooldown error", err)
+			}
+			if requests != 1 {
+				t.Fatalf("upstream requests = %d, want 1 while cooldown is active", requests)
+			}
+		})
+	}
+}
+
+func TestZCodeGatewayErrorStatus(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		body   string
+		status int
+		ok     bool
+	}{
+		{name: "captcha", body: `{"code":3007,"msg":"captcha verify failed"}`, status: http.StatusBadRequest, ok: true},
+		{name: "unusual activity", body: `{"code":"3012","msg":"request has been blocked"}`, status: http.StatusMethodNotAllowed, ok: true},
+		{name: "success message", body: `{"type":"message","content":[]}`, ok: false},
+		{name: "unrelated code without message", body: `{"code":3012}`, ok: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, ok := zcodeGatewayErrorStatus([]byte(test.body))
+			if ok != test.ok || status != test.status {
+				t.Fatalf("zcodeGatewayErrorStatus() = (%d, %v), want (%d, %v)", status, ok, test.status, test.ok)
+			}
+		})
+	}
+}
+
 func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{

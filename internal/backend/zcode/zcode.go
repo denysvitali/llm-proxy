@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -256,6 +257,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, fmt.Errorf("request to ZCode failed: %w", err)
 	}
+	normalizeZCodeResponse(resp)
 	var inspection rejectionInspection
 	inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
 	if inspection.unusualActivity {
@@ -277,6 +279,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 				if err != nil {
 					return nil, fmt.Errorf("retry request to ZCode after CAPTCHA refresh failed: %w", err)
 				}
+				normalizeZCodeResponse(resp)
 				inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
 				if inspection.unusualActivity {
 					c.markUnusualActivity()
@@ -295,6 +298,69 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		c.clearUnusualActivity()
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
+// normalizeZCodeResponse converts the plan gateway's JSON error envelope into
+// the HTTP status that the gateway intended to send. Some edge responses have
+// reached the proxy as HTTP 200 with a small {"code":...,"msg":...} body;
+// passing those through makes an Anthropic client report "body is JSON but
+// not a Message" and can cause it to retry the same blocked request.
+//
+// Successful model responses are left byte-for-byte unchanged. SSE responses
+// are not inspected here because their body must remain readable as a stream;
+// a gateway error returned for a streaming request uses application/json and
+// is therefore safe to buffer and classify.
+func normalizeZCodeResponse(resp *http.Response) {
+	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json") {
+		return
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	status, ok := zcodeGatewayErrorStatus(body)
+	if !ok {
+		return
+	}
+	resp.StatusCode = status
+	resp.Status = fmt.Sprintf("%d %s", status, http.StatusText(status))
+}
+
+func zcodeGatewayErrorStatus(body []byte) (int, bool) {
+	var envelope struct {
+		Code json.RawMessage `json:"code"`
+		Msg  string          `json:"msg"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Code) == 0 || strings.TrimSpace(envelope.Msg) == "" {
+		return 0, false
+	}
+	var code int
+	if err := json.Unmarshal(envelope.Code, &code); err != nil {
+		var textCode string
+		if stringErr := json.Unmarshal(envelope.Code, &textCode); stringErr != nil {
+			return 0, false
+		}
+		code, err = strconv.Atoi(strings.TrimSpace(textCode))
+		if err != nil {
+			return 0, false
+		}
+	}
+	if code == 0 {
+		return 0, false
+	}
+	switch code {
+	case 3007:
+		return http.StatusBadRequest, true
+	case 3012:
+		return http.StatusMethodNotAllowed, true
+	default:
+		return http.StatusBadGateway, true
+	}
 }
 
 // unusualActivityBlock reports the time until which model requests should
