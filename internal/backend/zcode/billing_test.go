@@ -89,6 +89,60 @@ func TestPlanUsageAcceptsStringUnitValues(t *testing.T) {
 	}
 }
 
+func TestPlanQuotaSendsBalanceRequestAndNormalizesBuckets(t *testing.T) {
+	t.Helper()
+	const token = "test-zcode-jwt"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/zcode-plan/billing/balance" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("app_version"); got != zcodeAppVersion {
+			t.Errorf("app_version = %q, want %q", got, zcodeAppVersion)
+		}
+		for name, want := range map[string]string{
+			"Authorization":       "Bearer " + token,
+			"Accept":              "application/json",
+			"User-Agent":          "ZCode/" + zcodeAppVersion,
+			"X-ZCode-App-Version": zcodeAppVersion,
+			"X-Device-Mid":        deviceMID(token),
+		} {
+			if got := r.Header.Get(name); got != want {
+				t.Errorf("%s = %q, want %q", name, got, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"plans":[{"plan_id":"start-plan","name":"Start Plan","status":"active"}],"balances":[{"entitlement_id":"glm-flash","plan_id":"start-plan","show_name":"GLM Flash","meter":"model_usage","capabilities":["model:glm-5.3-flash"],"total_units":"3000000","used_units":1200000,"remaining_units":"1800000","available_units":1800000,"reserved_units":"0","expires_at":"1756771199"}]}}`))
+	}))
+	defer upstream.Close()
+
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	manager.Issuer = upstream.URL
+	manager.HTTPClient = upstream.Client()
+	if err := manager.Store.Save(&Credentials{AccessToken: token}); err != nil {
+		t.Fatal(err)
+	}
+	quota, err := manager.PlanQuota(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quota.Plans) != 1 || quota.Plans[0].PlanID != "start-plan" {
+		t.Fatalf("plans = %+v", quota.Plans)
+	}
+	if len(quota.Balances) != 1 {
+		t.Fatalf("balances = %+v", quota.Balances)
+	}
+	balance := quota.Balances[0]
+	if balance.EntitlementID != "glm-flash" || balance.PlanID != "start-plan" || balance.Meter != "model_usage" {
+		t.Fatalf("balance identity = %+v", balance)
+	}
+	if balance.TotalUnits != 3000000 || balance.UsedUnits != 1200000 || balance.RemainingUnits != 1800000 || balance.AvailableUnits != 1800000 || balance.ReservedUnits != 0 {
+		t.Fatalf("balance units = %+v", balance)
+	}
+	if balance.ExpiresAt != 1756771199 || len(balance.Capabilities) != 1 || balance.Capabilities[0] != "model:glm-5.3-flash" {
+		t.Fatalf("balance expiry/capabilities = %+v", balance)
+	}
+}
+
 func TestPlanUsageSurfacesUnavailableEntitlement(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

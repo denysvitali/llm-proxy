@@ -246,6 +246,39 @@ func (s *Server) zcodeUsage(ctx context.Context) ([]zcodebackend.PlanUsage, erro
 	return append([]zcodebackend.PlanUsage(nil), s.zcodeUsagePlans...), nil
 }
 
+func (s *Server) zcodeQuota(ctx context.Context) (zcodebackend.PlanQuota, error) {
+	if s.zcodeAuth == nil {
+		return zcodebackend.PlanQuota{}, errZcodeQuotaUnavailable
+	}
+
+	s.zcodeQuotaMu.Lock()
+	defer s.zcodeQuotaMu.Unlock()
+
+	if !s.zcodeQuotaAt.IsZero() && time.Since(s.zcodeQuotaAt) < zcodeUsageTTL {
+		return cloneZcodeQuota(s.zcodeQuotaValue), nil
+	}
+
+	quota, err := s.zcodeAuth.PlanQuota(ctx)
+	if err != nil {
+		return zcodebackend.PlanQuota{}, err
+	}
+	s.zcodeQuotaValue = cloneZcodeQuota(quota)
+	s.zcodeQuotaAt = time.Now()
+	return cloneZcodeQuota(s.zcodeQuotaValue), nil
+}
+
+func cloneZcodeQuota(quota zcodebackend.PlanQuota) zcodebackend.PlanQuota {
+	cloned := zcodebackend.PlanQuota{
+		Plans:    append([]zcodebackend.PlanUsage(nil), quota.Plans...),
+		Balances: make([]zcodebackend.PlanBalance, len(quota.Balances)),
+	}
+	for i, balance := range quota.Balances {
+		cloned.Balances[i] = balance
+		cloned.Balances[i].Capabilities = append([]string(nil), balance.Capabilities...)
+	}
+	return cloned
+}
+
 func (s *Server) grokUsage(ctx context.Context, refresh bool) (grokbackend.UsageView, error) {
 	if s.grokAuth == nil {
 		return grokbackend.UsageView{}, errUsageUnavailable

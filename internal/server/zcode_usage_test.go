@@ -55,3 +55,56 @@ func TestZcodeUsageEndpointUnavailable(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestZcodeQuotaEndpointUnavailable(t *testing.T) {
+	isolatePrometheus(t)
+	s := New(&config.Config{}, quietLogger(), nil, nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/zcode/quota", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestZcodeQuotaEndpoints(t *testing.T) {
+	isolatePrometheus(t)
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/zcode-plan/billing/balance" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"plans":[{"plan_id":"start-plan","status":"active"}],"balances":[{"plan_id":"start-plan","remaining_units":1800000,"expires_at":1756771199}]}}`))
+	}))
+	defer upstream.Close()
+
+	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	manager.Issuer = upstream.URL
+	manager.HTTPClient = upstream.Client()
+	if err := manager.Store.Save(&zcodebackend.Credentials{AccessToken: "test-token"}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewWithAllAccountAuth(&config.Config{
+		Backends: []config.BackendConfig{{Type: "zcode"}},
+	}, quietLogger(), nil, nil, nil, nil, nil, manager)
+
+	for _, path := range []string{"/api/zcode/quota", "/api/zcode/balance"} {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
+		for _, want := range []string{`"plan_id":"start-plan"`, `"remaining_units":1800000`, `"fetchedAt":`} {
+			if !contains(rec.Body.String(), want) {
+				t.Fatalf("%s body missing %s: %s", path, want, rec.Body.String())
+			}
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s Cache-Control = %q", path, got)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("upstream requests = %d, want one cached balance request", requests)
+	}
+}

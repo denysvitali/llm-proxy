@@ -219,6 +219,14 @@ longer accepted. The current Start Plan catalog entry is `glm-5.3-flash`. To
 use another model that ZCode enables for the account, add an explicit route
 for it.
 
+The proxy exposes read-only account quota data after sign-in:
+`GET /api/zcode/usage` reports current plan entitlements, while
+`GET /api/zcode/quota` (also available as `/api/zcode/balance`) reports the
+live balance buckets, including total, used, remaining, reserved, and expiry
+counters. Results are cached for one minute to avoid repeatedly polling the
+provider billing service; credentials and raw upstream responses are never
+returned.
+
 This uses an undocumented provider gateway discovered from the ZCode client
 and may change with a ZCode release. Confirm that routing your own entitlement
 through a proxy is allowed by the service terms.
@@ -575,6 +583,9 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET    | `/v1/models`                  | Merged model catalog using `<backend>/<id>` IDs |
 | GET    | `/`                           | Dashboard: status, routing, per-model stats, client setup |
 | GET    | `/api/overview`               | JSON data used by the dashboard SPA |
+| GET    | `/api/zcode/usage`            | Current ZCode plan entitlement metadata |
+| GET    | `/api/zcode/quota`            | ZCode quota buckets and remaining balances |
+| GET    | `/api/zcode/balance`          | Alias of `/api/zcode/quota` |
 | GET    | `/api/updates/ws`             | WebSocket stream of stats-change events for the dashboard |
 | GET    | `/api/updates/sse`             | Server-Sent-Events twin of the WebSocket, for transports that cannot upgrade |
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
