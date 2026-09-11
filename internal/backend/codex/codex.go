@@ -148,13 +148,6 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	return &backend.Response{Status: resp.StatusCode, Header: header, Body: io.NopCloser(bytes.NewReader(aggregated))}, nil
 }
 
-// PreviewRequest returns the body Send places on the wire. ChatGPT's Codex
-// endpoint is streaming-only, so even non-streaming proxy calls request SSE
-// and are aggregated before being returned to the client.
-func (c *Client) PreviewRequest(req *backend.Request) ([]byte, error) {
-	return normalizeRequest(req.RawBody)
-}
-
 func normalizeRequest(raw []byte) ([]byte, error) {
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {

@@ -188,12 +188,6 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	return &backend.Response{Status: resp.StatusCode, Header: header, Body: io.NopCloser(bytes.NewReader(aggregated))}, nil
 }
 
-// PreviewRequest returns the body Send will transmit after WorkBuddy's
-// required stream, channel-identity, tool-choice, and schema normalization.
-func (c *Client) PreviewRequest(req *backend.Request) ([]byte, error) {
-	return normalizeRequest(req.RawBody)
-}
-
 func (c *Client) credentials(ctx context.Context) (Credentials, string, error) {
 	if source, ok := c.Tokens.(interface {
 		Credentials(context.Context) (Credentials, error)

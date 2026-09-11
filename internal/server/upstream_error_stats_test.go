@@ -169,21 +169,35 @@ func TestStatsErrorsEndpoint(t *testing.T) {
 	}
 }
 
-func TestRequestInspectionListsMetadataAndServesBodies(t *testing.T) {
+func TestRequestInspectionRetainsMetadataWithoutBodies(t *testing.T) {
 	st := newStats(prometheus.NewRegistry(), config.StatsConfig{})
 	tr := st.track("workbuddy", "hy3")
-	st.inspect(tr, "proxy-1", string(backend.KindOpenAIChat), []byte(`{"model":"workbuddy/hy3"}`), []byte(`{"model":"hy3"}`))
+	st.inspect(tr, "proxy-1", string(backend.KindOpenAIChat))
 	tr.setUpstreamStatus(http.StatusBadRequest)
 	tr.noteUpstreamError([]byte(`{"msg":"rejected"}`))
 	tr.done()
 
 	list := st.RecentRequests()
-	if len(list) != 1 || list[0].ID == "" || list[0].ClientRequest != nil || list[0].UpstreamRequest != nil {
+	if len(list) != 1 || list[0].ID == "" || list[0].ProxyRequestID != "proxy-1" {
 		t.Fatalf("RecentRequests() = %+v", list)
 	}
 	detail, ok := st.Request(list[0].ID)
-	if !ok || string(detail.ClientRequest) != `{"model":"workbuddy/hy3"}` || string(detail.UpstreamRequest) != `{"model":"hy3"}` {
+	if !ok || detail.Backend != "workbuddy" || detail.Model != "hy3" || detail.Status != "400" {
 		t.Fatalf("Request() = %+v, %v", detail, ok)
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "workbuddy/hy3") || strings.Contains(string(encoded), "client_request") || strings.Contains(string(encoded), "upstream_request") {
+		t.Fatalf("request detail retains payload data: %s", encoded)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/requests/"+list[0].ID, nil)
+	request.SetPathValue("id", list[0].ID)
+	response := httptest.NewRecorder()
+	(&Server{stats: st}).handleRequest(response, request)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "workbuddy/hy3") {
+		t.Fatalf("request endpoint exposed payload data: status=%d body=%s", response.Code, response.Body.String())
 	}
 	errors := st.RecentUpstreamErrors()
 	if len(errors) != 1 || errors[0].RequestID != list[0].ID {

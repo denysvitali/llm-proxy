@@ -45,8 +45,6 @@ export interface InspectedRequest {
   kind?: string
   status: string
   error?: string
-  client_request?: unknown
-  upstream_request?: unknown
 }
 
 export interface RequestsResponse { requests: InspectedRequest[] }

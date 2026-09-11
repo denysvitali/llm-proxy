@@ -305,19 +305,18 @@ type UpstreamErrorEvent struct {
 	RequestID string    `json:"request_id,omitempty"`
 }
 
-// InspectedRequest is one bounded, recent upstream attempt available to the
-// admin dashboard. Bodies are retained in memory only and are never persisted.
+// InspectedRequest is one recent upstream attempt available to the admin
+// dashboard. Request bodies are deliberately not retained: prompts, tool
+// inputs, credentials, and other client data must not become dashboard data.
 type InspectedRequest struct {
-	ID              string          `json:"id"`
-	At              time.Time       `json:"at"`
-	ProxyRequestID  string          `json:"proxy_request_id,omitempty"`
-	Backend         string          `json:"backend"`
-	Model           string          `json:"model"`
-	Kind            string          `json:"kind,omitempty"`
-	Status          string          `json:"status"`
-	Error           string          `json:"error,omitempty"`
-	ClientRequest   json.RawMessage `json:"client_request,omitempty"`
-	UpstreamRequest json.RawMessage `json:"upstream_request,omitempty"`
+	ID             string    `json:"id"`
+	At             time.Time `json:"at"`
+	ProxyRequestID string    `json:"proxy_request_id,omitempty"`
+	Backend        string    `json:"backend"`
+	Model          string    `json:"model"`
+	Kind           string    `json:"kind,omitempty"`
+	Status         string    `json:"status"`
+	Error          string    `json:"error,omitempty"`
 }
 
 // maxRecentErrors caps the shared ring of recent upstream failures.
@@ -357,24 +356,11 @@ func (st *Stats) recordFailure(backend, model, status, message, requestID string
 	st.recentMu.Unlock()
 }
 
-const maxInspectedRequestBody = 1 << 20
-
-func boundedJSON(body []byte) json.RawMessage {
-	if len(body) == 0 {
-		return nil
-	}
-	if len(body) > maxInspectedRequestBody {
-		return json.RawMessage(strconv.Quote(fmt.Sprintf("request omitted: %d bytes exceeds 1 MiB inspection limit", len(body))))
-	}
-	return append(json.RawMessage(nil), body...)
-}
-
-func (st *Stats) inspect(tr *tracker, proxyID, kind string, clientBody, upstreamBody []byte) {
+func (st *Stats) inspect(tr *tracker, proxyID, kind string) {
 	seq := st.requestSeq.Add(1)
 	tr.request = InspectedRequest{
 		ID: fmt.Sprintf("%d-%d", time.Now().UnixNano(), seq), ProxyRequestID: proxyID,
 		Backend: tr.labels[0], Model: tr.labels[1], Kind: kind,
-		ClientRequest: boundedJSON(clientBody), UpstreamRequest: boundedJSON(upstreamBody),
 	}
 }
 
@@ -395,10 +381,7 @@ func (st *Stats) RecentRequests() []InspectedRequest {
 	defer st.recentMu.Unlock()
 	out := make([]InspectedRequest, 0, len(st.inspected))
 	for i := len(st.inspected) - 1; i >= 0; i-- {
-		r := st.inspected[i]
-		r.ClientRequest = nil
-		r.UpstreamRequest = nil
-		out = append(out, r)
+		out = append(out, st.inspected[i])
 	}
 	return out
 }

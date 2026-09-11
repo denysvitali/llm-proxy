@@ -196,6 +196,9 @@ inbound clients cannot override them. Request-body attribution is replaced the
 same way: `metadata.user_id` (where API clients such as Claude Code embed
 their own account and session identifiers) is rewritten to the official ZCode
 device identity, so client identifiers never reach the plan gateway.
+Client-supplied session correlation values are one-way derived into opaque
+proxy UUIDs before they are used in the ZCode headers or metadata, preserving
+affinity without forwarding the client's identifier.
 
 ZCode's risk control can also block the whole session with code 3012
 ("request has been blocked due to unusual activity"). That block targets the
@@ -596,6 +599,11 @@ responses). Raw series for Prometheus/Grafana live under `/metrics`:
 `llm_proxy_model_e2e_seconds`, `llm_proxy_model_tokens_total`,
 `llm_proxy_model_output_tokens_per_second`, `llm_proxy_model_tool_calls_total`,
 `llm_proxy_model_tool_errors_total`.
+
+The dashboard's recent-request history retains only request metadata and
+bounded upstream error summaries. Request bodies are never retained or exposed
+through the dashboard, so prompts, tool inputs, and client credentials do not
+become proxy-owned history.
 
 ## Development
 

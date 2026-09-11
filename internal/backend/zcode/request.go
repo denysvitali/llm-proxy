@@ -43,9 +43,8 @@ var zcodeSystemBlocks = []map[string]any{
 const zcodeDesktopContext = "# ZCode Desktop Context\n\n### Files & URLs\n- Return local web URLs as Markdown links (e.g., [label](http://127.0.0.1:8080)).\n- File should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Unless otherwise specified, return local file references as Markdown links (e.g., [name.md](/absolute/path/to/name.md)).\n\n### Inline Code Comments\n- Use the ::code-comment{...} directive when you need to attach feedback directly to specific code lines.\n- Emit one directive per inline comment; emit none when there are no actionable inline comments.\n- Required attributes: title (short label), body (one-paragraph explanation), file (path to the file).\n- Optional attributes: start, end (1-based line numbers), priority (0-3).\n- file should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Keep line ranges tight; end defaults to start.\n- Example: ::code-comment{title=\"[P2] Off-by-one\" body=\"Loop iterates past the end when length is 0.\" file=\"/path/to/foo.ts\" start=10 end=11 priority=2}"
 
 // zcodeIdentity carries the device/session attribution the official client
-// stamps onto every model request. DeviceMid is the stable per-session
-// identifier; SessionID is the prefix-normalized session value shared by the
-// X-Session-Id header and the request metadata.
+// stamps onto every model request. Both values are opaque proxy identifiers;
+// client-supplied session values are never sent to ZCode verbatim.
 type zcodeIdentity struct {
 	DeviceMid string
 	SessionID string
@@ -53,7 +52,7 @@ type zcodeIdentity struct {
 
 // zcodeMetadataUserID reproduces the official client's Iko() builder: the
 // Anthropic metadata.user_id is a JSON string with the device mid, an empty
-// account UUID, and the normalized session id. Inbound clients (e.g. Claude
+// account UUID, and the opaque proxy session id. Inbound clients (e.g. Claude
 // Code) put their own account/session identifiers there — user_<hash>_account_
 // <uuid>_session_<uuid> — which must never reach the plan gateway, so the
 // official shape replaces whatever the client sent.

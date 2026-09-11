@@ -14,7 +14,6 @@ import {
   SimpleGrid,
   Stack,
   Table,
-  Tabs,
   Text,
   ThemeIcon,
   Title,
@@ -558,16 +557,10 @@ function RequestDetail({ request }: { request: InspectedRequest }) {
     <Group gap="xs"><StatusBadge status={request.status} /><Text size="sm">{request.backend} / {request.model}</Text></Group>
     <Text size="xs" c="dimmed">Proxy request ID: {request.proxy_request_id || 'unavailable'} · wire format: {request.kind || 'unknown'}</Text>
     {request.error && <Alert color="red" variant="light">{request.error}</Alert>}
-    <Tabs defaultValue="client">
-      <Tabs.List><Tabs.Tab value="client">Client request</Tabs.Tab><Tabs.Tab value="upstream">Upstream request</Tabs.Tab></Tabs.List>
-      <Tabs.Panel value="client" pt="sm"><RequestJSON value={request.client_request} /></Tabs.Panel>
-      <Tabs.Panel value="upstream" pt="sm"><RequestJSON value={request.upstream_request} /></Tabs.Panel>
-    </Tabs>
+    <Alert color="blue" variant="light">
+      Request payloads are not retained by the proxy, so prompts, tool inputs, and credentials cannot appear in dashboard history.
+    </Alert>
   </Stack>
-}
-
-function RequestJSON({ value }: { value: unknown }) {
-  return <ScrollArea h={460}><Code block>{value === undefined ? 'Not captured' : JSON.stringify(value, null, 2)}</Code></ScrollArea>
 }
 
 function StatusBadge({ status }: { status: string }) {

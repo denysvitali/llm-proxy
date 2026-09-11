@@ -426,13 +426,10 @@ func (s *Server) exchange(
 		Header:    header,
 		Streaming: env.streaming,
 	}
-	inspectedPayload := payload
-	if previewer, ok := rt.backend.(backend.RequestPreviewer); ok {
-		if preview, err := previewer.PreviewRequest(req); err == nil {
-			inspectedPayload = preview
-		}
-	}
-	s.stats.inspect(tr, RequestID(r.Context()), string(wireFormat), env.body, inspectedPayload)
+	// Keep only request metadata in the dashboard history. The request and
+	// translated payloads can contain prompts, tool inputs, and credentials;
+	// neither should outlive this exchange in proxy-owned state.
+	s.stats.inspect(tr, RequestID(r.Context()), string(wireFormat))
 	// Every attempt's body is sniffed against the same tracker: usage fields
 	// fold by high-water mark, so a recovered retry keeps its stats and a
 	// discarded partial one cannot inflate them. All sniffers close when

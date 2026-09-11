@@ -265,10 +265,14 @@ func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "secret")
+	requestHeaders := http.Header{
+		"X-Aliyun-Captcha-Verify-Param": []string{"fresh-param"},
+		"X-Session-Id":                  []string{"sess_proxy-session-1"},
+	}
 	response, err := client.Send(context.Background(), &backend.Request{
 		Kind:    backend.KindAnthropic,
 		RawBody: []byte(claudeCodeBody),
-		Header:  http.Header{"X-Session-Id": []string{"sess_proxy-session-1"}},
+		Header:  requestHeaders,
 	})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
@@ -283,47 +287,19 @@ func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 	if !ok || len(metadata) != 1 {
 		t.Fatalf("metadata = %#v, want exactly the user_id key", sent["metadata"])
 	}
-	wantUserID := zcodeMetadataUserID(zcodeIdentity{DeviceMid: deviceMID("secret"), SessionID: "proxy-session-1"})
+	wantIdentity := requestIdentity("secret", requestHeaders)
+	wantUserID := zcodeMetadataUserID(wantIdentity)
 	if got := metadata["user_id"]; got != wantUserID {
 		t.Errorf("metadata.user_id = %v, want %v", got, wantUserID)
 	}
-	if strings.Contains(string(upstreamBody), "account-uuid") || strings.Contains(string(upstreamBody), "user_5f3a") {
+	if strings.Contains(string(upstreamBody), "account-uuid") || strings.Contains(string(upstreamBody), "user_5f3a") || strings.Contains(string(upstreamBody), "proxy-session-1") {
 		t.Errorf("upstream body leaks client identifiers: %s", upstreamBody)
 	}
-	if upstreamSessionHeader != "proxy-session-1" {
-		t.Errorf("X-Session-Id = %q, want prefix-stripped proxy-session-1", upstreamSessionHeader)
+	if upstreamSessionHeader != wantIdentity.SessionID {
+		t.Errorf("X-Session-Id = %q, want opaque session %q", upstreamSessionHeader, wantIdentity.SessionID)
 	}
-}
-
-func TestPreviewRequestMatchesSentBody(t *testing.T) {
-	const claudeCodeBody = `{"model":"glm-5.3-flash","metadata":{"user_id":"user_5f3a_account_6c9d-session-uuid"},"messages":[]}`
-	var sentBody []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sentBody, _ = io.ReadAll(r.Body)
-		_, _ = fmt.Fprint(w, `{"ok":true}`)
-	}))
-	defer server.Close()
-
-	client := New(server.URL, "secret")
-	preview, err := client.PreviewRequest(&backend.Request{
-		Kind:    backend.KindAnthropic,
-		RawBody: []byte(claudeCodeBody),
-		Header:  http.Header{"X-Session-Id": []string{"sess_preview-session"}},
-	})
-	if err != nil {
-		t.Fatalf("PreviewRequest() error = %v", err)
-	}
-	response, err := client.Send(context.Background(), &backend.Request{
-		Kind:    backend.KindAnthropic,
-		RawBody: []byte(claudeCodeBody),
-		Header:  http.Header{"X-Session-Id": []string{"sess_preview-session"}},
-	})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	_ = response.Body.Close()
-	if !bytes.Equal(preview, sentBody) {
-		t.Errorf("preview body = %s, want the body Send put on the wire: %s", preview, sentBody)
+	if upstreamSessionHeader == "proxy-session-1" {
+		t.Errorf("X-Session-Id forwarded client identifier: %q", upstreamSessionHeader)
 	}
 }
 

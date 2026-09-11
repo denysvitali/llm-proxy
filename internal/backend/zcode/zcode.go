@@ -60,10 +60,10 @@ const (
 	aliyunCaptchaRegion       = "sgp"
 )
 
-// zcodeSessionPrefixes and zcodeQueryPrefixes are the internal prefixes the
-// official client strips (wrt/Sko) before putting session and query attribution
-// on the wire — in the X-Session-Id/X-Query-Id headers and in the request
-// metadata alike.
+// zcodeSessionPrefixes are the internal prefixes the official client strips
+// (wrt/Sko) before putting session attribution on the wire. The resulting value
+// is still treated as client-controlled input and is converted to an opaque
+// proxy identifier before it reaches ZCode.
 var (
 	zcodeSessionPrefixes = []string{"sess_", "subagent_agent_"}
 	zcodeQueryPrefixes   = []string{"query_"}
@@ -467,29 +467,23 @@ func normalizedAttribution(value string, prefixes []string, fallback string) str
 	return value
 }
 
-// requestIdentity derives the device/session attribution for one request: the
-// stable per-token device mid, and the session id the inbound client asked for
-// (prefix-normalized) or a separate stable proxy-session UUID when the client
-// sent none. Device and session IDs must not collapse to the same value: the
-// official client treats them as distinct pieces of attribution.
+// requestIdentity derives the device/session attribution for one request. The
+// stable device ID is scoped to the configured ZCode token. If the client
+// supplies a session value, it is normalized and then one-way derived into a
+// UUID so ZCode can retain affinity without learning the client's session ID.
+// Requests without one use a separate stable proxy-session UUID.
 func requestIdentity(token string, header http.Header) zcodeIdentity {
 	deviceMid := deviceMID(token)
+	clientSession := normalizedAttribution(header.Get("X-Session-Id"), zcodeSessionPrefixes, "")
+	session := sessionID(token)
+	if clientSession != "" {
+		session = derivedUUID("llm-proxy/zcode/client-session/" + deviceMid + "/" + clientSession)
+	}
 	return zcodeIdentity{
 		DeviceMid: deviceMid,
-		SessionID: normalizedAttribution(header.Get("X-Session-Id"), zcodeSessionPrefixes, sessionID(token)),
+		SessionID: session,
 	}
 }
-
-// PreviewRequest exposes the body Send would put on the wire so the admin
-// request inspector shows the transformed request instead of the inbound one.
-// The identity here is derived from the configured key; browser token sources
-// are not consulted because resolving them can perform IO, which is Send's
-// job — deployments using a token source preview a placeholder device mid.
-func (c *Client) PreviewRequest(req *backend.Request) ([]byte, error) {
-	return transformStartPlanRequest(req.RawBody, requestIdentity(c.Key, req.Header)), nil
-}
-
-var _ backend.RequestPreviewer = (*Client)(nil)
 
 func randomUUID() string {
 	var raw [16]byte
