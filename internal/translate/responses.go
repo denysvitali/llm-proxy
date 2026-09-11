@@ -296,7 +296,7 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 			items = append(items, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: block.ToolUseID,
-				Output: encodeResponsesText(toolResultText(block)),
+				Output: encodeToolResultOutput(block),
 			})
 		case "thinking", "redacted_thinking":
 			// Reasoning traces are provider-specific and are not replayed upstream.
@@ -778,11 +778,54 @@ func ChatFromResponses(body []byte, model string) ([]byte, error) {
 
 // encodeResponsesText stores a tool-result string as a JSON string payload,
 // matching the Responses API's string form of function_call_output.output.
+// Empty results still encode as "" so strict upstreams (Grok, OpenCode Go)
+// do not reject the item as "missing field `output`".
 func encodeResponsesText(text string) json.RawMessage {
-	if text == "" {
-		return nil
-	}
 	return mustMarshal(text)
+}
+
+// encodeToolResultOutput renders an Anthropic tool_result as the Responses
+// function_call_output.output value: a JSON string for text, or an array of
+// input_text / input_image parts when the result carries images.
+func encodeToolResultOutput(block anthropicBlock) json.RawMessage {
+	if len(block.Content) == 0 {
+		return encodeResponsesText("")
+	}
+	if text, ok := plainString(block.Content); ok {
+		return encodeResponsesText(text)
+	}
+	var blocks []anthropicBlock
+	if err := json.Unmarshal(block.Content, &blocks); err != nil {
+		return encodeResponsesText(string(block.Content))
+	}
+	var parts []responsesInputContent
+	var text strings.Builder
+	hasImage := false
+	for _, nested := range blocks {
+		switch nested.Type {
+		case "text":
+			if nested.Text == "" {
+				continue
+			}
+			if text.Len() > 0 {
+				text.WriteString("\n")
+			}
+			text.WriteString(nested.Text)
+			parts = append(parts, responsesInputContent{Type: "input_text", Text: nested.Text})
+		case "image":
+			if url := imageURL(nested.Source); url != "" {
+				hasImage = true
+				parts = append(parts, responsesInputContent{Type: "input_image", ImageURL: url})
+			}
+		}
+	}
+	if hasImage {
+		if len(parts) == 0 {
+			return encodeResponsesText("")
+		}
+		return mustMarshal(parts)
+	}
+	return encodeResponsesText(text.String())
 }
 
 // itemOutputText flattens function_call_output.output, which the Responses

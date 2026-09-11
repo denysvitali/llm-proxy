@@ -122,3 +122,33 @@ func TestNormalizeResponsesRequestDropsAdditionalToolsAndKeepsArrayOutput(t *tes
 		t.Fatalf("additional_tools remains: %s", got)
 	}
 }
+
+func TestNormalizeResponsesRequestFillsMissingFunctionCallOutput(t *testing.T) {
+	input := []byte(`{
+		"model":"upstream-model",
+		"input":[
+			{"type":"function_call_output","call_id":"call_1"},
+			{"type":"custom_tool_call_output","call_id":"call_2","output":null},
+			{"type":"message","role":"user","content":"hello"}
+		]
+	}`)
+	got, err := NormalizeResponsesRequest(input)
+	if err != nil {
+		t.Fatalf("NormalizeResponsesRequest: %v", err)
+	}
+	var request struct {
+		Input []map[string]json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(got, &request); err != nil {
+		t.Fatalf("decode normalized request: %v", err)
+	}
+	if len(request.Input) != 3 {
+		t.Fatalf("input items = %d", len(request.Input))
+	}
+	if string(request.Input[0]["output"]) != `""` {
+		t.Errorf("missing output was not filled: %s", request.Input[0]["output"])
+	}
+	if string(request.Input[1]["output"]) != `""` {
+		t.Errorf("null output was not filled: %s", request.Input[1]["output"])
+	}
+}

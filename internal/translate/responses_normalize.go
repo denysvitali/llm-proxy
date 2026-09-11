@@ -9,8 +9,9 @@ import (
 // NormalizeResponsesRequest adapts valid Responses input for strict compatible
 // upstreams without changing the request's meaning. Prompt-role messages are
 // folded into instructions, Codex-internal additional_tools items are dropped,
-// and a null reasoning content field is removed while opaque provider state
-// and unknown fields remain byte-for-byte values.
+// a null reasoning content field is removed, and function_call_output items
+// that omit output get an empty string so serde-based gateways do not 422.
+// Opaque provider state and unknown fields remain byte-for-byte values.
 func NormalizeResponsesRequest(body []byte) ([]byte, error) {
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
@@ -51,6 +52,13 @@ func NormalizeResponsesRequest(body []byte) ([]byte, error) {
 		if header.Type == "reasoning" && bytes.Equal(bytes.TrimSpace(item["content"]), []byte("null")) {
 			delete(item, "content")
 			changed = true
+		}
+		if header.Type == "function_call_output" || header.Type == "custom_tool_call_output" {
+			rawOutput := bytes.TrimSpace(item["output"])
+			if len(rawOutput) == 0 || bytes.Equal(rawOutput, []byte("null")) {
+				item["output"] = json.RawMessage(`""`)
+				changed = true
+			}
 		}
 		normalized = append(normalized, item)
 	}

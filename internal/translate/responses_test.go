@@ -167,6 +167,45 @@ func TestToResponses(t *testing.T) {
 			},
 		},
 		{
+			name: "empty tool_result still carries output",
+			request: `{"model":"m","max_tokens":64,"messages":[` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_empty"}]}]}`,
+			check: func(t *testing.T, out map[string]any) {
+				output := jmap(t, jarray(t, out["input"], "input")[0], "output")
+				if got := jstr(t, output["type"]); got != "function_call_output" {
+					t.Fatalf("type = %q", got)
+				}
+				if got := jstr(t, output["output"]); got != "" {
+					t.Fatalf("output = %#v, want empty string", output["output"])
+				}
+			},
+		},
+		{
+			name: "image tool_result keeps output as content parts",
+			request: `{"model":"m","max_tokens":64,"messages":[` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_img","content":[` +
+				`{"type":"text","text":"screenshot"},` +
+				`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc123"}}]}]}]}`,
+			check: func(t *testing.T, out map[string]any) {
+				item := jmap(t, jarray(t, out["input"], "input")[0], "output")
+				if got := jstr(t, item["type"]); got != "function_call_output" {
+					t.Fatalf("type = %q", got)
+				}
+				parts := jarray(t, item["output"], "output")
+				if len(parts) != 2 {
+					t.Fatalf("output parts = %#v", parts)
+				}
+				text := jmap(t, parts[0], "text")
+				image := jmap(t, parts[1], "image")
+				if jstr(t, text["type"]) != "input_text" || jstr(t, text["text"]) != "screenshot" {
+					t.Fatalf("text part = %#v", text)
+				}
+				if jstr(t, image["type"]) != "input_image" || jstr(t, image["image_url"]) != "data:image/png;base64,abc123" {
+					t.Fatalf("image part = %#v", image)
+				}
+			},
+		},
+		{
 			name: "tools are flattened to Responses function tools",
 			request: `{"model":"m","max_tokens":64,"tools":[{"name":"get_weather","description":"Look up weather",` +
 				`"input_schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}],` +
@@ -764,6 +803,21 @@ func TestChatToResponses(t *testing.T) {
 	tool := jmap(t, tools[0], "tool")
 	if jstr(t, tool["type"]) != "function" || jstr(t, tool["name"]) != "get_weather" {
 		t.Fatalf("tool = %#v", tool)
+	}
+}
+
+func TestChatToResponsesEmptyToolOutput(t *testing.T) {
+	chatBody := `{"messages":[{"role":"user","content":"hi"},{"role":"tool","tool_call_id":"call_empty","content":""}]}`
+	body, err := ChatToResponses([]byte(chatBody), "m")
+	if err != nil {
+		t.Fatalf("ChatToResponses: %v", err)
+	}
+	item := jmap(t, jarray(t, decodeJSON(t, body)["input"], "input")[1], "output")
+	if jstr(t, item["type"]) != "function_call_output" {
+		t.Fatalf("type = %#v", item["type"])
+	}
+	if got := jstr(t, item["output"]); got != "" {
+		t.Fatalf("output = %#v, want empty string", item["output"])
 	}
 }
 
