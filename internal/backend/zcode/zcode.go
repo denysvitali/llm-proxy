@@ -182,7 +182,10 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		// Fail fast — and before consuming a browser proof — while the plan
 		// gateway's unusual-activity block is active. Surfacing this as a
 		// backend error also lets server-level fallback routes take over.
-		return nil, fmt.Errorf("ZCode plan gateway rejected the session for unusual activity (code 3012); requests are paused until %s to let the block clear", until.UTC().Format(time.RFC3339))
+		// The error is Terminal: the pause is a deadline, not a blip, so the
+		// retry budget would only stall the client through the whole backoff
+		// before reaching this same answer.
+		return nil, backend.Terminal(fmt.Errorf("ZCode plan gateway rejected the session for unusual activity (code 3012); requests are paused until %s to let the block clear", until.UTC().Format(time.RFC3339)))
 	}
 	identity := requestIdentity(token, req.Header)
 	requestBody := transformStartPlanRequest(req.RawBody, identity)

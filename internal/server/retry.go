@@ -107,7 +107,11 @@ func (r errReader) Read([]byte) (int, error) { return 0, r.err }
 // this request, not a transient fault, so retrying it only stalls the client.
 func retryableUpstream(resp *backend.Response, err error) bool {
 	if err != nil {
-		return true
+		// Most backend errors are transport faults worth another attempt, but a
+		// Terminal one is a definitive verdict: retrying cannot change the
+		// answer, and when the provider counts requests against a risk budget
+		// each repeat makes the client wait out the whole backoff to reach it.
+		return !backend.IsTerminal(err)
 	}
 	switch resp.Status {
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:

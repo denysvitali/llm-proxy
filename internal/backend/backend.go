@@ -4,6 +4,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"net/http"
 )
 
@@ -59,6 +60,32 @@ type Backend interface {
 	// The caller owns closing Response.Body. Implementations translate the
 	// Request into their native wire format themselves.
 	Send(ctx context.Context, req *Request) (*Response, error)
+}
+
+// TerminalError marks a backend error as a definitive verdict for this request
+// rather than a transient transport fault. The server's retry loop relays it on
+// the first attempt: a retry would fail identically, and for a provider that
+// counts requests against a risk budget — the ZCode plan gateway's
+// unusual-activity pause, for one — repeating it is actively harmful.
+type TerminalError struct{ Err error }
+
+func (e *TerminalError) Error() string { return e.Err.Error() }
+func (e *TerminalError) Unwrap() error { return e.Err }
+
+// Terminal marks err as a definitive verdict, opting it out of the server's
+// connection-phase retries. It returns nil for a nil error so a Send can wrap
+// unconditionally.
+func Terminal(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &TerminalError{Err: err}
+}
+
+// IsTerminal reports whether err carries a Terminal marker.
+func IsTerminal(err error) bool {
+	var terminal *TerminalError
+	return errors.As(err, &terminal)
 }
 
 // ModelWireOverrider is an optional Backend refinement for providers whose
