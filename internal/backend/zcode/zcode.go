@@ -35,7 +35,11 @@ const (
 	// zcodeAppVersion and the identity headers below match the current ZCode
 	// desktop client. They are fixed so an arbitrary inbound client cannot
 	// create an inconsistent identity that triggers the gateway's abuse checks.
-	zcodeAppVersion = "3.10.2"
+	// The version tracks the released build: @zcode/desktop 3.11.2 (2026-09-11)
+	// carries the same model-request fingerprint as 3.10.2 — gin/fin/RRi in
+	// resources/glm/zcode.cjs were only renamed (csn/usn/x4i) — so only the
+	// advertised version needed to move.
+	zcodeAppVersion = "3.11.2"
 	zcodeLanguage   = "en-US"
 
 	// zcodeOSVersion is the kernel release advertised to the plan gateway.
