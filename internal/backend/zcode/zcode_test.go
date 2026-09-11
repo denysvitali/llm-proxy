@@ -158,6 +158,7 @@ func TestZCodeGatewayErrorStatus(t *testing.T) {
 		status int
 		ok     bool
 	}{
+		{name: "quota exhausted", body: `{"code":1005,"msg":"exceed quota limit"}`, status: http.StatusTooManyRequests, ok: true},
 		{name: "captcha", body: `{"code":3007,"msg":"captcha verify failed"}`, status: http.StatusBadRequest, ok: true},
 		{name: "unusual activity", body: `{"code":"3012","msg":"request has been blocked"}`, status: http.StatusMethodNotAllowed, ok: true},
 		{name: "success message", body: `{"type":"message","content":[]}`, ok: false},

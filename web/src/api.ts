@@ -121,6 +121,7 @@ export interface Overview {
   routes: OverviewRoute[]
   stats?: ModelStat[]
   grokUsage: GrokUsageMetadata
+  zcodeUsage: ZcodeUsageMetadata
   hasDefault: boolean
   defaultRoute: OverviewRoute
   exampleModel: string
@@ -132,6 +133,26 @@ export interface GrokUsageMetadata {
   configured: boolean
   available: boolean
   error?: string
+}
+
+export type ZcodeUsageMetadata = GrokUsageMetadata
+
+export interface ZcodePlanUsage {
+  plan_id: string
+  name?: string
+  status?: string
+  kind?: string
+  reason?: string
+  total_units?: number
+  used_units?: number
+  available_units?: number
+  period_start?: number
+  period_end?: number
+}
+
+export interface ZcodeUsage {
+  plans: ZcodePlanUsage[]
+  fetchedAt: string
 }
 
 export interface GrokUsage {
@@ -173,6 +194,10 @@ export function fetchOverview(): Promise<Overview> {
 
 export function fetchGrokUsage(): Promise<GrokUsage> {
   return getJSON<GrokUsage>('/api/grok/usage')
+}
+
+export function fetchZcodeUsage(): Promise<ZcodeUsage> {
+  return getJSON<ZcodeUsage>('/api/zcode/usage')
 }
 
 export function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {

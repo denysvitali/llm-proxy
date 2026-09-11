@@ -55,8 +55,8 @@ export const theme = createTheme({
   headings: {
     fontWeight: '700',
     sizes: {
-      h3: { fontSize: rem(21), lineHeight: '1.25', fontWeight: '700' },
-      h4: { fontSize: rem(17), lineHeight: '1.3', fontWeight: '700' },
+      h3: { fontSize: rem(24), lineHeight: '1.2', fontWeight: '700' },
+      h4: { fontSize: rem(18), lineHeight: '1.3', fontWeight: '700' },
       h5: { fontSize: rem(14), lineHeight: '1.35', fontWeight: '650' },
     },
   },

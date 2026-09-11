@@ -130,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats/backends/{backend}/{model}", s.handleStatsBackendSeries)
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("GET /api/grok/usage", s.handleGrokUsage)
+	mux.HandleFunc("GET /api/zcode/usage", s.handleZcodeUsage)
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
 	mux.HandleFunc("GET /api/updates/sse", s.handleUpdatesSSE)
 	mux.HandleFunc("GET /login", s.grokLoginPage)

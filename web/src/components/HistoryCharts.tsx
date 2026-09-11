@@ -15,6 +15,9 @@ export interface HistorySeries {
 type HistoryChartData = Record<string, number | string>
 
 const chartColors = [0, 1, 2]
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+// 24h series spans ~1 day; 7d spans ~7. Anything past 36h is the weekly view.
+const DATE_AXIS_SPAN_MS = 36 * 60 * 60 * 1000
 
 function mergeSeries(...groups: Array<SeriesPoint[] | undefined>): HistoryChartData[] {
   const timestamps = [
@@ -30,11 +33,40 @@ function mergeSeries(...groups: Array<SeriesPoint[] | undefined>): HistoryChartD
   })
 }
 
-function formatAxisTime(value: string) {
+function usesDateAxis(data: HistoryChartData[]): boolean {
+  const times = data.map((point) => String(point.time))
+  if (times.some((ts) => DATE_ONLY.test(ts))) return true
+  if (times.length < 2) return false
+  const first = Date.parse(times[0])
+  const last = Date.parse(times[times.length - 1])
+  return Number.isFinite(first) && Number.isFinite(last) && last - first >= DATE_AXIS_SPAN_MS
+}
+
+function formatAxisTime(value: string, dateAxis = false) {
+  if (dateAxis || DATE_ONLY.test(value)) {
+    const date = DATE_ONLY.test(value) ? new Date(`${value}T00:00:00Z`) : new Date(value)
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
   return new Date(value).toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function formatTooltipTime(value: string) {
+  if (DATE_ONLY.test(value)) {
+    return new Date(`${value}T00:00:00Z`).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }
+  return new Date(value).toLocaleString('en-US')
+}
+
+function axisTimeFormatter(data: HistoryChartData[]) {
+  const dateAxis = usesDateAxis(data)
+  return (value: string) => formatAxisTime(value, dateAxis)
 }
 
 // Axis ticks must never read "—": a zero tick is the baseline itself, and
@@ -56,8 +88,8 @@ function ChartTooltip({
   const byName = new Map(payload.map((item) => [String(item.dataKey), Number(item.value ?? 0)]))
   return (
     <Paper withBorder p={10} radius="md" shadow="sm" style={{ minWidth: 150 }}>
-      <Text size="xs" c="dimmed" mb={6}>
-        {new Date(timestamp).toLocaleString('en-US')}
+      <Text size="xs" c="dimmed" mb={6} style={{ fontVariantNumeric: 'tabular-nums' }}>
+        {formatTooltipTime(timestamp)}
       </Text>
       <Stack gap={4}>
         {series.map((item) => (
@@ -118,10 +150,11 @@ export function HistoryLineChart({
           h={height}
           data={data}
           dataKey="time"
-          curveType="linear"
+          curveType="monotone"
           connectNulls
           withLegend={withLegend}
-          legendProps={{ verticalAlign: 'bottom', position: 'left' } as never}
+          // Bottom-center: `position: 'left'` sat the swatches on the y-axis.
+          legendProps={{ verticalAlign: 'bottom', align: 'center', wrapperStyle: { paddingTop: 8 } } as never}
           series={coloredSeries.map(({ name, label, color }) => ({ name, label, color }))}
           valueFormatter={axisFormatter(coloredSeries[0].formatter)}
           tooltipProps={{
@@ -131,7 +164,7 @@ export function HistoryLineChart({
               ) : null,
           }}
           xAxisProps={{
-            tickFormatter: formatAxisTime,
+            tickFormatter: axisTimeFormatter(data),
             tickLine: false,
             axisLine: false,
             minTickGap: 24,
@@ -139,7 +172,7 @@ export function HistoryLineChart({
           yAxisProps={{
             tickLine: false,
             axisLine: false,
-            width: 42,
+            width: 48,
             tickFormatter: axisFormatter(coloredSeries[0].formatter),
           }}
           gridAxis="y"
@@ -201,7 +234,7 @@ export function HistoryBarChart({
             },
           }}
           xAxisProps={{
-            tickFormatter: formatAxisTime,
+            tickFormatter: axisTimeFormatter(data),
             tickLine: false,
             axisLine: false,
             minTickGap: 24,
@@ -209,7 +242,7 @@ export function HistoryBarChart({
           yAxisProps={{
             tickLine: false,
             axisLine: false,
-            width: 42,
+            width: 48,
             tickFormatter: axisFormatter(formatter),
           }}
           barProps={{ radius: [3, 3, 0, 0], maxBarSize: 18 }}

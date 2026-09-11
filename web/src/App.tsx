@@ -5,6 +5,7 @@ import {
   Container,
   Group,
   SegmentedControl,
+  Stack,
   Text,
   Title,
   Tooltip,
@@ -28,12 +29,12 @@ export default function App() {
 
   return (
     <AppShell
-      header={{ height: 56 }}
+      header={{ height: 60 }}
       footer={isMobile ? { height: 64 } : { height: 0, collapsed: true }}
       padding="md"
     >
       <AppShell.Header withBorder={false}>
-        <Container size="lg" h="100%" px="md">
+        <Container size="xl" h="100%" px="md">
           <Group h="100%" justify="space-between" wrap="nowrap" gap="sm">
             <HeaderBrand />
             {!isMobile && <DesktopNav />}
@@ -43,7 +44,7 @@ export default function App() {
       </AppShell.Header>
 
       <AppShell.Main>
-        <Container size="lg" pb={isMobile ? 24 : 40} px="md">
+        <Container size="xl" pb={isMobile ? 72 : 40} px="md">
           <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/models" element={<ModelsPage />} />
@@ -88,9 +89,25 @@ function HeaderBrand() {
             λ
           </Text>
         </Box>
+        <Stack gap={0} visibleFrom="md">
+          <Title
+            order={4}
+            mb={0}
+            style={{
+              letterSpacing: '-0.022em',
+              color: 'var(--mantine-color-text)',
+            }}
+          >
+            llm-proxy
+          </Title>
+          <Text fz={11} c="dimmed" lh={1.2} style={{ letterSpacing: '0.01em' }}>
+            Gateway
+          </Text>
+        </Stack>
         <Title
           order={4}
           mb={0}
+          hiddenFrom="md"
           style={{
             letterSpacing: '-0.022em',
             color: 'var(--mantine-color-text)',
@@ -150,8 +167,8 @@ function DesktopNav() {
             key={item.path}
             component={NavLink}
             to={item.path}
-            px={13}
-            py={5}
+            px={14}
+            py={6}
             style={{
               borderRadius: 8,
               display: 'flex',
@@ -244,9 +261,11 @@ function ColorSchemeToggle() {
 
 function FooterNote() {
   return (
-    <Text ta="center" size="xs" c="dimmed" mt="xl">
-      Real-time updates over WebSocket &middot; JSON APIs:{' '}
-      <a href="/stats">/stats</a> &middot; <a href="/api/overview">/api/overview</a> &middot;{' '}
+    <Text ta="center" size="xs" c="dimmed" mt="xl" opacity={0.7}>
+      <a href="/stats">/stats</a>
+      {' · '}
+      <a href="/api/overview">/api/overview</a>
+      {' · '}
       <a href="/metrics">/metrics</a>
     </Text>
   )

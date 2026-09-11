@@ -354,6 +354,11 @@ func zcodeGatewayErrorStatus(body []byte) (int, bool) {
 		return 0, false
 	}
 	switch code {
+	case 1005:
+		// The plan's quota is spent for the current billing period. Classify
+		// this as a client-side limit so the proxy relays it immediately instead
+		// of treating the gateway's HTTP-200 envelope as a retryable 502.
+		return http.StatusTooManyRequests, true
 	case 3007:
 		return http.StatusBadRequest, true
 	case 3012:

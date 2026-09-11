@@ -16,8 +16,8 @@ interface StatTileProps {
 // from type, not decoration. The icon chip's tint is the only color.
 export default function StatTile({ label, value, hint, icon, accent = 'brand' }: StatTileProps) {
   return (
-    <Paper withBorder p="md" radius="lg">
-      <Group justify="space-between" align="flex-start" wrap="nowrap" mb={10} gap="xs">
+    <Paper withBorder p="lg" radius="lg">
+      <Group justify="space-between" align="flex-start" wrap="nowrap" mb={12} gap="xs">
         <Text
           size="xs"
           tt="uppercase"
@@ -41,12 +41,12 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
         )}
       </Group>
       <Text
-        fz={26}
+        fz={32}
         fw={700}
-        lh={1.1}
+        lh={1.05}
         style={{
           fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.02em',
+          letterSpacing: '-0.03em',
         }}
       >
         {value}

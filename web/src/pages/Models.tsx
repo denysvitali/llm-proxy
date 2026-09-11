@@ -11,14 +11,11 @@ import {
   Progress,
   ScrollArea,
   Select,
-  SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
   Text,
   TextInput,
-  ThemeIcon,
-  Title,
   UnstyledButton,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
@@ -28,6 +25,9 @@ import { fetchBackendStatsSeries, fetchStats } from '../api'
 import type { ModelStat, StatsSeries } from '../api'
 import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { status, useChartPalette } from '../palette'
+import { PageHeader } from '../components/PageHeader'
+import { EmptyState } from '../components/EmptyState'
+import { TimeRangeControl } from '../components/TimeRangeControl'
 import UptimeBadge from '../components/UptimeBadge'
 import StatusChips from '../components/StatusChips'
 import PercentileBars from '../components/PercentileBars'
@@ -44,7 +44,6 @@ type SortKey =
   | 'model'
   | 'requests'
   | 'uptime'
-  | 'errors'
   | 'ttft'
   | 'e2e'
   | 'tps'
@@ -56,7 +55,6 @@ const columns: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'model', label: 'Backend / model' },
   { key: 'requests', label: 'Requests', numeric: true },
   { key: 'uptime', label: 'Uptime' },
-  { key: 'errors', label: 'Upstream errors' },
   { key: 'ttft', label: 'TTFT p50/p90/p99', numeric: true },
   { key: 'e2e', label: 'E2E p50/p90/p99', numeric: true },
   { key: 'tps', label: 'tok/s p50', numeric: true },
@@ -96,10 +94,6 @@ function sortValue(m: ModelStat, key: SortKey): string | number {
       return m.requests
     case 'uptime':
       return m.uptime
-    case 'errors':
-      // Sort by the largest single status count, then by total failures.
-      const counts = Object.values(m.status_codes ?? {})
-      return counts.length ? Math.max(...counts) : 0
     case 'ttft':
       return m.ttft_seconds.p50
     case 'e2e':
@@ -147,6 +141,20 @@ export default function ModelsPage() {
       })
   }, [models, filter, sort])
 
+  const summary = useMemo(() => {
+    const requests = models.reduce((s, m) => s + m.requests, 0)
+    const withTtft = models.filter((m) => m.ttft_seconds.p50 > 0)
+    let medianTtft = 0
+    if (withTtft.length > 0) {
+      const sorted = [...withTtft].sort((a, b) => a.ttft_seconds.p50 - b.ttft_seconds.p50)
+      medianTtft = sorted[Math.floor(sorted.length / 2)].ttft_seconds.p50
+    }
+    const withErrors = models.filter(
+      (m) => m.requests - m.successes > 0 || m.tool_errors > 0,
+    ).length
+    return { requests, medianTtft, withErrors }
+  }, [models])
+
   function toggleSort(key: SortKey) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'model' ? 1 : -1 }))
   }
@@ -154,21 +162,28 @@ export default function ModelsPage() {
   return (
     <Fade pending={q.isPending}>
       <Stack gap="md">
-        <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm">
-          <div>
-            <Title order={4} mb={2}>Models</Title>
-            <Text size="xs" c="dimmed">
-              {models.length} tracked · tap a {isMobile ? 'card' : 'row'} for full percentiles
-            </Text>
-          </div>
-          <TextInput
-            leftSection={<IconSearch size={14} />}
-            placeholder="Filter backend or model…"
-            value={filter}
-            onChange={(e) => setFilter(e.currentTarget.value)}
-            style={{ flex: isMobile ? '1 1 100%' : '0 0 280px' }}
-          />
-        </Group>
+        <PageHeader
+          title="Models"
+          subtitle={`${models.length} tracked · tap a ${isMobile ? 'card' : 'row'} for percentiles`}
+          extra={
+            <TextInput
+              leftSection={<IconSearch size={14} />}
+              placeholder="Filter backend or model…"
+              value={filter}
+              onChange={(e) => setFilter(e.currentTarget.value)}
+              style={{ flex: isMobile ? '1 1 100%' : '0 0 280px' }}
+            />
+          }
+        />
+
+        {models.length > 0 && (
+          <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+            <SummaryStat label="Models tracked" value={fmtInt(models.length)} />
+            <SummaryStat label="Requests" value={fmtInt(summary.requests)} />
+            <SummaryStat label="Median TTFT" value={fmtSec(summary.medianTtft)} />
+            <SummaryStat label="Models with errors" value={fmtInt(summary.withErrors)} />
+          </SimpleGrid>
+        )}
 
         {isMobile && rows.length > 0 && (
           <Group gap="xs" wrap="nowrap">
@@ -233,8 +248,15 @@ export default function ModelsPage() {
           <ScrollArea>
             {/* Striped + highlight-on-hover keeps wide rows scannable; the
                   cursor signals the row opens the detail drawer. */}
-            <Table verticalSpacing="sm" horizontalSpacing="md" highlightOnHover striped>
-              <Table.Thead>
+            <Table verticalSpacing="xs" horizontalSpacing="md" highlightOnHover striped>
+              <Table.Thead
+                style={{
+                  position: 'sticky',
+                  top: 0,
+                  background: 'var(--mantine-color-body)',
+                  zIndex: 1,
+                }}
+              >
                 <Table.Tr>
                   {columns.map((c) => (
                     <Table.Th key={c.key} ta={c.numeric ? 'right' : undefined}>
@@ -325,6 +347,19 @@ export default function ModelsPage() {
   )
 }
 
+function SummaryStat({ label, value }: { label: string; value: string }) {
+  return (
+    <Paper withBorder p="sm" radius="lg">
+      <Text size="xs" tt="uppercase" c="dimmed" fw={600} style={{ letterSpacing: '0.04em' }}>
+        {label}
+      </Text>
+      <Text fz={22} fw={700} lh={1.15} mt={4} style={{ fontVariantNumeric: 'tabular-nums' }}>
+        {value}
+      </Text>
+    </Paper>
+  )
+}
+
 function ModelCard({
   stat: m,
   colors,
@@ -351,7 +386,7 @@ function ModelCard({
       </Group>
       {/* Short labels: the drawer owns the verbose names; the card is a glance
             surface. Latency pair kept adjacent (TTFT then E2E). */}
-      <SimpleGrid cols={3} spacing="xs">
+      <SimpleGrid cols={3} spacing="sm">
         <Metric label="Requests" value={fmtInt(m.requests)} />
         <Metric label="TTFT" value={fmtSec(m.ttft_seconds.p50)} />
         <Metric label="E2E" value={fmtSec(m.e2e_seconds.p50)} />
@@ -409,30 +444,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function EmptyState({
-  icon,
-  title,
-  hint,
-}: {
-  icon: ReactNode
-  title: string
-  hint?: string
-}) {
-  return (
-    <Stack align="center" py="xl" gap={6}>
-      <ThemeIcon variant="light" color="gray" size="lg" radius="xl">
-        {icon}
-      </ThemeIcon>
-      <Text fw={600}>{title}</Text>
-      {hint && (
-        <Text size="sm" c="dimmed" ta="center" maw={340}>
-          {hint}
-        </Text>
-      )}
-    </Stack>
-  )
-}
-
 function ModelDetail({
   stat,
   colors,
@@ -463,18 +474,7 @@ function ModelDetail({
         <Text size="xs" tt="uppercase" fw={700} c="dimmed" style={{ letterSpacing: '0.04em' }}>
           Time range
         </Text>
-        <SegmentedControl
-          size="xs"
-          radius="sm"
-          value={range}
-          onChange={onRangeChange}
-          data={[
-            { value: '1h', label: '1h' },
-            { value: '6h', label: '6h' },
-            { value: '24h', label: '24h' },
-            { value: '7d', label: '7d' },
-          ]}
-        />
+        <TimeRangeControl value={range} onChange={onRangeChange} />
       </Group>
       <Paper withBorder radius="lg" p="md">
         <SimpleGrid cols={{ base: 2, xs: 4 }} spacing="md">
@@ -589,7 +589,7 @@ function DetailStat({
     <Box>
       <Text size="xs" c="dimmed" fw={600} style={{ letterSpacing: '0.03em' }}>{label}</Text>
       <Text
-        fz={20}
+        fz={22}
         fw={700}
         lh={1.15}
         mt={2}

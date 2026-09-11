@@ -1,21 +1,22 @@
+import type { ReactNode } from 'react'
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Code,
   CopyButton,
   Group,
-  List,
   Loader,
   Stack,
   Tabs,
   Text,
-  Title,
 } from '@mantine/core'
 import { IconCheck, IconCopy, IconInfoCircle, IconTerminal2 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchOverview } from '../api'
 import { Fade } from '../App'
+import { PageHeader } from '../components/PageHeader'
 
 export default function SetupPage() {
   const q = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
@@ -29,21 +30,58 @@ export default function SetupPage() {
         </Group>
       ) : (
         <Stack gap="lg" maw={820}>
-          <div>
-            <Title order={4} mb={2}>Setup</Title>
-            <Text size="xs" c="dimmed">Point a coding agent at this proxy</Text>
-          </div>
-          <List spacing="xs">
-            <List.Item>
-              Proxy listens on <Code>{ov.listen}</Code>, authentication{' '}
-              {ov.authEnabled ? 'enabled (llx_… keys)' : 'disabled'}
-            </List.Item>
+          <PageHeader title="Setup" subtitle="Point a coding agent at this proxy" />
+
+          <Card withBorder radius="lg" p={0}>
+            <StatusRow label="Listen">
+              <Code>{ov.listen}</Code>
+            </StatusRow>
+            <StatusRow label="Auth" last={ov.exampleModel === '<model>'}>
+              <Badge
+                color={ov.authEnabled ? 'teal' : 'gray'}
+                variant="light"
+                size="sm"
+                tt="none"
+              >
+                {ov.authEnabled ? 'enabled (llx_… keys)' : 'disabled'}
+              </Badge>
+            </StatusRow>
             {ov.exampleModel !== '<model>' && (
-              <List.Item>
-                Example model: <Code>{ov.exampleModel}</Code>
-              </List.Item>
+              <StatusRow label="Example model" last>
+                <Code>{ov.exampleModel}</Code>
+              </StatusRow>
             )}
-          </List>
+          </Card>
+
+          <Stack gap="sm">
+            {ov.backends.some((b) => b.name === 'grok') && (
+              <Alert color="violet" variant="light" title="Grok uses your xAI account">
+                Grok does not use an upstream API key.{' '}
+                <a href="/login">Sign in with xAI</a> to use your coding subscription.
+              </Alert>
+            )}
+
+            {ov.backends.some((b) => b.name === 'workbuddy') && (
+              <Alert color="blue" variant="light" title="WorkBuddy uses your account">
+                WorkBuddy does not use an upstream API key.{' '}
+                <a href="/login/workbuddy">Sign in with WorkBuddy</a> to connect your subscription.
+              </Alert>
+            )}
+
+            {ov.backends.some((b) => b.name === 'codex') && (
+              <Alert color="gray" variant="light" title="Codex uses your ChatGPT account">
+                Codex does not use an upstream API key.{' '}
+                <a href="/login/codex">Sign in with ChatGPT</a> using a one-time device code.
+              </Alert>
+            )}
+
+            {ov.backends.some((b) => b.name === 'zcode') && (
+              <Alert color="violet" variant="light" title="ZCode uses your account">
+                ZCode does not use an upstream API key.{' '}
+                <a href="/login/zcode">Sign in with ZCode</a> to connect your Start Plan.
+              </Alert>
+            )}
+          </Stack>
 
           {ov.authEnabled && (
             <Alert
@@ -57,37 +95,9 @@ export default function SetupPage() {
             </Alert>
           )}
 
-          {ov.backends.some((b) => b.name === 'grok') && (
-            <Alert color="violet" variant="light" title="Grok uses your xAI account">
-              Grok does not use an upstream API key.{' '}
-              <a href="/login">Sign in with xAI</a> to use your coding subscription.
-            </Alert>
-          )}
-
-          {ov.backends.some((b) => b.name === 'workbuddy') && (
-            <Alert color="blue" variant="light" title="WorkBuddy uses your account">
-              WorkBuddy does not use an upstream API key.{' '}
-              <a href="/login/workbuddy">Sign in with WorkBuddy</a> to connect your subscription.
-            </Alert>
-          )}
-
-          {ov.backends.some((b) => b.name === 'codex') && (
-            <Alert color="gray" variant="light" title="Codex uses your ChatGPT account">
-              Codex does not use an upstream API key.{' '}
-              <a href="/login/codex">Sign in with ChatGPT</a> using a one-time device code.
-            </Alert>
-          )}
-
-          {ov.backends.some((b) => b.name === 'zcode') && (
-            <Alert color="violet" variant="light" title="ZCode uses your account">
-              ZCode does not use an upstream API key.{' '}
-              <a href="/login/zcode">Sign in with ZCode</a> to connect your Start Plan.
-            </Alert>
-          )}
-
           <Card withBorder radius="lg" p={0}>
             <Tabs defaultValue="claude" keepMounted={false}>
-              <Tabs.List px="md" pt={6}>
+              <Tabs.List px="md" pt="sm" pb={4}>
                 <Tabs.Tab value="claude" leftSection={<IconTerminal2 size={14} />}>
                   Claude Code
                 </Tabs.Tab>
@@ -109,12 +119,40 @@ export default function SetupPage() {
   )
 }
 
+function StatusRow({
+  label,
+  last,
+  children,
+}: {
+  label: string
+  last?: boolean
+  children: ReactNode
+}) {
+  return (
+    <Group
+      justify="space-between"
+      wrap="nowrap"
+      gap="md"
+      px="md"
+      py="sm"
+      style={
+        last
+          ? undefined
+          : { borderBottom: '0.5px solid var(--mantine-color-default-border)' }
+      }
+    >
+      <Text size="sm">{label}</Text>
+      {children}
+    </Group>
+  )
+}
+
 function Snippet({ title, snippet }: { title: string; snippet: string }) {
   return (
     <div>
       <Group justify="space-between" px="md" py="xs">
-        <Text size="xs" c="dimmed">
-          Point your client at the proxy:
+        <Text fz={11} tt="uppercase" fw={600} c="dimmed" style={{ letterSpacing: '0.06em' }}>
+          Install
         </Text>
         <CopyButton value={snippet}>
           {({ copied, copy }) => (

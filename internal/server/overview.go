@@ -227,7 +227,7 @@ func (s *Server) zcodeUsageMetadata(r *http.Request) usageMetadata {
 
 func (s *Server) zcodeUsage(ctx context.Context) ([]zcodebackend.PlanUsage, error) {
 	if s.zcodeAuth == nil {
-		return nil, errUsageUnavailable
+		return nil, errZcodeUsageUnavailable
 	}
 
 	s.zcodeUsageMu.Lock()
