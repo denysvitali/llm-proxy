@@ -173,6 +173,102 @@ func TestZCodeGatewayErrorStatus(t *testing.T) {
 	}
 }
 
+func TestSendNormalizesGatewayRejectionBehindErrorStatus(t *testing.T) {
+	const quota = `{"code":1005,"msg":"exceed quota limit"}`
+	const blocked = `{"code":3012,"msg":"request has been blocked due to unusual activity."}`
+	for _, test := range []struct {
+		name         string
+		upstream     int
+		upstreamBody string
+		wantStatus   int
+	}{
+		{
+			// A spent plan quota reaches the proxy as HTTP 502. Left alone, the
+			// retry loop reads that as a transient gateway fault and retries it,
+			// hammering an account the gateway is already throttling.
+			name:         "quota behind 502 is relayed as a rate limit",
+			upstream:     http.StatusBadGateway,
+			upstreamBody: quota,
+			wantStatus:   http.StatusTooManyRequests,
+		},
+		{
+			// An unrecognised code must not replace a real error status with the
+			// 502 fallback, because 502 is the retryable class.
+			name:         "unknown code keeps the gateway status",
+			upstream:     http.StatusBadGateway,
+			upstreamBody: `{"code":5001,"msg":"upstream exploded"}`,
+			wantStatus:   http.StatusBadGateway,
+		},
+		{
+			name:         "unusual activity behind 405 stays classified",
+			upstream:     http.StatusMethodNotAllowed,
+			upstreamBody: blocked,
+			wantStatus:   http.StatusMethodNotAllowed,
+		},
+		{
+			name:         "non-envelope error body keeps the gateway status",
+			upstream:     http.StatusBadGateway,
+			upstreamBody: `<html><body>bad gateway</body></html>`,
+			wantStatus:   http.StatusBadGateway,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.upstream)
+				_, _ = fmt.Fprint(w, test.upstreamBody)
+			}))
+			defer server.Close()
+
+			response, err := New(server.URL, "secret").Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+			if err != nil {
+				t.Fatalf("Send() error = %v", err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.Status != test.wantStatus {
+				t.Fatalf("response status = %d, want %d", response.Status, test.wantStatus)
+			}
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatalf("read response body: %v", err)
+			}
+			if string(body) != test.upstreamBody {
+				t.Fatalf("response body = %q, want %q", string(body), test.upstreamBody)
+			}
+		})
+	}
+}
+
+func TestSendPreservesErrorBodyLargerThanEnvelopePeek(t *testing.T) {
+	// Only a bounded prefix of a failed response is buffered, so the bytes past
+	// it have to be replayed rather than dropped. The truncation also stops the
+	// body from parsing as an envelope, which is what leaves the status alone.
+	oversized := `{"code":5001,"msg":"` + strings.Repeat("x", gatewayEnvelopePeek) + `"}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = fmt.Fprint(w, oversized)
+	}))
+	defer server.Close()
+
+	response, err := New(server.URL, "secret").Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.Status != http.StatusBadGateway {
+		t.Fatalf("response status = %d, want %d", response.Status, http.StatusBadGateway)
+	}
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if string(got) != oversized {
+		t.Fatalf("response body length = %d, want %d preserved byte-for-byte", len(got), len(oversized))
+	}
+}
+
 func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{

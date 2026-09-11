@@ -58,6 +58,11 @@ const (
 	aliyunCaptchaHeader       = "X-Aliyun-Captcha-Verify-Param"
 	aliyunCaptchaRegionHeader = "X-Aliyun-Captcha-Verify-Region"
 	aliyunCaptchaRegion       = "sgp"
+
+	// gatewayEnvelopePeek bounds how much of a failed response body is buffered
+	// to look for a plan-gateway error envelope. An envelope is small; anything
+	// longer is not one, so the remainder is streamed on instead of held.
+	gatewayEnvelopePeek = 64 << 10
 )
 
 // zcodeSessionPrefixes are the internal prefixes the official client strips
@@ -301,34 +306,73 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 }
 
 // normalizeZCodeResponse converts the plan gateway's JSON error envelope into
-// the HTTP status that the gateway intended to send. Some edge responses have
+// the HTTP status that the gateway intended to send. The gateway does not
+// always pair its envelope with a matching status. Some rejections have
 // reached the proxy as HTTP 200 with a small {"code":...,"msg":...} body;
 // passing those through makes an Anthropic client report "body is JSON but
 // not a Message" and can cause it to retry the same blocked request.
+//
+// The envelope can also arrive behind an error status that hides its meaning:
+// a spent plan quota (code 1005) has been observed as HTTP 502, which the
+// server's retry loop reads as a transient gateway fault and retries. That is
+// the one shape this backend must never produce — retrying a business verdict
+// means hammering an account the gateway is already throttling, which is what
+// escalates a quota rejection into the code-3012 unusual-activity block.
 //
 // Successful model responses are left byte-for-byte unchanged. SSE responses
 // are not inspected here because their body must remain readable as a stream;
 // a gateway error returned for a streaming request uses application/json and
 // is therefore safe to buffer and classify.
 func normalizeZCodeResponse(resp *http.Response) {
-	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if resp == nil {
 		return
 	}
-	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json") {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json") {
+			return
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		// An envelope behind HTTP 200 means the response is not the success it
+		// claims to be, so the mapped status replaces it even when the code is
+		// unknown and falls back to 502.
+		if status, ok := zcodeGatewayErrorStatus(body); ok {
+			resp.StatusCode = status
+			resp.Status = fmt.Sprintf("%d %s", status, http.StatusText(status))
+		}
 		return
 	}
-	body, err := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
+	// A non-success response already reports a failure, so it is only peeked
+	// at: enough to read an envelope, with the rest of the body streamed on
+	// unchanged. Content-Type is deliberately not consulted — the envelope is
+	// identified by parsing it, and a gateway that mislabels a JSON error body
+	// would otherwise slip past.
+	peek, err := io.ReadAll(io.LimitReader(resp.Body, gatewayEnvelopePeek))
 	if err != nil {
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(peek))
 		return
 	}
-	status, ok := zcodeGatewayErrorStatus(body)
-	if !ok {
-		return
+	resp.Body = prefixedBody{io.MultiReader(bytes.NewReader(peek), resp.Body), resp.Body}
+	// Only a definitive business verdict replaces the status the gateway sent.
+	// The unknown-code fallback maps to 502 — the very class the retry loop
+	// treats as a transient fault — so applying it here would turn a relayed
+	// 4xx into exactly the retry storm this function exists to prevent.
+	if status, ok := zcodeGatewayErrorStatus(peek); ok && status != http.StatusBadGateway {
+		resp.StatusCode = status
+		resp.Status = fmt.Sprintf("%d %s", status, http.StatusText(status))
 	}
-	resp.StatusCode = status
-	resp.Status = fmt.Sprintf("%d %s", status, http.StatusText(status))
+}
+
+// prefixedBody replays an already-buffered prefix before the untouched
+// remainder of an upstream body, while still closing that body.
+type prefixedBody struct {
+	io.Reader
+	io.Closer
 }
 
 func zcodeGatewayErrorStatus(body []byte) (int, bool) {
@@ -357,7 +401,8 @@ func zcodeGatewayErrorStatus(body []byte) (int, bool) {
 	case 1005:
 		// The plan's quota is spent for the current billing period. Classify
 		// this as a client-side limit so the proxy relays it immediately instead
-		// of treating the gateway's HTTP-200 envelope as a retryable 502.
+		// of treating a permanent business verdict as a retryable 502 — the
+		// gateway has sent this code behind both HTTP 200 and HTTP 502.
 		return http.StatusTooManyRequests, true
 	case 3007:
 		return http.StatusBadRequest, true
