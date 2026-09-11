@@ -286,11 +286,17 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			"X-Os-Category":                 runtime.GOOS,
 			"X-Os-Version":                  zcodeOSVersion,
 			"X-ZCode-Session-Type":          "main",
-			"X-Session-Id":                  sessionID("secret"),
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
 			}
+		}
+		if got := r.Header.Get("X-Session-Id"); got != "" {
+			t.Errorf("X-Session-Id = %q, want omitted without client attribution", got)
+		}
+		wantQueryID := requestIdentity("secret", http.Header{"X-Query-Id": {"reused-query-id"}}).QueryID
+		if got := r.Header.Get("X-Query-Id"); got != wantQueryID {
+			t.Errorf("X-Query-Id = %q, want opaque query ID %q", got, wantQueryID)
 		}
 		if got := r.Header.Get("X-Request-Id"); got == "" {
 			t.Error("X-Request-Id is empty")
@@ -301,11 +307,6 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 			t.Error("X-ZCode-Trace-Id is empty")
 		} else if got == "reused-trace-id" {
 			t.Error("X-ZCode-Trace-Id reused the inbound client value")
-		}
-		if got := r.Header.Get("X-Query-Id"); got == "" {
-			t.Error("X-Query-Id is empty")
-		} else if got == "reused-query-id" {
-			t.Error("X-Query-Id reused the inbound client value")
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Errorf("Authorization = %q, want bearer token", got)
@@ -434,8 +435,21 @@ func TestDeviceMIDIsStableAndSessionSpecific(t *testing.T) {
 	if len(first) != 36 || first[8] != '-' || first[13] != '-' || first[18] != '-' || first[23] != '-' {
 		t.Fatalf("deviceMID() = %q, want UUID shape", first)
 	}
-	if got := sessionID("session-one"); got == first {
-		t.Fatalf("sessionID() = %q, want a value distinct from deviceMID %q", got, first)
+	if identity := requestIdentity("session-one", nil); identity.SessionID != "" || identity.QueryID != "" || identity.SessionType != "main" {
+		t.Fatalf("requestIdentity() without client attribution = %#v, want no session/query IDs", identity)
+	}
+	identity := requestIdentity("session-one", http.Header{
+		"X-Session-Id": {"subagent_agent_worker-1"},
+		"X-Query-Id":   {"query_query-1"},
+	})
+	if identity.SessionID == "" || identity.QueryID == "" {
+		t.Fatalf("requestIdentity() with client attribution = %#v, want opaque IDs", identity)
+	}
+	if identity.SessionType != "subagent" {
+		t.Fatalf("requestIdentity() session type = %q, want subagent", identity.SessionType)
+	}
+	if identity.SessionID == "worker-1" || identity.QueryID == "query-1" {
+		t.Fatalf("requestIdentity() leaked client attribution: %#v", identity)
 	}
 }
 
