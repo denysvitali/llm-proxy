@@ -77,6 +77,7 @@ func TestSendFoldsSystemInputIntoInstructions(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		var request struct {
 			Instructions string              `json:"instructions"`
+			MaxTokens    json.RawMessage     `json:"max_output_tokens"`
 			Input        []map[string]string `json:"input"`
 		}
 		if err := json.Unmarshal(body, &request); err != nil {
@@ -84,6 +85,9 @@ func TestSendFoldsSystemInputIntoInstructions(t *testing.T) {
 		}
 		if request.Instructions != "system rules" {
 			t.Errorf("instructions = %q, want system rules", request.Instructions)
+		}
+		if len(request.MaxTokens) != 0 {
+			t.Errorf("max_output_tokens was forwarded: %s", request.MaxTokens)
 		}
 		if len(request.Input) != 1 || request.Input[0]["role"] != "user" {
 			t.Errorf("input = %#v, want only user message", request.Input)
@@ -94,7 +98,7 @@ func TestSendFoldsSystemInputIntoInstructions(t *testing.T) {
 	defer server.Close()
 	client := New(server.URL, staticCredentials{Credentials{AccessToken: "token", AccountID: "account"}})
 	client.HTTP = server.Client()
-	body := []byte(`{"model":"gpt-5.6-sol","input":[{"type":"message","role":"system","content":"system rules"},{"type":"message","role":"user","content":"hello"}]}`)
+	body := []byte(`{"model":"gpt-5.6-sol","max_output_tokens":1024,"input":[{"type":"message","role":"system","content":"system rules"},{"type":"message","role":"user","content":"hello"}]}`)
 	resp, err := client.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIResponses, RawBody: body, Streaming: true})
 	if err != nil {
 		t.Fatal(err)

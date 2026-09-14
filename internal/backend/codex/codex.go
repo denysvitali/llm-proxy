@@ -164,6 +164,10 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(normalized, &body); err != nil {
 		return nil, fmt.Errorf("decode Codex request: %w", err)
 	}
+	// The ChatGPT subscription endpoint deliberately rejects the public
+	// Responses API's max_output_tokens field. The client-facing API still
+	// accepts it; it is simply advisory for this backend.
+	delete(body, "max_output_tokens")
 	body["stream"] = true
 	body["store"] = false
 	return json.Marshal(body)
