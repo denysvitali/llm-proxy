@@ -23,7 +23,7 @@ func (s staticCredentials) Credentials(context.Context) (Credentials, error) {
 
 func TestModelsUsesChatGPTAccountAuthentication(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/models" || r.URL.Query().Get("client_version") == "" {
+		if r.URL.Path != "/models" || r.URL.Query().Get("client_version") != clientVersion {
 			t.Errorf("request URL = %s", r.URL)
 		}
 		if r.Header.Get("Authorization") != "Bearer token" || r.Header.Get("ChatGPT-Account-Id") != "account" {

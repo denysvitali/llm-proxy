@@ -22,8 +22,11 @@ import (
 
 const (
 	defaultBaseURL = "https://chatgpt.com/backend-api/codex"
-	clientVersion  = "0.1.0"
-	modelCacheTTL  = 5 * time.Minute
+	// The Codex catalog is version-gated. Keep this aligned with the current
+	// CLI protocol version; old values can make an otherwise valid session
+	// receive an unusable/empty catalog.
+	clientVersion = "0.145.0"
+	modelCacheTTL = 5 * time.Minute
 )
 
 type Client struct {
