@@ -72,6 +72,36 @@ func TestSendForwardsResponsesRequest(t *testing.T) {
 	}
 }
 
+func TestSendFoldsSystemInputIntoInstructions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var request struct {
+			Instructions string              `json:"instructions"`
+			Input        []map[string]string `json:"input"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Instructions != "system rules" {
+			t.Errorf("instructions = %q, want system rules", request.Instructions)
+		}
+		if len(request.Input) != 1 || request.Input[0]["role"] != "user" {
+			t.Errorf("input = %#v, want only user message", request.Input)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: done\n\n"))
+	}))
+	defer server.Close()
+	client := New(server.URL, staticCredentials{Credentials{AccessToken: "token", AccountID: "account"}})
+	client.HTTP = server.Client()
+	body := []byte(`{"model":"gpt-5.6-sol","input":[{"type":"message","role":"system","content":"system rules"},{"type":"message","role":"user","content":"hello"}]}`)
+	resp, err := client.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIResponses, RawBody: body, Streaming: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+}
+
 func TestSendForwardsCodexClientHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{

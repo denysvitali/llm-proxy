@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 const (
@@ -149,8 +150,15 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 }
 
 func normalizeRequest(raw []byte) ([]byte, error) {
+	// The public Responses API permits system messages in input, but the
+	// ChatGPT Codex subscription endpoint only accepts prompt-role content via
+	// `instructions`. Fold those messages before sending upstream.
+	normalized, err := translate.NormalizeResponsesRequest(raw)
+	if err != nil {
+		return nil, fmt.Errorf("normalize Codex request: %w", err)
+	}
 	var body map[string]any
-	if err := json.Unmarshal(raw, &body); err != nil {
+	if err := json.Unmarshal(normalized, &body); err != nil {
 		return nil, fmt.Errorf("decode Codex request: %w", err)
 	}
 	body["stream"] = true
