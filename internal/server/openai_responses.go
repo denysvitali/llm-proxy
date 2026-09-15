@@ -26,6 +26,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			"request body is not valid JSON")
 		return
 	}
+	_, reasoningEffort, selectorErr := normalizeCodexModelSelector(envelope.Model)
+	if selectorErr != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", selectorErr.Error())
+		return
+	}
 	chain, found := s.resolveChain(r.Context(), envelope.Model)
 	if !found {
 		writeOpenAIModelNotFound(w, envelope.Model)
@@ -38,10 +43,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		"backend":    chain[0].backend.Name(),
 	})
 	env := translateEnv{
-		kind:        backend.KindOpenAIResponses,
-		body:        body,
-		clientModel: envelope.Model,
-		streaming:   envelope.Stream,
+		kind:            backend.KindOpenAIResponses,
+		body:            body,
+		clientModel:     envelope.Model,
+		streaming:       envelope.Stream,
+		reasoningEffort: reasoningEffort,
 	}
 	s.exchangeChain(w, r, log, chain, openAIResponsesDialect(), env, prepareResponsesRequest)
 }

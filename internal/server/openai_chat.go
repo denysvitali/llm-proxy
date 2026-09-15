@@ -102,8 +102,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	envelope, err := decodeOpenAIEnvelope(body)
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
-			"request body is not valid JSON")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "request body is not valid JSON")
+		return
+	}
+	_, reasoningEffort, selectorErr := normalizeCodexModelSelector(envelope.Model)
+	if selectorErr != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", selectorErr.Error())
 		return
 	}
 	rt, found := s.resolveChain(r.Context(), envelope.Model)
@@ -118,10 +122,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		"backend":    rt[0].backend.Name(),
 	})
 	env := translateEnv{
-		kind:        backend.KindOpenAIChat,
-		body:        body,
-		clientModel: envelope.Model,
-		streaming:   envelope.Stream,
+		kind:            backend.KindOpenAIChat,
+		body:            body,
+		clientModel:     envelope.Model,
+		streaming:       envelope.Stream,
+		reasoningEffort: reasoningEffort,
 	}
 	s.exchangeChain(w, r, log, rt, openAIDialect(), env, prepareChatRequest)
 }

@@ -125,6 +125,7 @@ var codexReasoningLevels = []codexReasoningLevel{
 	{Effort: "low", Description: "Fast, shallow reasoning"},
 	{Effort: "medium", Description: "Balanced reasoning"},
 	{Effort: "high", Description: "Deep reasoning"},
+	{Effort: "xhigh", Description: "Maximum reasoning"},
 }
 
 const (

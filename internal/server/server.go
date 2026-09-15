@@ -164,6 +164,27 @@ type route struct {
 	model   string
 }
 
+// normalizeCodexModelSelector strips Codex's optional reasoning-effort suffix
+// from a qualified model ID before routing. The original selector remains the
+// client-facing model name; only the upstream route uses the bare model.
+func normalizeCodexModelSelector(model string) (string, string, error) {
+	prefix, rest, found := strings.Cut(model, "/")
+	if !found || prefix != "codex" || !strings.Contains(rest, ":") {
+		return model, "", nil
+	}
+	colon := strings.LastIndexByte(rest, ':')
+	if colon <= 0 || colon == len(rest)-1 {
+		return "", "", fmt.Errorf("invalid Codex model selector %q: expected codex/<model>:<effort>", model)
+	}
+	base, effort := rest[:colon], rest[colon+1:]
+	switch effort {
+	case "low", "medium", "high", "xhigh":
+		return prefix + "/" + base, effort, nil
+	default:
+		return "", "", fmt.Errorf("unsupported Codex reasoning effort %q in model selector %q", effort, model)
+	}
+}
+
 // resolveWithFallbacks maps an inbound model name to a backend + upstream
 // model, and reports the fallback entries attached to the route entry that
 // matched (explicit route or default route; qualified IDs and catalog
@@ -235,11 +256,15 @@ const maxRouteChain = 4
 // upstream is slow). Fallbacks naming unknown, disabled or repeated backends
 // are skipped; an empty model rewrite keeps the primary's upstream model.
 func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool) {
-	primary, fallbacks, ok := s.resolveWithFallbacks(ctx, model)
+	normalized, _, err := normalizeCodexModelSelector(model)
+	if err != nil {
+		return nil, false
+	}
+	primary, fallbacks, ok := s.resolveWithFallbacks(ctx, normalized)
 	if !ok {
 		return nil, false
 	}
-	if _, pinned := qualifiedPin(model, primary.backend.Name()); !pinned {
+	if _, pinned := qualifiedPin(normalized, primary.backend.Name()); !pinned {
 		if bc, ok := s.cfg.BackendByType(primary.backend.Name()); ok {
 			fallbacks = append(fallbacks, bc.Fallbacks...)
 		}
@@ -253,7 +278,7 @@ func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool)
 	// silently re-routed to a different provider via the route's fallbacks.
 	// A catalog that cannot be fetched stays fail-open so a broken /models
 	// endpoint cannot 404 known-good models.
-	if upstream, pinned := qualifiedPin(model, primary.backend.Name()); pinned &&
+	if upstream, pinned := qualifiedPin(normalized, primary.backend.Name()); pinned &&
 		s.catalogLacksModel(ctx, primary.backend, upstream) {
 		return nil, false
 	}

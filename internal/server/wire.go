@@ -41,12 +41,13 @@ type streamTranslator interface {
 
 // translateEnv carries everything a conversion needs about one request.
 type translateEnv struct {
-	kind        backend.Kind // inbound API the client spoke
-	body        []byte       // raw inbound request body
-	model       string       // upstream model name sent to the backend
-	clientModel string       // model name echoed back to the client
-	thinking    bool         // Anthropic client asked for extended thinking
-	streaming   bool         // client requested an SSE stream
+	kind            backend.Kind // inbound API the client spoke
+	body            []byte       // raw inbound request body
+	model           string       // upstream model name sent to the backend
+	clientModel     string       // model name echoed back to the client
+	thinking        bool         // Anthropic client asked for extended thinking
+	streaming       bool         // client requested an SSE stream
+	reasoningEffort string       // Codex selector effort, applied only to Codex Responses wire
 }
 
 // translationPath converts one inbound API shape onto one backend wire format.
@@ -177,6 +178,35 @@ func resolveWire(in backend.Kind, b backend.Backend, model string) (resolvedWire
 		return resolvedWire{path: translations[[2]backend.Kind{in, want}]}, true
 	}
 	return resolvedWire{}, false
+}
+
+// applyCodexReasoningEffort adds the selector's effort to a Responses request.
+// It runs after translation so native and translated requests receive it.
+func applyCodexReasoningEffort(rt route, wire resolvedWire, payload []byte, effort string) ([]byte, error) {
+	if effort == "" || rt.backend.Name() != "codex" {
+		return payload, nil
+	}
+	wireKind := backend.KindOpenAIResponses
+	if !wire.native && wire.path != nil {
+		wireKind = wire.path.kind
+	}
+	if wireKind != backend.KindOpenAIResponses {
+		return payload, nil
+	}
+	var request map[string]any
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return nil, fmt.Errorf("request body is not valid JSON: %v", err)
+	}
+	if reasoning, exists := request["reasoning"]; exists && reasoning != nil {
+		if _, ok := reasoning.(map[string]any); !ok {
+			return nil, errors.New("reasoning must be a JSON object")
+		}
+	} else {
+		request["reasoning"] = map[string]any{}
+	}
+	reasoning := request["reasoning"].(map[string]any)
+	reasoning["effort"] = effort
+	return json.Marshal(request)
 }
 
 // clientDialect holds the inbound-API-specific answers: how errors are
@@ -359,6 +389,9 @@ func (s *Server) exchangeChain(
 		routeEnv := env
 		routeEnv.model = rt.model
 		payload, err := prepare(rt, wire, &routeEnv)
+		if err == nil {
+			payload, err = applyCodexReasoningEffort(rt, wire, payload, routeEnv.reasoningEffort)
+		}
 		if err != nil {
 			if final {
 				routeLog.WithError(err).Error("cannot encode request for backend; rejecting request")
