@@ -30,6 +30,7 @@ not upstream API keys.
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
+| `cloudflare` | [Cloudflare inference](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) | Chat Completions (OpenAI-compatible) | Account-scoped endpoint; static `stealth/union-alpha` catalog. Anthropic and Responses requests are translated server-side. |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
 
@@ -230,6 +231,29 @@ returned.
 This uses an undocumented provider gateway discovered from the ZCode client
 and may change with a ZCode release. Confirm that routing your own entitlement
 through a proxy is allowed by the service terms.
+
+### Cloudflare
+
+Configure the account-scoped OpenAI-compatible endpoint with a Cloudflare API
+token. `base_url` is required because the endpoint includes your account ID;
+use an absolute HTTP(S) URL without embedded credentials, query or fragment:
+
+```yaml
+backends:
+  - type: cloudflare
+    base_url: https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1
+    api_key_env: CLOUDFLARE_API_TOKEN
+    default_model: stealth/union-alpha
+```
+
+The backend sends bearer-authenticated requests to `<base_url>/chat/completions`.
+Chat JSON and SSE bodies pass through unchanged; other client APIs use the
+proxy's normal translation paths. Select `cloudflare/stealth/union-alpha` in
+clients. The catalog is a static list containing `stealth/union-alpha`, not a
+live discovery endpoint or a guarantee of account access. To use another model
+your account can reach, configure an explicit route with a non-qualified alias
+and the upstream model ID; unlisted qualified IDs are subject to the normal
+catalog safeguard.
 
 ### OpenRouter
 
@@ -505,8 +529,8 @@ flags are applied afterwards.
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof as `{"verify_param":"..."}` for every upstream request. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `nous`, `openrouter`); at most one backend per type. |
-| `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint.                                             |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
+| `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
