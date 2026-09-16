@@ -30,7 +30,7 @@ export default function App() {
   return (
     <AppShell
       header={{ height: 60 }}
-      footer={isMobile ? { height: 64 } : { height: 0, collapsed: true }}
+      footer={isMobile ? { height: 'calc(64px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
       padding="md"
     >
       <AppShell.Header withBorder={false}>
@@ -44,7 +44,7 @@ export default function App() {
       </AppShell.Header>
 
       <AppShell.Main>
-        <Container size="xl" pb={isMobile ? 72 : 40} px="md">
+        <Container size="xl" pb={40} px={isMobile ? 0 : 'md'}>
           <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/models" element={<ModelsPage />} />
@@ -195,7 +195,7 @@ function DesktopNav() {
 function BottomNav() {
   const { pathname } = useLocation()
   return (
-    <Group h="100%" gap={0} grow wrap="nowrap">
+    <Group component="nav" aria-label="Main navigation" h={64} gap={0} px={8} grow wrap="nowrap">
       {NAV.map((item) => {
         const active = item.path === '/' ? pathname === '/' : pathname.startsWith(item.path)
         const Icon = item.icon
@@ -205,7 +205,9 @@ function BottomNav() {
             component={NavLink}
             to={item.path}
             style={{
-              height: '100%',
+              height: 52,
+              borderRadius: 10,
+              background: active ? 'var(--segmented-track)' : 'transparent',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',

@@ -28,6 +28,8 @@ export default function TokenMixBar({
   const visible = segments.filter((s) => s.value > 0)
   return (
     <Box
+      role="img"
+      aria-label={`Token mix: ${visible.map((s) => `${s.name} ${((s.value / total) * 100).toFixed(1)}%`).join(', ')}`}
       style={{
         display: 'flex',
         gap: 2,
@@ -59,9 +61,11 @@ export default function TokenMixBar({
 export function TokenLegend({
   segments,
   showPercent = false,
+  compact = false,
 }: {
   segments: MixSegment[]
   showPercent?: boolean
+  compact?: boolean
 }) {
   const total = segments.reduce((s, x) => s + x.value, 0)
   return (
@@ -81,8 +85,8 @@ export function TokenLegend({
             />
             {/* Text wears text tokens; the swatch carries identity only. */}
             <Text size="xs" c="dimmed">
-              {s.name} {s.value.toLocaleString('en-US')}
-              {showPercent && total > 0 && (
+              {s.name} {!compact && s.value.toLocaleString('en-US')}
+              {(showPercent || compact) && total > 0 && (
                 <Text span c="var(--mantine-color-dimmed)" opacity={0.75}>
                   {' '}
                   · {((s.value / total) * 100).toFixed(1)}%

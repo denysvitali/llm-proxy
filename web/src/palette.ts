@@ -33,12 +33,12 @@ export const status = {
 
 export const seriesNames = ['input', 'output', 'cache read', 'cache write'] as const
 
-import { useColorScheme } from '@mantine/hooks'
+import { useComputedColorScheme } from '@mantine/core'
 
 // Resolves the active color scheme ('auto' included) and returns the
 // validated chart palette for that mode.
 export function useChartPalette() {
-  const scheme = useColorScheme('light')
+  const scheme = useComputedColorScheme('light')
   const dark = scheme === 'dark'
   return {
     dark,

@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
+  ActionIcon,
+  Alert,
   Box,
+  Button,
   Card,
   Code,
   Drawer,
@@ -19,7 +22,15 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { IconArrowsSort, IconInboxOff, IconSearch, IconSearchOff } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconArrowsSort,
+  IconChevronRight,
+  IconInboxOff,
+  IconSearch,
+  IconSearchOff,
+  IconX,
+} from '@tabler/icons-react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { fetchBackendStatsSeries, fetchStats } from '../api'
 import type { ModelStat, StatsSeries } from '../api'
@@ -161,18 +172,14 @@ export default function ModelsPage() {
 
   return (
     <Fade pending={q.isPending}>
-      <Stack gap="md">
+      <Stack gap="sm" className="models-page">
         <PageHeader
           title="Models"
-          subtitle={`${models.length} tracked · tap a ${isMobile ? 'card' : 'row'} for percentiles`}
-          extra={
-            <TextInput
-              leftSection={<IconSearch size={14} />}
-              placeholder="Filter backend or model…"
-              value={filter}
-              onChange={(e) => setFilter(e.currentTarget.value)}
-              style={{ flex: isMobile ? '1 1 100%' : '0 0 280px' }}
-            />
+          subtitle={
+            // The result count is only interesting while a filter narrows the list.
+            filter.trim() && models.length > 0
+              ? `${rows.length} of ${models.length} match “${filter.trim()}” · tap a ${isMobile ? 'card' : 'row'} for percentiles`
+              : `${models.length} tracked · tap a ${isMobile ? 'card' : 'row'} for percentiles`
           }
         />
 
@@ -180,43 +187,74 @@ export default function ModelsPage() {
           <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
             <SummaryStat label="Models tracked" value={fmtInt(models.length)} />
             <SummaryStat label="Requests" value={fmtInt(summary.requests)} />
-            <SummaryStat label="Median TTFT" value={fmtSec(summary.medianTtft)} />
-            <SummaryStat label="Models with errors" value={fmtInt(summary.withErrors)} />
+            <SummaryStat label="Median model TTFT p50" value={fmtSec(summary.medianTtft)} />
+            <SummaryStat label="Models with errors · all time" value={fmtInt(summary.withErrors)} />
           </SimpleGrid>
         )}
 
-        {isMobile && rows.length > 0 && (
-          <Group gap="xs" wrap="nowrap">
-            <Select
-              leftSection={<IconArrowsSort size={14} />}
-              data={sortOptions}
-              value={sort.key}
-              onChange={(v) => v && setSort((s) => ({ key: v as SortKey, dir: s.dir }))}
-              allowDeselect={false}
-              flex={1}
-              size="sm"
-            />
-            <UnstyledButton
-              onClick={() => setSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
-              px="sm"
-              py={7}
-              style={{
-                borderRadius: 'var(--mantine-radius-md)',
-                border: '1px solid var(--mantine-color-default-border)',
-                fontSize: 'var(--mantine-font-size-sm)',
-                fontWeight: 600,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {sort.dir === 1 ? 'Asc ↑' : 'Desc ↓'}
-            </UnstyledButton>
-          </Group>
-        )}
+        <Stack gap="xs">
+          <TextInput
+            leftSection={<IconSearch size={14} />}
+            rightSection={filter ? <CloseSearchButton onClear={() => setFilter('')} /> : undefined}
+            rightSectionWidth={44}
+            styles={{ input: { minHeight: 44 } }}
+            placeholder="Filter backend or model…"
+            aria-label="Filter backend or model"
+            value={filter}
+            onChange={(e) => setFilter(e.currentTarget.value)}
+          />
+          {isMobile && models.length > 0 && (
+            <Group gap="xs" wrap="nowrap">
+              <Select
+                leftSection={<IconArrowsSort size={14} />}
+                data={sortOptions}
+                value={sort.key}
+                onChange={(v) => v && setSort({ key: v as SortKey, dir: v === 'model' ? 1 : -1 })}
+                aria-label="Sort models by"
+                allowDeselect={false}
+                flex={1}
+                size="sm"
+                styles={{ input: { minHeight: 44 } }}
+              />
+              <UnstyledButton
+                onClick={() => setSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
+                px="sm"
+                h={44}
+                aria-label={`Sort direction: ${sort.dir === 1 ? 'ascending' : 'descending'}`}
+                style={{
+                  borderRadius: 'var(--mantine-radius-md)',
+                  border: '1px solid var(--mantine-color-default-border)',
+                  fontSize: 'var(--mantine-font-size-sm)',
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {sort.dir === 1 ? 'Asc ↑' : 'Desc ↓'}
+              </UnstyledButton>
+            </Group>
+          )}
+        </Stack>
 
         {q.isPending ? (
           <Group justify="center" py="xl">
             <Loader size="sm" />
           </Group>
+        ) : q.isError ? (
+          <Alert
+            icon={<IconAlertTriangle size={16} stroke={1.8} />}
+            color="red"
+            variant="light"
+            title="Couldn't load model stats"
+          >
+            <Stack gap="xs" align="flex-start">
+              <Text size="sm">
+                Model statistics are temporarily unavailable. {q.error.message}
+              </Text>
+              <Button size="compact-sm" variant="light" color="red" onClick={() => q.refetch()}>
+                Retry
+              </Button>
+            </Stack>
+          </Alert>
         ) : rows.length === 0 ? (
           <EmptyState
             icon={
@@ -347,13 +385,27 @@ export default function ModelsPage() {
   )
 }
 
+function CloseSearchButton({ onClear }: { onClear: () => void }) {
+  return (
+    <ActionIcon
+      aria-label="Clear filter"
+      variant="subtle"
+      color="gray"
+      onClick={onClear}
+      size={44}
+    >
+      <IconX size={14} stroke={1.8} />
+    </ActionIcon>
+  )
+}
+
 function SummaryStat({ label, value }: { label: string; value: string }) {
   return (
-    <Paper withBorder p="sm" radius="lg">
-      <Text size="xs" tt="uppercase" c="dimmed" fw={600} style={{ letterSpacing: '0.04em' }}>
+    <Paper withBorder p="sm" radius="md">
+      <Text size="xs" c="dimmed" fw={600} style={{ letterSpacing: '0.01em' }}>
         {label}
       </Text>
-      <Text fz={22} fw={700} lh={1.15} mt={4} style={{ fontVariantNumeric: 'tabular-nums' }}>
+      <Text fz={20} fw={700} lh={1.15} mt={4} style={{ fontVariantNumeric: 'tabular-nums' }}>
         {value}
       </Text>
     </Paper>
@@ -371,18 +423,45 @@ function ModelCard({
 }) {
   const tokTotal =
     m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_tokens
+  const segs = mixSegments(m, colors)
   return (
-    <Card withBorder radius="lg" p="md" onClick={onClick} style={{ cursor: 'pointer' }}>
-      <Group justify="space-between" wrap="nowrap" gap="xs" mb={8}>
-        <Box style={{ minWidth: 0 }}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
+    <Card
+      withBorder
+      radius="lg"
+      p="md"
+      data-model-card
+      onClick={onClick}
+      style={{ cursor: 'pointer' }}
+    >
+      <Group justify="space-between" align="flex-start" gap="xs" mb={12}>
+        <Box w="100%" style={{ minWidth: 0 }}>
+          <Text size="xs" c="dimmed" fw={600}>
             {m.backend}
           </Text>
-          <Text fw={600} truncate>
+          {/* Wrap, don't truncate: long model IDs are the identity, and clipping
+              them makes two cards indistinguishable. */}
+          <Text fw={600} lh={1.3} style={{ overflowWrap: 'anywhere' }}>
             {m.model}
           </Text>
         </Box>
-        <UptimeBadge uptime={m.uptime} requests={m.requests} />
+        <Group w="100%" justify="space-between" gap={4} wrap="nowrap">
+          <UptimeBadge uptime={m.uptime} requests={m.requests} />
+          {/* Explicit keyboard/touch affordance for the details the whole card
+              also opens; the card tap stays for convenience. */}
+          <ActionIcon
+            aria-label={`Open details for ${m.backend} ${m.model}`}
+            variant="subtle"
+            color="gray"
+            onClick={(e) => {
+              e.stopPropagation()
+              onClick()
+            }}
+            h={44}
+            w={44}
+          >
+            <IconChevronRight size={18} stroke={1.8} />
+          </ActionIcon>
+        </Group>
       </Group>
       {/* Short labels: the drawer owns the verbose names; the card is a glance
             surface. Latency pair kept adjacent (TTFT then E2E). */}
@@ -394,11 +473,16 @@ function ModelCard({
         <Metric label="Cache" value={fmtPct(m.cache_rate)} />
         <Metric label="Tool err" value={fmtPct(clampRate(m.tool_error_rate))} />
       </SimpleGrid>
-      {/* Slim token-mix strip: cache share is visible at a glance without
-            reading any number. Hidden until tokens exist to avoid noise. */}
+      {/* Slim token-mix strip with its own legend: cache share is visible at a
+            glance and the strip is explained rather than silent. Hidden until
+            tokens exist to avoid noise. */}
       {tokTotal > 0 && (
         <Box mt={10}>
-          <TokenMixBar segments={mixSegments(m, colors)} height={8} />
+          <Text size="xs" c="dimmed" fw={600} mb={4}>
+            Token mix
+          </Text>
+          <TokenMixBar segments={segs} height={8} />
+          <TokenLegend segments={segs} compact />
         </Box>
       )}
     </Card>

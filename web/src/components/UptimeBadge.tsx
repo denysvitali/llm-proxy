@@ -1,4 +1,4 @@
-import { Badge, Tooltip, useMantineColorScheme } from '@mantine/core'
+import { Badge, Tooltip, useComputedColorScheme } from '@mantine/core'
 
 interface UptimeBadgeProps {
   uptime: number // fraction 0..1
@@ -22,7 +22,7 @@ const statusColors = {
 // A tooltip exposes the exact percentage and request count so the coarse
 // label doesn't hide the underlying numbers.
 export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
-  const { colorScheme } = useMantineColorScheme()
+  const colorScheme = useComputedColorScheme('light')
   const colors = colorScheme === 'dark' ? statusColors.dark : statusColors.light
 
   if (!requests) {

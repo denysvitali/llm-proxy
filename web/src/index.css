@@ -79,6 +79,20 @@ body {
   box-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.14);
 }
 
+/* Footer: opaque themed surface (unlike the frosted header) so scrolled
+   cards never show through under the nav labels. Hairline on top only. */
+[data-mantine-color-scheme='light'] .mantine-AppShell-footer {
+  background-color: #f5f5f7;
+  box-shadow: none;
+  border-top: 0.5px solid rgba(0, 0, 0, 0.15);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-AppShell-footer {
+  background-color: #000;
+  box-shadow: none;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.14);
+}
+
 .mantine-AppShell-footer {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
@@ -211,6 +225,16 @@ a,
 /* Page titles sit above KPI rows; keep a hair of breathing room. */
 .page-header {
   padding-top: 4px;
+}
+
+.models-page .page-header {
+  margin-bottom: 0;
+}
+
+.models-page button:focus-visible,
+.mantine-AppShell-footer a:focus-visible {
+  outline: 2px solid var(--mantine-color-text);
+  outline-offset: 2px;
 }
 
 /* Tabular activity rows (recent requests, error lists): hover like a table. */
