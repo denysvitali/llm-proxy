@@ -611,6 +611,10 @@ responses). Raw series for Prometheus/Grafana live under `/metrics`:
 `llm_proxy_model_output_tokens_per_second`, `llm_proxy_model_tool_calls_total`,
 `llm_proxy_model_tool_errors_total`.
 
+`/metrics` also exposes standard Go runtime (`go_*`) and process (`process_*`)
+collectors for goroutines, heap, GC, CPU, and resident memory. These describe
+only the scraped proxy process, even when request stats are shared via Redis.
+
 The dashboard's recent-request history retains only request metadata and
 bounded upstream error summaries. Request bodies are never retained or exposed
 through the dashboard, so prompts, tool inputs, and client credentials do not

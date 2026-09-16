@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -58,6 +59,14 @@ func newMetrics() *Metrics {
 		reg: prometheus.NewRegistry(),
 	}
 	m.reg.MustRegister(m.requests, m.requestDuration, m.authSuccesses, m.authFailures, m.retryAttempts, m.retryOutcomes, m.fallbacks)
+	// Go and process runtime collectors answer the health questions the
+	// per-request counters can't: goroutine/heap growth, CPU, open fds. Each
+	// Server keeps a private registry so multiple servers (and tests) can
+	// coexist without duplicate-registration panics.
+	m.reg.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
 	return m
 }
 

@@ -559,9 +559,11 @@ func (s *Server) exchange(
 			var upstreamErr *translate.UpstreamError
 			if errors.As(err, &upstreamErr) {
 				log.WithError(err).Warn("upstream answered success with an error body")
-				dialect.writeError(w, http.StatusBadGateway, "api_error",
-					fmt.Sprintf("upstream returned an error: %v", upstreamErr))
-				return exchangeRejected
+				giveUp(w, fmt.Sprintf("upstream returned an error: %v", upstreamErr))
+				if retryable {
+					return exchangeRetryable
+				}
+				return exchangeOK
 			}
 			log.WithError(err).Warn("translating upstream response failed")
 			giveUp(w, "upstream returned an unreadable response")

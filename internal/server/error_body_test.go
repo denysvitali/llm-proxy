@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/config"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // These tests cover gateways that answer HTTP 200 with a JSON error object
@@ -88,6 +90,32 @@ func TestResponsesEndpointErrorBodyUnder200(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "insufficient credits") {
 		t.Fatalf("client error should carry the upstream message: %s", rec.Body.String())
+	}
+}
+
+// TestErrorBodyUnder200Fallback covers native and translated buffered paths:
+// an error envelope must not reach the client while another backend can serve.
+func TestErrorBodyUnder200Fallback(t *testing.T) {
+	for _, kind := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat, backend.KindOpenAIResponses} {
+		t.Run(string(kind), func(t *testing.T) {
+			primary := newNamedScripted("fake", kind,
+				step{resp: jsonResponse(http.StatusOK, cloudflareStyleError)})
+			secondary := newNamedScripted("second", backend.KindAnthropic,
+				step{resp: jsonResponse(http.StatusOK, `{"id":"msg_fallback","type":"message","role":"assistant","model":"upstream-m1","content":[{"type":"text","text":"fallback answer"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`)})
+			s := newFallbackServer(t, primary, secondary,
+				config.BackendConfig{Type: "fake", APIKey: "k"}, fallbackRoute())
+
+			rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "fallback answer") || strings.Contains(rec.Body.String(), "Prompt is too long") {
+				t.Fatalf("status = %d, body = %s; want only fallback success", rec.Code, rec.Body.String())
+			}
+			if primary.callCount() != 1 || secondary.callCount() != 1 {
+				t.Fatalf("attempts = %d primary, %d fallback; want 1 each", primary.callCount(), secondary.callCount())
+			}
+			if got := testutil.ToFloat64(s.metrics.fallbacks.WithLabelValues("fake", "second")); got != 1 {
+				t.Fatalf("fallback metric = %v, want 1", got)
+			}
+		})
 	}
 }
 
