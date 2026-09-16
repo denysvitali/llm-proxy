@@ -1,4 +1,5 @@
 import {
+  Anchor,
   AppShell,
   Badge,
   Box,
@@ -7,6 +8,7 @@ import {
   SegmentedControl,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   Tooltip,
   UnstyledButton,
@@ -37,9 +39,9 @@ export default function App() {
         .app-skip-link { position: fixed; top: 8px; left: 16px; z-index: 300; padding: 10px 16px; border-radius: 8px; background: var(--mantine-color-body); color: var(--mantine-color-text); transform: translateY(-150%); }
         .app-skip-link:focus { transform: translateY(0); }
       `}</style>
-      <a href="#main" className="app-skip-link">
+      <Anchor href="#main" className="app-skip-link" fw={600}>
         Skip to content
-      </a>
+      </Anchor>
       <AppShell.Header withBorder={false}>
         <Container size="xl" h="100%" px="md">
           <Group h="100%" justify="space-between" wrap="nowrap" gap="sm">
@@ -78,7 +80,8 @@ function HeaderBrand() {
   return (
     <Group gap={8} wrap="nowrap">
       {/* App-icon style mark: SF-rounded square with the λ, like an iOS
-          home-screen icon at small size. */}
+          home-screen icon at small size. Gradient is theme-driven so it tracks
+          the brand ramp instead of hard-coded hexes. */}
       <UnstyledButton
         component={NavLink}
         to="/"
@@ -92,22 +95,22 @@ function HeaderBrand() {
           padding: 2,
         }}
       >
-        <Box
+        <ThemeIcon
+          variant="gradient"
+          gradient={{ from: 'brand.8', to: 'brand.6', deg: 160 }}
+          size={28}
+          radius={8}
+          aria-hidden="true"
           style={{
-            width: 28,
-            height: 28,
-            borderRadius: 8,
-            background: 'linear-gradient(160deg, #2e94ff 0%, #0a6cf0 100%)',
-            display: 'grid',
-            placeItems: 'center',
             flexShrink: 0,
-            boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.25), 0 1px 3px rgba(10, 108, 240, 0.35)',
+            boxShadow:
+              'inset 0 0 0 0.5px rgba(255,255,255,0.25), 0 1px 3px color-mix(in srgb, var(--mantine-color-brand-8) 35%, transparent)',
           }}
         >
           <Text fw={700} c="white" fz={15} lh={1} style={{ letterSpacing: '-0.02em' }}>
             λ
           </Text>
-        </Box>
+        </ThemeIcon>
         <Stack gap={0} visibleFrom="md">
           <Title
             order={4}
@@ -144,23 +147,14 @@ function HeaderBrand() {
         Reserve the badge slot so nav and toggle do not shift sideways when
         the connection state flips. */}
       <Box visibleFrom="xs" w={54} style={{ display: 'flex', justifyContent: 'center' }}>
-        <Tooltip label={connected ? 'Real-time updates connected' : 'Reconnecting to real-time updates'}>
+        <Tooltip label={connected ? 'Real-time updates connected' : 'Real-time updates offline — stats refresh on page load'}>
+          {/* variant="dot" is Mantine's native status pill: the dot color is a
+              theme token (teal = good, gray = neutral) so no hex literals and
+              the label carries the state in text, not color alone. */}
           <Badge
-            variant="light"
-            color={connected ? 'teal' : 'orange'}
+            variant="dot"
+            color={connected ? 'teal' : 'gray'}
             size="sm"
-            leftSection={
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: connected ? '#30d158' : '#ff9f0a',
-                  display: 'inline-block',
-                }}
-              />
-            }
             styles={{ root: { cursor: 'default' }, label: { overflow: 'visible' } }}
             aria-live="polite"
           >
@@ -194,19 +188,21 @@ function DesktopNav() {
             to={item.path}
             px={14}
             py={6}
-            style={{
+            className="desktop-nav-link"
+            data-active={active || undefined}
+            style={(theme) => ({
               borderRadius: 8,
               display: 'flex',
               alignItems: 'center',
               gap: 6,
               fontWeight: active ? 600 : 500,
-              fontSize: 'var(--mantine-font-size-sm)',
+              fontSize: theme.fontSizes.sm,
               letterSpacing: '-0.01em',
               color: active ? 'var(--mantine-color-text)' : 'var(--mantine-color-dimmed)',
-              background: active ? 'var(--segmented-thumb)' : 'transparent',
+              background: active ? 'var(--segmented-thumb)' : undefined,
               boxShadow: active ? 'var(--segmented-thumb-shadow)' : 'none',
               transition: 'background 160ms ease, color 160ms ease',
-            }}
+            })}
           >
             <Icon size={15} stroke={active ? 2 : 1.7} />
             {item.label}
@@ -288,13 +284,34 @@ function ColorSchemeToggle() {
 
 function FooterNote() {
   return (
-    <Text ta="center" size="xs" c="dimmed" mt="xl" opacity={0.7}>
-      <a href="/stats">/stats</a>
-      {' · '}
-      <a href="/api/overview">/api/overview</a>
-      {' · '}
-      <a href="/metrics">/metrics</a>
-    </Text>
+    <Group justify="center" gap={6} mt="xl" wrap="nowrap">
+      <FooterLink href="/stats">/stats</FooterLink>
+      <Text fz="xs" c="dimmed" aria-hidden="true">
+        ·
+      </Text>
+      <FooterLink href="/api/overview">/api/overview</FooterLink>
+      <Text fz="xs" c="dimmed" aria-hidden="true">
+        ·
+      </Text>
+      <FooterLink href="/metrics">/metrics</FooterLink>
+    </Group>
+  )
+}
+
+// Footer links: muted until hover, with the global focus ring — hairline
+// discipline, no underlines on a bare path-list.
+function FooterLink({ href, children }: { href: string; children: string }) {
+  return (
+    <Anchor
+      href={href}
+      fz="xs"
+      c="dimmed"
+      underline="never"
+      opacity={0.85}
+      style={{ transition: 'opacity 160ms ease, color 160ms ease' }}
+    >
+      {children}
+    </Anchor>
   )
 }
 

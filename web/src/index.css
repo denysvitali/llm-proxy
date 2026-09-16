@@ -32,6 +32,15 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Keep short display headings optically tight without compressing body copy. */
+.mantine-Title-root[data-order='3'] {
+  letter-spacing: -0.02em;
+}
+
+.mantine-Title-root[data-order='4'] {
+  letter-spacing: -0.014em;
+}
+
 /* ---------------------------------------------------------------------------
    Canvases
 
@@ -106,8 +115,8 @@ body {
 [data-mantine-color-scheme='light'] .mantine-Card-root,
 [data-mantine-color-scheme='light'] .mantine-Paper-root {
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 4px 14px rgba(0, 0, 0, 0.05);
+    0 1px 2px rgba(0, 0, 0, 0.025),
+    0 6px 20px -6px rgba(0, 0, 0, 0.065);
 }
 
 [data-mantine-color-scheme='dark'] .mantine-Card-root,
@@ -133,6 +142,10 @@ a,
 }
 
 @media (hover: hover) {
+  .desktop-nav-link:not([data-active]):hover {
+    background: color-mix(in srgb, var(--mantine-color-gray-6) 18%, transparent);
+  }
+
   .mantine-Card-root[style*='cursor: pointer'] {
     transition: transform 160ms cubic-bezier(0.25, 0.1, 0.25, 1),
       background-color 160ms ease;
@@ -150,10 +163,23 @@ a,
 }
 
 /* ---------------------------------------------------------------------------
-   Drawer: iOS sheet. Full-width header, generous title, hairline under it. */
+   Drawer: iOS sheet. Full-width header, generous title, hairline under it.
+   Right-side sheets get rounded leading corners like iOS detents, plus a soft
+   ambient shadow so the sheet separates from the dimmed page. */
 
 .mantine-Drawer-content {
   overscroll-behavior: contain;
+  box-shadow: -8px 0 40px rgba(0, 0, 0, 0.16);
+}
+
+.mantine-Drawer-body {
+  padding-bottom: max(var(--mantine-spacing-lg), env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 48em) {
+  .mantine-Drawer-content {
+    border-radius: var(--mantine-radius-lg) 0 0 var(--mantine-radius-lg);
+  }
 }
 
 [data-mantine-color-scheme='dark'] .mantine-Drawer-content {
@@ -162,13 +188,23 @@ a,
 }
 
 [data-mantine-color-scheme='dark'] .mantine-Drawer-header {
-  background-color: var(--mantine-color-dark-8);
+  background-color: color-mix(in srgb, var(--mantine-color-dark-8) 88%, transparent);
 }
 
 .mantine-Drawer-header {
-  padding-block: 12px;
+  padding-block: var(--mantine-spacing-sm);
   min-height: 64px;
   align-items: center;
+  gap: var(--mantine-spacing-sm);
+  border-bottom: 0.5px solid var(--mantine-color-default-border);
+  background-color: color-mix(in srgb, var(--mantine-color-body) 88%, transparent);
+  backdrop-filter: saturate(1.8) blur(20px);
+  -webkit-backdrop-filter: saturate(1.8) blur(20px);
+}
+
+.mantine-Drawer-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .mantine-Drawer-close {
@@ -181,8 +217,8 @@ a,
    Segmented controls (time range, color scheme): iOS capsule styling. */
 
 .mantine-SegmentedControl-root {
-  background: color-mix(in srgb, var(--mantine-color-default-border) 45%, transparent);
-  padding: 2px;
+  background: var(--segmented-track);
+  padding: 3px;
 }
 
 [data-mantine-color-scheme='dark'] .mantine-SegmentedControl-root {
@@ -191,9 +227,7 @@ a,
 }
 
 .mantine-SegmentedControl-indicator {
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.12),
-    0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--segmented-thumb-shadow);
 }
 
 /* ---------------------------------------------------------------------------
@@ -216,14 +250,29 @@ a,
 
 .snippet-block {
   margin: 0;
-  padding: 14px 16px;
+  padding: var(--mantine-spacing-md);
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  tab-size: 2;
   font-size: 0.82rem;
   line-height: 1.55;
   font-family: var(--mantine-font-family-monospace);
-  background: #161619;
-  color: #e8e8ed;
+  background: var(--mantine-color-dark-8);
+  color: var(--mantine-color-dark-1);
+  border-top: 0.5px solid var(--mantine-color-dark-6);
   border-radius: 0 0 var(--mantine-radius-lg) var(--mantine-radius-lg);
+}
+
+.snippet-block code {
+  font: inherit;
+}
+
+/* Inset rings stay visible inside the clipping card and on both code schemes. */
+.snippet-block:focus-visible {
+  outline: 2px solid var(--mantine-color-brand-9);
+  outline-offset: -3px;
 }
 
 /* Inline identifiers may wrap; executable snippets keep their whitespace and
@@ -277,15 +326,17 @@ a,
   }
 }
 
-/* Custom inline transitions are outside Mantine's reduced-motion handling.
-   Keep loading indicators functional; suppress decorative interpolation only. */
+/* Include portalled sheets, menus, and tooltips in the motion kill-switch.
+   Near-zero animations still dispatch completion events for UI state machines. */
 @media (prefers-reduced-motion: reduce) {
-  .mantine-AppShell-root,
-  .mantine-AppShell-root *,
-  .mantine-AppShell-root *::before,
-  .mantine-AppShell-root *::after,
-  .mantine-Tooltip-tooltip {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition: none !important;
+    scroll-behavior: auto !important;
   }
 
   .mantine-Card-root[style*='cursor: pointer']:is(:hover, :active) {

@@ -19,23 +19,30 @@ import {
   Table,
   Text,
   TextInput,
+  Title,
   UnstyledButton,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import {
+  IconActivity,
   IconAlertTriangle,
+  IconArrowDown,
+  IconArrowUp,
   IconArrowsSort,
+  IconClock,
+  IconCube,
   IconChevronRight,
   IconInboxOff,
   IconSearch,
   IconSearchOff,
   IconX,
 } from '@tabler/icons-react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { fetchBackendStatsSeries, fetchStats } from '../api'
 import type { ModelStat, StatsSeries } from '../api'
 import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
-import { status, useChartPalette } from '../palette'
+import { useChartPalette } from '../palette'
+import StatTile from '../components/StatTile'
 import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/EmptyState'
 import { TimeRangeControl } from '../components/TimeRangeControl'
@@ -97,6 +104,17 @@ function mixSegments(m: ModelStat, colors: string[]): MixSegment[] {
   ]
 }
 
+// A recorded zero rate is different from a rate with no observations.
+function observedRate(rate: number, observations: number): string {
+  return observations > 0 && Number.isFinite(rate) ? `${(clampRate(rate) * 100).toFixed(1)}%` : '—'
+}
+
+// p90/p99 as a hover title behind the p50 cell; the drawer shows the same
+// percentiles as full bars for keyboard/touch users.
+function percentileTitle(v: { p50: number; p90: number; p99: number }, fmt: (n: number) => string): string {
+  return `p90 ${fmt(v.p90)} · p99 ${fmt(v.p99)}`
+}
+
 function sortValue(m: ModelStat, key: SortKey): string | number {
   switch (key) {
     case 'model':
@@ -141,7 +159,6 @@ export default function ModelsPage() {
     queryKey: ['stats-series', 'model', selected?.backend, selected?.model, historyRange],
     queryFn: () => fetchBackendStatsSeries(selected!.backend, historyRange, selected!.model),
     enabled: !!selected,
-    placeholderData: keepPreviousData,
   })
 
   const rows = useMemo(() => {
@@ -159,12 +176,11 @@ export default function ModelsPage() {
 
   const summary = useMemo(() => {
     const requests = models.reduce((s, m) => s + m.requests, 0)
-    const withTtft = models.filter((m) => m.ttft_seconds.p50 > 0)
-    let medianTtft = 0
-    if (withTtft.length > 0) {
-      const sorted = [...withTtft].sort((a, b) => a.ttft_seconds.p50 - b.ttft_seconds.p50)
-      medianTtft = sorted[Math.floor(sorted.length / 2)].ttft_seconds.p50
-    }
+    const ttfts = models.map((m) => m.ttft_seconds.p50).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b)
+    const middle = Math.floor(ttfts.length / 2)
+    const medianTtft = ttfts.length === 0 ? NaN : ttfts.length % 2 === 1
+      ? ttfts[middle]
+      : (ttfts[middle - 1] + ttfts[middle]) / 2
     const withErrors = models.filter(
       (m) => m.requests - m.successes > 0 || m.tool_errors > 0,
     ).length
@@ -185,20 +201,44 @@ export default function ModelsPage() {
 
         {models.length > 0 && (
           <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
-            <SummaryStat label="Models tracked" value={fmtInt(models.length)} />
-            <SummaryStat label="Requests" value={fmtInt(summary.requests)} />
-            <SummaryStat label="Median model TTFT p50" value={fmtSec(summary.medianTtft)} />
-            <SummaryStat label="Models with errors · all time" value={fmtInt(summary.withErrors)} />
+            <StatTile
+              label="Models tracked"
+              value={fmtInt(models.length)}
+              hint="per-model rows in this table"
+              icon={<IconCube size={16} />}
+              accent="brand"
+            />
+            <StatTile
+              label="Requests"
+              value={fmtInt(summary.requests)}
+              hint="all recorded model traffic"
+              icon={<IconActivity size={16} />}
+              accent="brand"
+            />
+            <StatTile
+              label="Median TTFT p50"
+              value={fmtSec(summary.medianTtft)}
+              hint="p50 across models with data"
+              icon={<IconClock size={16} />}
+              accent="teal"
+            />
+            <StatTile
+              label="Models with errors"
+              value={fmtInt(summary.withErrors)}
+              hint="all time · tool errors count"
+              icon={<IconAlertTriangle size={16} />}
+              accent={summary.withErrors > 0 ? 'red' : 'gray'}
+            />
           </SimpleGrid>
         )}
 
         <Stack gap="xs">
           {/* Live region announces result-count changes to screen readers as
               the filter narrows the list. */}
-          <Text size="xs" c="dimmed" aria-live="polite">
-            {filter.trim()
-              ? `${rows.length} of ${models.length} match “${filter.trim()}”`
-              : `Showing all ${models.length} tracked models, sorted by ${sortOptions.find((o) => o.value === sort.key)?.label.toLowerCase()} (${sort.dir === 1 ? 'ascending' : 'descending'})`}
+          <Text size="xs" c="dimmed" aria-live="polite" aria-atomic="true" style={{ overflowWrap: 'anywhere' }}>
+            {q.isPending ? 'Loading tracked models…' : q.isError ? 'Model statistics unavailable.' : (
+              `${filter.trim() ? `${rows.length} of ${models.length} match “${filter.trim()}”` : `Showing all ${models.length} tracked models`}, sorted by ${sortOptions.find((o) => o.value === sort.key)?.label.toLowerCase()} (${sort.dir === 1 ? 'ascending' : 'descending'})`
+            )}
           </Text>
           <TextInput
             ref={searchRef}
@@ -224,21 +264,17 @@ export default function ModelsPage() {
                 size="sm"
                 styles={{ input: { minHeight: 44 } }}
               />
-              <UnstyledButton
-                onClick={() => setSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
-                px="sm"
+              <Button
+                variant="default"
                 h={44}
-                aria-label={`Sort direction: ${sort.dir === 1 ? 'ascending' : 'descending'}`}
-                style={{
-                  borderRadius: 'var(--mantine-radius-md)',
-                  border: '1px solid var(--mantine-color-default-border)',
-                  fontSize: 'var(--mantine-font-size-sm)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                }}
+                px="sm"
+                style={{ flexShrink: 0 }}
+                leftSection={sort.dir === 1 ? <IconArrowUp size={16} aria-hidden="true" /> : <IconArrowDown size={16} aria-hidden="true" />}
+                aria-label={`Sort direction: ${sort.dir === 1 ? 'ascending' : 'descending'}. Switch to ${sort.dir === 1 ? 'descending' : 'ascending'}.`}
+                onClick={() => setSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
               >
-                {sort.dir === 1 ? 'Asc ↑' : 'Desc ↓'}
-              </UnstyledButton>
+                {sort.dir === 1 ? 'Asc' : 'Desc'}
+              </Button>
             </Group>
           )}
         </Stack>
@@ -364,12 +400,12 @@ export default function ModelsPage() {
                         )}
                       </Group>
                     </Table.Td>
-                    <Num td={fmtSec(m.ttft_seconds.p50)} title={`p90 ${fmtSec(m.ttft_seconds.p90)} · p99 ${fmtSec(m.ttft_seconds.p99)}`} />
-                    <Num td={fmtSec(m.e2e_seconds.p50)} title={`p90 ${fmtSec(m.e2e_seconds.p90)} · p99 ${fmtSec(m.e2e_seconds.p99)}`} />
-                    <Num td={fmtTps(m.throughput_tps.p50)} title={`p90 ${fmtTps(m.throughput_tps.p90)} · p99 ${fmtTps(m.throughput_tps.p99)}`} />
+                    <Num td={fmtSec(m.ttft_seconds.p50)} title={percentileTitle(m.ttft_seconds, fmtSec)} />
+                    <Num td={fmtSec(m.e2e_seconds.p50)} title={percentileTitle(m.e2e_seconds, fmtSec)} />
+                    <Num td={fmtTps(m.throughput_tps.p50)} title={percentileTitle(m.throughput_tps, fmtTps)} />
                     <Num td={fmtPct(m.cache_rate)} />
                     <Num td={fmtInt(m.tool_calls)} />
-                    <Num td={fmtPct(clampRate(m.tool_error_rate))} title={`${fmtInt(m.tool_errors)} errored · ${fmtInt(m.tool_calls)} calls`} />
+                    <Num td={observedRate(m.tool_error_rate, m.tool_calls)} title={`${fmtInt(m.tool_errors)} errored · ${fmtInt(m.tool_calls)} calls`} />
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -384,7 +420,7 @@ export default function ModelsPage() {
         position="right"
         size={isMobile ? '100%' : 'lg'}
         styles={{ title: { minWidth: 0, flex: 1 }, close: { flexShrink: 0 } }}
-        closeButtonProps={{ 'aria-label': 'Close model details' }}
+        closeButtonProps={{ 'aria-label': 'Close model details', size: 44 }}
         title={
           selected && (
             <Box style={{ minWidth: 0 }}>
@@ -406,6 +442,10 @@ export default function ModelsPage() {
             stat={selected}
             colors={pal.series}
             series={selectedSeriesQ.data?.series}
+            historyPending={selectedSeriesQ.isPending}
+            historyError={selectedSeriesQ.isError}
+            historyFetching={selectedSeriesQ.isFetching}
+            onRetryHistory={() => selectedSeriesQ.refetch({ cancelRefetch: false })}
             range={historyRange}
             onRangeChange={setHistoryRange}
           />
@@ -417,28 +457,9 @@ export default function ModelsPage() {
 
 function CloseSearchButton({ onClear }: { onClear: () => void }) {
   return (
-    <ActionIcon
-      aria-label="Clear filter"
-      variant="subtle"
-      color="gray"
-      onClick={onClear}
-      size={44}
-    >
+    <ActionIcon aria-label="Clear filter" variant="subtle" color="gray" onClick={onClear} size={44}>
       <IconX size={14} stroke={1.8} />
     </ActionIcon>
-  )
-}
-
-function SummaryStat({ label, value }: { label: string; value: string }) {
-  return (
-    <Paper withBorder p="sm" radius="md">
-      <Text size="xs" c="dimmed" fw={600} style={{ letterSpacing: '0.01em' }}>
-        {label}
-      </Text>
-      <Text fz={20} fw={700} lh={1.15} mt={4} style={{ fontVariantNumeric: 'tabular-nums' }}>
-        {value}
-      </Text>
-    </Paper>
   )
 }
 
@@ -501,7 +522,7 @@ function ModelCard({
         <Metric label="E2E" value={fmtSec(m.e2e_seconds.p50)} />
         <Metric label="tok/s" value={fmtTps(m.throughput_tps.p50)} />
         <Metric label="Cache" value={fmtPct(m.cache_rate)} />
-        <Metric label="Tool err" value={fmtPct(clampRate(m.tool_error_rate))} />
+        <Metric label="Tool err" value={observedRate(m.tool_error_rate, m.tool_calls)} />
       </SimpleGrid>
       {/* Slim token-mix strip with its own legend: cache share is visible at a
             glance and the strip is explained rather than silent. Hidden until
@@ -540,34 +561,24 @@ function Num({ td, title }: { td: string | number; title?: string }) {
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Box>
-      <Text
-        size="xs"
-        tt="uppercase"
-        c="dimmed"
-        fw={600}
-        mb={6}
-        style={{ letterSpacing: '0.03em' }}
-      >
-        {title}
-      </Text>
-      {children}
-    </Box>
-  )
-}
-
 function ModelDetail({
   stat,
   colors,
   series,
+  historyPending,
+  historyError,
+  historyFetching,
+  onRetryHistory,
   range,
   onRangeChange,
 }: {
   stat: ModelStat
   colors: string[]
   series?: StatsSeries
+  historyPending?: boolean
+  historyError?: boolean
+  historyFetching?: boolean
+  onRetryHistory?: () => void
   range: string
   onRangeChange: (value: string) => void
 }) {
@@ -576,82 +587,96 @@ function ModelDetail({
   // TTFT and E2E share one time scale so their bar lengths are directly
   // comparable; throughput keeps its own scale (different unit).
   const latMax = Math.max(stat.ttft_seconds.p99, stat.e2e_seconds.p99)
-  const successRate = stat.requests > 0 ? stat.successes / stat.requests : 0
-  // Errors surface a turn after their call, so the raw counters can disagree
-  // briefly (errors recorded in a later bucket than the call they answer);
-  // clamp so a percentage never claims >100%.
-  const toolErrRate = clampRate(stat.tool_error_rate)
+  const successRate = stat.requests > 0 && Number.isFinite(stat.successes) ? clampRate(stat.successes / stat.requests) : NaN
 
   return (
-    <Stack gap={18}>
+    <Stack gap="lg">
+      <DetailSection title="All recorded traffic">
+        <SimpleGrid cols={2} spacing="md">
+          <DetailStat label="Requests" value={fmtInt(stat.requests)} hint={`${observedRate(successRate, stat.requests)} succeeded`} />
+          <DetailStat label="Latency p50" value={fmtSec(stat.e2e_seconds.p50)} hint={`TTFT ${fmtSec(stat.ttft_seconds.p50)}`} />
+          <DetailStat label="Throughput" value={fmtTps(stat.throughput_tps.p50)} hint={`p90 ${fmtTps(stat.throughput_tps.p90)}`} />
+          <DetailStat label="Tool error rate" value={observedRate(stat.tool_error_rate, stat.tool_calls)} hint={`${fmtInt(stat.tool_errors)} errored · ${fmtInt(stat.tool_calls)} calls`} />
+        </SimpleGrid>
+      </DetailSection>
       <Group justify="space-between" align="center" wrap="wrap" gap="sm">
         <Text size="xs" tt="uppercase" fw={700} c="dimmed" style={{ letterSpacing: '0.04em' }}>
           History range
         </Text>
-        <TimeRangeControl value={range} onChange={onRangeChange} />
+        <TimeRangeControl value={range} onChange={onRangeChange} disabled={historyPending} />
       </Group>
       <Text size="xs" c="dimmed">
         The range applies to history charts only. Summary stats and percentile bars use all recorded traffic.
       </Text>
-      <Paper withBorder radius="lg" p="md">
-        <SimpleGrid cols={{ base: 2, xs: 4 }} spacing="md">
-          <DetailStat label="Requests" value={fmtInt(stat.requests)} hint={`${fmtPct(successRate)} succeeded`} />
-          <DetailStat label="Latency p50" value={fmtSec(stat.e2e_seconds.p50)} hint={`TTFT ${fmtSec(stat.ttft_seconds.p50)}`} />
-          <DetailStat label="Throughput" value={fmtTps(stat.throughput_tps.p50)} hint={`p90 ${fmtTps(stat.throughput_tps.p90)}`} />
-          <DetailStat
-            label="Tool errors"
-            value={fmtPct(toolErrRate)}
-            hint={`${fmtInt(stat.tool_errors)} errored · ${fmtInt(stat.tool_calls)} calls`}
-            color={stat.tool_errors > 0 ? status.critical : undefined}
-          />
-        </SimpleGrid>
-      </Paper>
 
-      <DetailSection title="Performance history">
-        <HistoryLineChart
-          title="Latency"
-          description="Median first byte and full response"
-          data={historyData([series?.ttft_p50, series?.e2e_p50])}
-          series={[
-            { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
-            { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
-          ]}
-        />
-        <HistoryLineChart
-          title="Throughput"
-          description="Median output rate"
-          data={historyData([series?.throughput_p50])}
-          series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
-        />
-      </DetailSection>
+      {historyPending ? (
+        <Group justify="center" gap="xs" py="xl" role="status">
+          <Loader size="sm" />
+          <Text size="sm" c="dimmed">Loading history charts…</Text>
+        </Group>
+      ) : historyError ? (
+        <Alert
+          icon={<IconAlertTriangle size={16} stroke={1.8} />}
+          color="red"
+          variant="light"
+          title="History charts unavailable"
+        >
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm">Per-model history could not be loaded. All-time statistics are unaffected.</Text>
+            <Button mih={44} variant="light" color="red" onClick={onRetryHistory} loading={historyFetching}>
+              Retry
+            </Button>
+          </Stack>
+        </Alert>
+      ) : (
+        <>
+          <DetailSection title="Performance history">
+            <HistoryLineChart
+              title="Latency"
+              description="Median first byte and full response"
+              data={historyData([series?.ttft_p50, series?.e2e_p50])}
+              series={[
+                { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
+                { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
+              ]}
+            />
+            <HistoryLineChart
+              title="Throughput"
+              description="Median output rate"
+              data={historyData([series?.throughput_p50])}
+              series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
+            />
+          </DetailSection>
 
-      <DetailSection title="Traffic">
-        <HistoryBarChart
-          title="Requests"
-          description="Upstream calls per interval"
-          points={series?.requests ?? []}
-        />
-        <HistoryLineChart
-          title="Tool calls vs errors"
-          description="Calls issued and errored results, per interval"
-          data={historyData([series?.tool_calls, series?.tool_errors])}
-          series={[
-            { name: 'series0', label: 'Calls', formatter: historyFormatters.count },
-            { name: 'series1', label: 'Errors', formatter: historyFormatters.count },
-          ]}
-        />
-        <HistoryLineChart
-          title="Token volume"
-          description="Input and output tokens per interval"
-          data={historyData([series?.tokens_in, series?.tokens_out])}
-          series={[
-            { name: 'series0', label: 'Input', formatter: historyFormatters.count },
-            { name: 'series1', label: 'Output', formatter: historyFormatters.count },
-          ]}
-        />
-      </DetailSection>
+          <DetailSection title="Traffic">
+            <HistoryBarChart
+              title="Requests"
+              description="Upstream calls per interval"
+              points={series?.requests ?? []}
+            />
+            <HistoryLineChart
+              title="Tool calls vs errors"
+              description="Calls issued and errored results, per interval"
+              data={historyData([series?.tool_calls, series?.tool_errors])}
+              series={[
+                { name: 'series0', label: 'Calls', formatter: historyFormatters.count },
+                { name: 'series1', label: 'Errors', formatter: historyFormatters.count },
+              ]}
+            />
+            <HistoryLineChart
+              title="Token volume"
+              description="Input and output tokens per interval"
+              data={historyData([series?.tokens_in, series?.tokens_out])}
+              series={[
+                { name: 'series0', label: 'Input', formatter: historyFormatters.count },
+                { name: 'series1', label: 'Output', formatter: historyFormatters.count },
+              ]}
+            />
+          </DetailSection>
+        </>
+      )}
 
-      <Section title="Latency">
+      <DetailSection title="Latency">
         <Text size="xs" fw={600} c="dimmed" mb={4}>
           Time to first token
         </Text>
@@ -663,21 +688,25 @@ function ModelDetail({
         <Text size="xs" c="dimmed" mt={6}>
           Both share one time scale — bar lengths compare directly.
         </Text>
-      </Section>
-      <Section title="Throughput (tokens/sec)">
+      </DetailSection>
+      <DetailSection title="Throughput (tokens/sec)">
         <PercentileBars values={stat.throughput_tps} unit="tok/s" />
-      </Section>
-      <Section
+      </DetailSection>
+      <DetailSection
         title={`Tokens · ${fmtInt(totalTok)} total · cache hit ${fmtPct(stat.cache_rate)}`}
       >
         <TokenMixBar segments={segs} height={20} />
         <TokenLegend segments={segs} showPercent />
-      </Section>
+      </DetailSection>
       <DetailSection title="Reliability">
-        <DetailStat label="Success rate" value={fmtPct(successRate)} />
-        <Progress value={successRate * 100} radius="sm" size="sm" color={successRate >= 0.99 ? 'teal' : successRate >= 0.9 ? 'yellow' : 'red'} />
-        <DetailStat label="Successful" value={fmtInt(stat.successes)} />
-        <DetailStat label="Failed" value={fmtInt(stat.requests - stat.successes)} />
+        <DetailStat label="Success rate" value={observedRate(successRate, stat.requests)} />
+        {Number.isFinite(successRate) ? (
+          <Progress aria-label="Request success rate" value={successRate * 100} radius="sm" size="sm" color={successRate >= 0.99 ? 'teal' : successRate >= 0.9 ? 'yellow' : 'red'} />
+        ) : <Text size="sm" c="dimmed">No request success observations yet.</Text>}
+        <SimpleGrid cols={2} spacing="md">
+          <DetailStat label="Successful" value={fmtInt(stat.successes)} />
+          <DetailStat label="Failed" value={fmtInt(stat.requests - stat.successes)} />
+        </SimpleGrid>
         {Object.keys(stat.status_codes ?? {}).length > 0 && (
           <Box>
             <Text size="xs" c="dimmed" fw={600} mb={6}>
@@ -695,22 +724,19 @@ function DetailStat({
   label,
   value,
   hint,
-  color,
 }: {
   label: string
   value: string
   hint?: string
-  color?: string
 }) {
   return (
-    <Box>
+    <Box miw={0} style={{ overflowWrap: 'anywhere' }}>
       <Text size="xs" c="dimmed" fw={600} style={{ letterSpacing: '0.03em' }}>{label}</Text>
       <Text
         fz={22}
         fw={700}
         lh={1.15}
         mt={2}
-        c={color}
         style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}
       >
         {value}
@@ -724,11 +750,11 @@ function DetailStat({
 
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Paper withBorder radius="lg" p="md">
-      <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb="md" style={{ letterSpacing: '0.06em' }}>
+    <Paper withBorder radius="lg" p="md" miw={0}>
+      <Title order={3} size="h5" mb="md" style={{ overflowWrap: 'anywhere' }}>
         {title}
-      </Text>
-      <Stack gap="lg">{children}</Stack>
+      </Title>
+      <Stack gap="sm" miw={0}>{children}</Stack>
     </Paper>
   )
 }

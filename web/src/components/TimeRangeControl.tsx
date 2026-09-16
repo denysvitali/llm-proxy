@@ -8,6 +8,11 @@ const ranges = [
   { value: '7d', description: 'Last 7 days' },
 ]
 
+const trackStyle = {
+  background: 'var(--segmented-track)',
+  padding: 2,
+} as const
+
 export function TimeRangeControl({
   value,
   onChange,
@@ -27,16 +32,24 @@ export function TimeRangeControl({
       value={value}
       onChange={onChange}
       disabled={disabled}
-      transitionDuration={reduceMotion ? 0 : undefined}
+      // iOS segmented track: hairline thumb on the shared --segmented-*
+      // materials so the control matches the header pill-nav.
       styles={{
-        root: { maxWidth: '100%', flexShrink: 0 },
+        root: { maxWidth: '100%', flexShrink: 0, ...trackStyle },
+        indicator: {
+          backgroundColor: 'var(--segmented-thumb)',
+          boxShadow: 'var(--segmented-thumb-shadow)',
+          transitionDuration: reduceMotion ? '0ms' : undefined,
+        },
         label: {
+          color: 'var(--mantine-color-text)',
           minHeight: rem(44),
           minWidth: rem(44),
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           padding: `0 ${rem(8)}`,
+          transitionDuration: reduceMotion ? '0ms' : undefined,
         },
       }}
       data={ranges.map(({ value, description }) => ({

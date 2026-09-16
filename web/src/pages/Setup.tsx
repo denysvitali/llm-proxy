@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   Code,
+  Divider,
   Group,
   Loader,
   Stack,
@@ -15,7 +16,13 @@ import {
   Text,
 } from '@mantine/core'
 import { useClipboard } from '@mantine/hooks'
-import { IconCheck, IconCopy, IconInfoCircle, IconTerminal2 } from '@tabler/icons-react'
+import {
+  IconCheck,
+  IconCopy,
+  IconExclamationCircle,
+  IconInfoCircle,
+  IconTerminal2,
+} from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchOverview } from '../api'
 import { Fade } from '../App'
@@ -68,45 +75,61 @@ export default function SetupPage() {
                   <StatusRow label="Listen address">
                     <Code style={{ overflowWrap: 'anywhere' }}>{ov.listen}</Code>
                   </StatusRow>
-                  <StatusRow label="Proxy authentication" last={ov.exampleModel === '<model>'}>
+                  <Divider />
+                  <StatusRow label="Proxy authentication">
                     <Badge color={ov.authEnabled ? 'teal' : 'gray'} variant="light" size="sm" tt="none">
                       {ov.authEnabled ? 'enabled (llx_… keys)' : 'disabled'}
                     </Badge>
                   </StatusRow>
                   {ov.exampleModel !== '<model>' && (
-                    <StatusRow label="Example model" last>
-                      <Code style={{ overflowWrap: 'anywhere' }}>{ov.exampleModel}</Code>
-                    </StatusRow>
+                    <>
+                      <Divider />
+                      <StatusRow label="Example model">
+                        <Code style={{ overflowWrap: 'anywhere' }}>{ov.exampleModel}</Code>
+                      </StatusRow>
+                    </>
                   )}
                 </Card>
 
-                {ov.backends.some((b) => b.name === 'grok') && (
-                  <Alert color="violet" variant="light" title="Grok uses your xAI account">
-                    Grok does not use an upstream API key.{' '}
-                    <Anchor href="/login">Sign in with xAI</Anchor> to use your coding subscription.
-                  </Alert>
-                )}
+                <AccountSignInAlert
+                  show={ov.backends.some((b) => b.name === 'grok')}
+                  color="violet"
+                  title="Grok uses your xAI account"
+                  signInHref="/login"
+                  signInLabel="Sign in with xAI"
+                  body="Grok does not use an upstream API key."
+                  tail=" to use your coding subscription."
+                />
 
-                {ov.backends.some((b) => b.name === 'workbuddy') && (
-                  <Alert color="blue" variant="light" title="WorkBuddy uses your account">
-                    WorkBuddy does not use an upstream API key.{' '}
-                    <Anchor href="/login/workbuddy">Sign in with WorkBuddy</Anchor> to connect your subscription.
-                  </Alert>
-                )}
+                <AccountSignInAlert
+                  show={ov.backends.some((b) => b.name === 'workbuddy')}
+                  color="blue"
+                  title="WorkBuddy uses your account"
+                  signInHref="/login/workbuddy"
+                  signInLabel="Sign in with WorkBuddy"
+                  body="WorkBuddy does not use an upstream API key."
+                  tail=" to connect your subscription."
+                />
 
-                {ov.backends.some((b) => b.name === 'codex') && (
-                  <Alert color="gray" variant="light" title="Codex uses your ChatGPT account">
-                    Codex does not use an upstream API key.{' '}
-                    <Anchor href="/login/codex">Sign in with ChatGPT</Anchor> using a one-time device code.
-                  </Alert>
-                )}
+                <AccountSignInAlert
+                  show={ov.backends.some((b) => b.name === 'codex')}
+                  color="gray"
+                  title="Codex uses your ChatGPT account"
+                  signInHref="/login/codex"
+                  signInLabel="Sign in with ChatGPT"
+                  body="Codex does not use an upstream API key."
+                  tail=" using a one-time device code."
+                />
 
-                {ov.backends.some((b) => b.name === 'zcode') && (
-                  <Alert color="violet" variant="light" title="ZCode uses your account">
-                    ZCode does not use an upstream API key.{' '}
-                    <Anchor href="/login/zcode">Sign in with ZCode</Anchor> to connect your Start Plan.
-                  </Alert>
-                )}
+                <AccountSignInAlert
+                  show={ov.backends.some((b) => b.name === 'zcode')}
+                  color="violet"
+                  title="ZCode uses your account"
+                  signInHref="/login/zcode"
+                  signInLabel="Sign in with ZCode"
+                  body="ZCode does not use an upstream API key."
+                  tail=" to connect your Start Plan."
+                />
               </Stack>
             </PageSection>
 
@@ -151,29 +174,44 @@ export default function SetupPage() {
   )
 }
 
+/* The four account-backed backends share one alert shape; only the copy and
+   the accent differ. Color follows the contract's backend mapping (violet for
+   subscription-account backends, blue for WorkBuddy, gray for device-code). */
+function AccountSignInAlert({
+  show,
+  color,
+  title,
+  body,
+  signInHref,
+  signInLabel,
+  tail,
+}: {
+  show: boolean
+  color: 'violet' | 'blue' | 'gray'
+  title: string
+  body: string
+  signInHref: string
+  signInLabel: string
+  tail: string
+}) {
+  if (!show) return null
+  return (
+    <Alert color={color} variant="light" title={title}>
+      {body} <Anchor href={signInHref}>{signInLabel}</Anchor>
+      {tail}
+    </Alert>
+  )
+}
+
 function StatusRow({
   label,
-  last,
   children,
 }: {
   label: string
-  last?: boolean
   children: ReactNode
 }) {
   return (
-    <Group
-      justify="space-between"
-      wrap="wrap"
-      gap="xs"
-      px="md"
-      py="sm"
-      miw={0}
-      style={
-        last
-          ? undefined
-          : { borderBottom: '0.5px solid var(--mantine-color-default-border)' }
-      }
-    >
+    <Group justify="space-between" wrap="wrap" gap="xs" px="md" py="sm" miw={0}>
       <Text size="sm" c="dimmed">{label}</Text>
       <Box miw={0} maw="100%" style={{ overflowWrap: 'anywhere' }}>{children}</Box>
     </Group>
@@ -183,30 +221,43 @@ function StatusRow({
 function Snippet({ title, description, snippet }: { title: string; description: string; snippet: string }) {
   const clipboard = useClipboard({ timeout: 2000 })
   const [wrapLines, setWrapLines] = useState(false)
+  const copied = clipboard.copied
 
   return (
     <Box miw={0}>
       <Stack gap="sm" p="md">
         <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{description}</Text>
-        <Group justify="space-between" gap="sm">
-          <Switch size="sm" label="Wrap lines" checked={wrapLines} onChange={(event) => setWrapLines(event.currentTarget.checked)} />
+        <Group justify="space-between" gap="sm" wrap="wrap">
+          <Switch
+            size="sm"
+            label="Wrap lines"
+            checked={wrapLines}
+            onChange={(event) => setWrapLines(event.currentTarget.checked)}
+            aria-label={`Wrap ${title} snippet lines`}
+          />
           <Button
             size="sm"
-            variant={clipboard.copied ? 'light' : 'default'}
-            color={clipboard.copied ? 'teal' : undefined}
-            leftSection={clipboard.copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
+            variant={copied ? 'light' : 'default'}
+            color={copied ? 'teal' : undefined}
+            leftSection={copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
             onClick={() => clipboard.copy(snippet)}
             aria-label={`Copy ${title} snippet`}
+            disabled={snippet.length === 0}
           >
-            <span aria-live="polite">{clipboard.copied ? 'Copied' : 'Copy snippet'}</span>
+            {/* live region announces the idle→copied flip without moving focus */}
+            <span aria-live="polite">{copied ? 'Copied' : 'Copy snippet'}</span>
           </Button>
         </Group>
         {clipboard.error && (
-          <Text size="sm" role="alert">
-            Clipboard access is unavailable. Select the snippet below and copy it manually.
-          </Text>
+          <Group gap="xs" role="alert">
+            <IconExclamationCircle size={16} style={{ flexShrink: 0 }} />
+            <Text size="sm" c="yellow">
+              Clipboard access is unavailable. Select the snippet below and copy it manually.
+            </Text>
+          </Group>
         )}
       </Stack>
+      <Divider />
       <pre
         className="snippet-block"
         tabIndex={0}

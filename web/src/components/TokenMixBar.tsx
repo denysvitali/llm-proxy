@@ -94,7 +94,8 @@ export function TokenLegend({
     <Box role="list" aria-label="Token breakdown" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 6 }}>
       {segments.filter((s) => s.value > 0).map((s) => (
         <Box key={s.name} role="listitem" style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <span
+          {/* Data-mark swatch: a colored dot is honest as a styled Box, not chrome */}
+          <Box
             aria-hidden="true"
             style={{
               width: 9,
@@ -102,7 +103,6 @@ export function TokenLegend({
               flexShrink: 0,
               borderRadius: 2,
               background: s.color,
-              display: 'inline-block',
             }}
           />
           <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' }}>

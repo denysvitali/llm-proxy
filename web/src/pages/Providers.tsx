@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import {
   Alert,
   Box,
@@ -9,10 +9,10 @@ import {
   Divider,
   Drawer,
   Group,
+  Indicator,
   Loader,
   Paper,
   RingProgress,
-  ScrollArea,
   SimpleGrid,
   Stack,
   Table,
@@ -20,7 +20,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core'
-import { IconServerOff } from '@tabler/icons-react'
+import { IconLogin, IconServerOff } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchBackendStatsSeries, fetchGrokUsage, fetchOverview, fetchStats } from '../api'
 import type { GrokUsage, ModelStat, OverviewBackend, StatsSeries } from '../api'
@@ -150,7 +150,7 @@ export default function ProvidersPage() {
           <Alert variant="light" color="red" title="Couldn't load providers">
             {ovQ.error.message}
             <Group gap={4} mt={6}>
-              <Button size="compact-xs" variant="light" onClick={() => ovQ.refetch()}>
+              <Button size="xs" mih={44} variant="light" onClick={() => ovQ.refetch()}>
                 Retry
               </Button>
             </Group>
@@ -207,7 +207,7 @@ export default function ProvidersPage() {
           position="right"
           size={isMobile ? '100%' : 'lg'}
           title={selected && (
-            <Box style={{ minWidth: 0 }}>
+            <Box miw={0}>
               <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>Provider</Text>
               <Group gap="xs" wrap="nowrap">
                 <Text fw={700} truncate>{selected.name}</Text>
@@ -240,20 +240,21 @@ export default function ProvidersPage() {
 }
 
 function CompactStat({ label, value }: { label: string; value: string }) {
+  const labelId = useId()
   return (
-    <Paper withBorder radius="md" p="sm">
-      <Text size="xs" tt="uppercase" c="dimmed" fw={600} style={{ letterSpacing: '0.03em' }}>
+    <Paper withBorder radius="lg" p="md" miw={0} role="group" aria-labelledby={labelId}>
+      <Text id={labelId} size="xs" tt="uppercase" c="dimmed" fw={600} style={{ letterSpacing: '0.03em', overflowWrap: 'anywhere' }}>
         {label}
       </Text>
-      <Text fz={22} fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
+      <Text fz={22} fw={700} style={{ fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' }}>
         {value}
       </Text>
     </Paper>
   )
 }
 
-// Colored dot + explicit label so key/catalog state is never color-alone;
-// same status hues as UptimeBadge.
+// A native indicator plus explicit text keeps configuration state readable
+// without color; theme roles match the rest of the health chrome.
 function StatusDot({
   ok,
   okLabel,
@@ -263,20 +264,19 @@ function StatusDot({
   okLabel: string
   badLabel: string
 }) {
-  const color = ok ? '#0ca30c' : '#ec835a'
   return (
-    <Group gap={5} wrap="nowrap">
-      <span
-        style={{
-          width: 7,
-          height: 7,
-          borderRadius: '50%',
-          background: color,
-          display: 'inline-block',
-          flexShrink: 0,
-        }}
+    <Group gap="xs" wrap="nowrap" miw={0}>
+      <Indicator
+        size={7}
+        w={7}
+        h={7}
+        position="middle-center"
+        color={ok ? 'teal' : 'yellow'}
+        zIndex={0}
+        aria-hidden="true"
+        style={{ flexShrink: 0 }}
       />
-      <Text size="xs" c="dimmed">
+      <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
         {ok ? okLabel : badLabel}
       </Text>
     </Group>
@@ -289,13 +289,22 @@ function AuthStatus({ backend }: { backend: OverviewBackend }) {
   const account = ACCOUNT_AUTH[backend.name]
   if (account) {
     return (
-      <Group gap="xs">
+      <Group gap="xs" miw={0} wrap="wrap">
         <StatusDot
           ok={backend.authConfigured}
           okLabel={`${account.label} account signed in`}
           badLabel={`${account.label} account not signed in`}
         />
-        <Button component="a" href={account.login} size="compact-xs" variant="light">
+        <Button
+          component="a"
+          href={account.login}
+          size="xs"
+          mih={44}
+          color="violet"
+          variant="light"
+          onClick={(event) => event.stopPropagation()}
+          leftSection={<IconLogin size={12} stroke={1.8} aria-hidden="true" />}
+        >
           {backend.authConfigured ? 'Sign in again' : 'Sign in'}
         </Button>
       </Group>
@@ -305,20 +314,14 @@ function AuthStatus({ backend }: { backend: OverviewBackend }) {
 }
 
 function CardSection({ title, children }: { title: string; children: ReactNode }) {
+  const titleId = useId()
   return (
-    <Box>
-      <Text
-        size="xs"
-        tt="uppercase"
-        c="dimmed"
-        fw={600}
-        mb={6}
-        style={{ letterSpacing: '0.03em' }}
-      >
+    <Stack component="section" aria-labelledby={titleId} gap="xs" miw={0}>
+      <Title id={titleId} order={5} mb={0} style={{ overflowWrap: 'anywhere' }}>
         {title}
-      </Text>
-      <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{children}</Box>
-    </Box>
+      </Title>
+      <Group gap={6} miw={0} align="flex-start" wrap="wrap">{children}</Group>
+    </Stack>
   )
 }
 
@@ -372,13 +375,15 @@ function ProviderCard({
       radius="lg"
       p="md"
       onClick={onInspect}
-      style={{ cursor: 'pointer', height: '100%' }}
+      miw={0}
+      h="100%"
+      style={{ cursor: 'pointer' }}
     >
       <Group justify="space-between" wrap="nowrap" align="flex-start" gap="md">
         {/* Left: identity + config health. */}
-        <Box style={{ minWidth: 0 }}>
+        <Box miw={0}>
           <Group gap="xs" mb={4} wrap="wrap">
-            <Title order={4} mb={0}>
+            <Title order={4} mb={0} style={{ overflowWrap: 'anywhere' }}>
               {b.name}
             </Title>
             <Badge size="sm" variant="light" color={b.enabled ? 'teal' : 'gray'}>
@@ -387,7 +392,8 @@ function ProviderCard({
             {/* Keyboard/AT path to the drawer; the card's own click affordance
                 is pointer-only. */}
             <Button
-              size="compact-xs"
+              size="xs"
+              mih={44}
               variant="subtle"
               aria-label={`Inspect ${b.name}`}
               onClick={(event) => {
@@ -411,7 +417,7 @@ function ProviderCard({
         {/* Right: uptime ring with its state badge stacked under it so the
               pair reads as one unit. */}
         <Stack align="center" gap={4} style={{ flexShrink: 0 }}>
-          <Tooltip label={ringTooltip} withArrow>
+          <Tooltip label={ringTooltip} withArrow events={{ hover: true, focus: true, touch: true }}>
             <RingProgress
               size={84}
               thickness={7}
@@ -422,7 +428,9 @@ function ProviderCard({
                   {statsReady && requests ? pct(uptime, 0) : '—'}
                 </Text>
               }
-              aria-label={statsReady ? `uptime ${pct(uptime)}` : 'request stats unavailable'}
+              role="img"
+              tabIndex={0}
+              aria-label={ringTooltip}
             />
           </Tooltip>
           {statsReady ? (
@@ -469,7 +477,7 @@ function ProviderCard({
           <Divider my="sm" />
           <CardSection title={`Routes · ${routes.length}`}>
             {shownRoutes.map((r) => (
-              <Code key={r.model} style={{ fontSize: '0.72rem', overflowWrap: 'anywhere' }}>
+              <Code key={r.model} fz="xs" miw={0} style={{ overflowWrap: 'anywhere' }}>
                 {r.model} → {r.upstream || '(as requested)'}
               </Code>
             ))}
@@ -485,10 +493,10 @@ function ProviderCard({
           <Divider my="sm" />
           <CardSection title={`Catalog · ${(b.models?.length ?? 0)}`}>
             {shownModels.map((m) => (
-              <Group key={m} gap={4} wrap="nowrap">
-                <Code style={{ fontSize: '0.72rem', overflowWrap: 'anywhere' }}>{m}</Code>
+              <Group key={m} gap={4} wrap="nowrap" miw={0} maw="100%">
+                <Code fz="xs" miw={0} style={{ overflowWrap: 'anywhere' }}>{m}</Code>
                 {b.modelCredits?.[m] && (
-                  <Badge size="xs" variant="light" color="violet">
+                  <Badge size="xs" variant="light" color="violet" style={{ flexShrink: 0 }}>
                     {b.modelCredits[m]}
                   </Badge>
                 )}
@@ -496,7 +504,7 @@ function ProviderCard({
             ))}
             {extra > 0 && (
               <Button
-                size="compact-xs"
+                size="xs" mih={44}
                 variant="subtle"
                 aria-expanded={catalogExpanded}
                 onClick={(event) => {
@@ -509,7 +517,7 @@ function ProviderCard({
             )}
             {catalogExpanded && (b.models?.length ?? 0) > CATALOG_PREVIEW && (
               <Button
-                size="compact-xs"
+                size="xs" mih={44}
                 variant="subtle"
                 aria-expanded={catalogExpanded}
                 onClick={(event) => {
@@ -577,8 +585,8 @@ function ProviderDetail({
   }
 
   return (
-    <ScrollArea style={{ height: 'calc(100vh - 90px)' }} type="auto">
-      <Stack gap="lg" pr="sm">
+    <Box miw={0}>
+      <Stack gap="lg" miw={0} pb="md">
         {statsReady && health !== 'healthy' && (
           <Alert
             variant="light"
@@ -620,13 +628,14 @@ function ProviderDetail({
           </Group>
         </CardSection>
 
-        <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
-          <Text size="sm" fw={600}>History</Text>
+        <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+          <Title order={5}>History</Title>
           <TimeRangeControl value={range} onChange={onRangeChange} />
         </Group>
 
         {backend.name === 'grok' && grokUsage && <GrokUsageCompact usage={grokUsage} />}
 
+        <Text size="xs" c="dimmed">All recorded traffic · totals are independent of the history range</Text>
         <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
           <CompactStat label="Requests" value={statsReady ? fmtInt(requests) : '—'} />
           <CompactStat label="Uptime" value={statsReady && requests ? pct(uptime) : '—'} />
@@ -684,8 +693,10 @@ function ProviderDetail({
         )}
 
         <Divider my="xs" />
-        <Title order={6}>Model performance</Title>
-        {statsState === 'unavailable' ? (
+        <Title order={5}>Model performance</Title>
+        {statsState === 'loading' ? (
+          <Text size="sm" c="dimmed" role="status">Loading model stats…</Text>
+        ) : statsState === 'unavailable' ? (
           <Text size="sm" c="dimmed">
             Model stats are temporarily unavailable.
           </Text>
@@ -695,8 +706,9 @@ function ProviderDetail({
             proxy, per-model uptime and latency appear here.
           </Text>
         ) : (
-          <Box style={{ overflowX: 'auto' }}>
-            <Table verticalSpacing="xs" horizontalSpacing="sm" style={{ minWidth: 520 }}>
+          <Table.ScrollContainer minWidth={520}>
+            <Table highlightOnHover verticalSpacing="sm" horizontalSpacing="sm" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              <Table.Caption>Per-model performance · all recorded traffic</Table.Caption>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Model</Table.Th>
@@ -722,7 +734,7 @@ function ProviderDetail({
                 ))}
               </Table.Tbody>
             </Table>
-          </Box>
+          </Table.ScrollContainer>
         )}
         {statsReady && toolCalls > 0 && (
           <Text size="xs" c="dimmed">
@@ -730,6 +742,6 @@ function ProviderDetail({
           </Text>
         )}
       </Stack>
-    </ScrollArea>
+    </Box>
   )
 }

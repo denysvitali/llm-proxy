@@ -1,6 +1,6 @@
-import { BarChart, LineChart } from '@mantine/charts'
+import { AreaChart, BarChart, LineChart } from '@mantine/charts'
 import { Box, Group, Paper, Stack, Table, Text } from '@mantine/core'
-import { useId } from 'react'
+import { useId, type CSSProperties } from 'react'
 import type { SeriesPoint } from '../api'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
@@ -20,6 +20,15 @@ const linePatterns = ['', '6 4', '2 3', '8 3 2 3']
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 // Anything past 36h is the weekly view.
 const DATE_AXIS_SPAN_MS = 36 * 60 * 60 * 1000
+// Override Mantine's chart-local defaults with the shell's inherited tokens.
+const chartStyle = {
+  '--chart-grid-color': 'inherit',
+  '--chart-cursor-fill': 'inherit',
+  fontVariantNumeric: 'tabular-nums',
+} as CSSProperties
+const gridStyle = { stroke: 'var(--chart-grid-color)', strokeDasharray: '0', strokeWidth: 1 }
+type ChartTooltipPayload = { dataKey?: unknown; value?: unknown }
+const axisTick = { fontSize: 11, fill: 'var(--mantine-color-dimmed)' }
 
 function mergeSeries(...groups: Array<SeriesPoint[] | undefined>): HistoryChartData[] {
   const timestamps = [
@@ -86,6 +95,7 @@ function sampleValue(value: unknown, formatter: HistoryFormatter): number | unde
   return formatter(value) === '—' ? undefined : value
 }
 
+// Legends and tooltips key series with a short line, mirroring the mark.
 function LineKey({ item }: { item: ColoredSeries }) {
   return (
     <svg width="24" height="10" aria-hidden="true" style={{ flexShrink: 0 }}>
@@ -94,6 +104,7 @@ function LineKey({ item }: { item: ColoredSeries }) {
   )
 }
 
+// Frosted surface above the plot; values lead, series names follow.
 function ChartTooltip({ payload, timestamp, series }: {
   payload: ReadonlyArray<{ dataKey?: unknown; value?: unknown }>
   timestamp: string
@@ -101,7 +112,18 @@ function ChartTooltip({ payload, timestamp, series }: {
 }) {
   const byName = new Map(payload.map((item) => [String(item.dataKey), item.value]))
   return (
-    <Paper withBorder p={10} radius="md" shadow="sm" style={{ maxWidth: 'min(320px, calc(100vw - 32px))' }}>
+    <Paper
+      withBorder
+      p={10}
+      radius="md"
+      style={{
+        maxWidth: 'min(320px, calc(100vw - 32px))',
+        backgroundColor: 'color-mix(in srgb, var(--mantine-color-default) 88%, transparent)',
+        backdropFilter: 'saturate(1.8) blur(16px)',
+        WebkitBackdropFilter: 'saturate(1.8) blur(16px)',
+        borderColor: 'var(--mantine-color-default-border)',
+      }}
+    >
       <Text size="xs" c="dimmed" mb={6} style={{ fontVariantNumeric: 'tabular-nums' }}>
         {formatTooltipTime(timestamp)}
       </Text>
@@ -112,7 +134,7 @@ function ChartTooltip({ payload, timestamp, series }: {
             <Group key={item.name} justify="space-between" gap="xs">
               <Group gap={6} wrap="nowrap" miw={0}>
                 <LineKey item={item} />
-                <Text size="xs" style={{ overflowWrap: 'anywhere' }}>{item.label}</Text>
+                <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{item.label}</Text>
               </Group>
               <Text size="xs" fw={600} style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {value === undefined ? 'No sample' : item.formatter(value)}
@@ -134,8 +156,8 @@ function ChartDataTable({ title, data, series }: {
 }) {
   return (
     <Box component="details" mt="xs" style={{ fontSize: 'var(--mantine-font-size-xs)' }}>
-      <Box component="summary" py={6} style={{ cursor: 'pointer' }}>
-        View data <span>({data.length} intervals)</span>
+      <Box component="summary" py="sm" mih={44} c="dimmed" style={{ cursor: 'pointer' }}>
+        View data <Text component="span" inherit style={{ fontVariantNumeric: 'tabular-nums' }}>({data.length} intervals)</Text>
       </Box>
       <Box mt={4} mah={260} style={{ overflow: 'auto' }} tabIndex={0} role="region" aria-label={`${title} data table`}>
         <Table fz="xs" striped withRowBorders>
@@ -193,6 +215,45 @@ export function HistoryLineChart({ title, description, data, series, height = 13
   })
   const hasData = plotData.some((point) => series.some((item) => typeof point[item.name] === 'number'))
   const formatter = axisFormatter(series[0]?.formatter ?? fmtInt)
+  // Single series reads as an area with a gradient wash; multi-series keeps
+  // crisp lines so overlapping series don't muddy each other.
+  const single = series.length === 1
+
+  const chartProps = {
+    h: height,
+    data: plotData,
+    dataKey: 'time',
+    curveType: 'linear' as const,
+    connectNulls: false,
+    accessibilityLayer: true,
+    series: coloredSeries,
+    valueFormatter: formatter,
+    gridProps: gridStyle,
+    style: chartStyle,
+    tooltipProps: {
+      cursor: { fill: 'var(--chart-cursor-fill)', strokeWidth: 1, stroke: 'var(--chart-grid-color)' },
+      content: ({ active, payload, label }: { active?: boolean; payload?: readonly ChartTooltipPayload[]; label?: unknown }) =>
+        active && payload?.length ? (
+          <ChartTooltip payload={payload} timestamp={String(label)} series={coloredSeries} />
+        ) : null,
+    },
+    xAxisProps: {
+      tick: axisTick,
+      tickFormatter: axisTimeFormatter(data),
+      tickLine: false as const,
+      axisLine: false as const,
+      minTickGap: 32,
+      interval: 'preserveStartEnd' as const,
+    },
+    yAxisProps: {
+      tick: axisTick,
+      tickLine: false as const,
+      axisLine: false as const,
+      width: 48,
+      tickCount: 4,
+      tickFormatter: formatter,
+    },
+  }
 
   return (
     <Box miw={0} role="group" aria-labelledby={id} aria-describedby={`${id}-description`}>
@@ -204,33 +265,33 @@ export function HistoryLineChart({ title, description, data, series, height = 13
         </Box>
       ) : (
         <>
-          <LineChart
-            h={height}
-            data={plotData}
-            dataKey="time"
-            curveType="linear"
-            connectNulls={false}
-            accessibilityLayer
-            series={coloredSeries}
-            valueFormatter={formatter}
-            tooltipProps={{
-              content: ({ active, payload, label }) => active && payload?.length ? (
-                <ChartTooltip payload={payload} timestamp={String(label)} series={coloredSeries} />
-              ) : null,
-            }}
-            xAxisProps={{ tickFormatter: axisTimeFormatter(data), tickLine: false, axisLine: false, minTickGap: 32, interval: 'preserveStartEnd' }}
-            yAxisProps={{ tickLine: false, axisLine: false, width: 48, tickCount: 4, tickFormatter: formatter }}
-            gridAxis="y"
-            strokeDasharray="0"
-            dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
-            activeDotProps={{ r: 5, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
-          />
+          {single ? (
+            <AreaChart
+              {...chartProps}
+              withGradient
+              fillOpacity={0.1}
+              strokeWidth={2}
+              strokeDasharray="0"
+              areaProps={{ strokeLinecap: 'round', strokeLinejoin: 'round' }}
+              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
+              activeDotProps={{ r: 5, fill: coloredSeries[0].color, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
+            />
+          ) : (
+            <LineChart
+              {...chartProps}
+              strokeWidth={2}
+              strokeDasharray="0"
+              lineProps={{ strokeLinecap: 'round', strokeLinejoin: 'round' }}
+              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
+              activeDotProps={{ r: 5, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
+            />
+          )}
           {coloredSeries.length > 1 && (
             <Group gap="xs" justify="center" mt={4} aria-label="Chart legend">
               {coloredSeries.map((item) => (
-                <Group key={item.name} gap={6} wrap="nowrap">
+                <Group key={item.name} gap={6} wrap="nowrap" miw={0}>
                   <LineKey item={item} />
-                  <Text size="xs">{item.label}</Text>
+                  <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{item.label}</Text>
                 </Group>
               ))}
             </Group>
@@ -269,19 +330,22 @@ export function HistoryBarChart({ title, description, points, formatter = fmtInt
       ) : (
         <>
           <BarChart
+            style={chartStyle}
             h={height}
             data={data}
             dataKey="time"
             accessibilityLayer
             series={[barSeries]}
             valueFormatter={axisFormatter(formatter)}
+            gridProps={gridStyle}
             tooltipProps={{
+              cursor: { fill: 'var(--chart-cursor-fill)' },
               content: ({ active, payload, label }) => active && payload?.length ? (
                 <ChartTooltip payload={payload} timestamp={String(label)} series={[barSeries]} />
               ) : null,
             }}
-            xAxisProps={{ tickFormatter: axisTimeFormatter(data), tickLine: false, axisLine: false, minTickGap: 32, interval: 'preserveStartEnd' }}
-            yAxisProps={{ tickLine: false, axisLine: false, width: 48, tickCount: 4, tickFormatter: axisFormatter(formatter) }}
+            xAxisProps={{ tick: axisTick, tickFormatter: axisTimeFormatter(data), tickLine: false, axisLine: false, minTickGap: 32, interval: 'preserveStartEnd' }}
+            yAxisProps={{ tick: axisTick, tickLine: false, axisLine: false, width: 48, tickCount: 4, tickFormatter: axisFormatter(formatter) }}
             barProps={{ radius: [4, 4, 0, 0], maxBarSize: 18 }}
             gridAxis="y"
             strokeDasharray="0"

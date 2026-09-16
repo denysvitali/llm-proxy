@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Card,
   Divider,
   Group,
@@ -7,6 +8,7 @@ import {
   Progress,
   SimpleGrid,
   Text,
+  ThemeIcon,
   Title,
 } from '@mantine/core'
 import { IconCoin } from '@tabler/icons-react'
@@ -25,13 +27,13 @@ export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsa
   return (
     <Card withBorder radius="lg" p="md" style={{ minWidth: 0 }}>
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" mb="sm">
-        <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+        <Box miw={0} style={{ overflowWrap: 'anywhere' }}>
           <Title order={5}>Grok subscription</Title>
           <Text size="xs" c="dimmed">
             {usage?.subscriptionTier || 'xAI coding subscription'}
             {usage?.email ? ` · ${usage.email}` : ''}
           </Text>
-        </div>
+        </Box>
         {query.isFetching && !query.isPending ? <Loader size="xs" aria-label="Refreshing Grok usage" style={{ flexShrink: 0 }} /> : null}
       </Group>
 
@@ -50,14 +52,15 @@ export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsa
         <>
           {percent !== null ? (
             <>
-              <Group justify="space-between" align="baseline" gap="xs" mb={8}>
-                <div>
-                  <Text fz={{ base: 24, sm: 28 }} fw={700} lh={1.2}>
-                    {percent.toFixed(1)}% <Text span size="sm" fw={500}>used</Text>
+              <Group justify="space-between" align="baseline" wrap="nowrap" gap="xs" mb={8}>
+                <Box miw={0}>
+                  {/* Display-size tracking mirrors the theme's SF heading rules; tabular figures keep the pair of percentages steady while polling. */}
+                  <Text fz={{ base: 24, sm: 28 }} fw={700} lh={1.15} style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
+                    {percent.toFixed(1)}% <Text span fz="sm" fw={500} c="dimmed">used</Text>
                   </Text>
                   <Text size="xs" c="dimmed" mt={2}>{usedThisPeriodLabel(usage.periodType)}</Text>
-                </div>
-                <Text size="sm" c="dimmed">
+                </Box>
+                <Text size="sm" c="dimmed" style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                   {percent > 100 ? `${(percent - 100).toFixed(1)}% over limit` : `${(100 - percent).toFixed(1)}% remaining`}
                 </Text>
               </Group>
@@ -68,9 +71,9 @@ export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsa
               Usage percentage is unavailable. This does not mean the quota is unused.
             </Text>
           )}
-          <Group justify="space-between" gap="xs" mt={8} style={{ overflowWrap: 'anywhere' }}>
-            <Text size="xs" c="dimmed">{formatPeriod(usage.periodStart, usage.periodEnd, usage.periodType)}</Text>
-            <Text size="xs" c="dimmed">
+          <Group justify="space-between" align="baseline" gap="xs" mt={8} wrap="nowrap">
+            <Text size="xs" c="dimmed" miw={0} style={{ overflowWrap: 'anywhere' }}>{formatPeriod(usage.periodStart, usage.periodEnd, usage.periodType)}</Text>
+            <Text size="xs" c="dimmed" style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
               {hasUpdated ? <>Updated <time dateTime={updated.toISOString()} title={updated.toLocaleString()}>{updated.toLocaleTimeString('en-US', { hour12: false })}</time></> : 'Update time unavailable'}
             </Text>
           </Group>
@@ -85,11 +88,20 @@ export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsa
             </>
           )}
           {extra && (
-            <Group gap={6} mt="sm" wrap="nowrap" align="flex-start">
-              <IconCoin size={15} stroke={1.8} aria-hidden="true" style={{ flexShrink: 0 }} />
-              <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
-                Extra usage {formatMoney(usage.onDemandUsedCents)} used
-                {usage.onDemandCapCents != null ? ` · ${formatMoney(usage.onDemandCapCents)} limit` : ''}
+            <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs" mt="sm">
+              <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                <ThemeIcon variant="light" color="gray" size="sm" radius="md" aria-hidden="true" style={{ flexShrink: 0 }}>
+                  <IconCoin size={14} stroke={1.8} />
+                </ThemeIcon>
+                <Box miw={0} style={{ overflowWrap: 'anywhere' }}>
+                  <Text size="xs" fw={500}>Extra usage</Text>
+                  {usage.onDemandCapCents != null && Number.isFinite(usage.onDemandCapCents) && (
+                    <Text size="xs" c="dimmed">{formatMoney(usage.onDemandCapCents)} limit</Text>
+                  )}
+                </Box>
+              </Group>
+              <Text size="xs" fw={600} style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                {formatMoney(usage.onDemandUsedCents)} used
               </Text>
             </Group>
           )}
@@ -105,11 +117,11 @@ export function GrokUsageCompact({ usage }: { usage: GrokUsage }) {
   const percent = usagePercent(usage)
   return (
     <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-      <Group justify="space-between" gap="xs" mb={6}>
-        <Text size="xs" c="dimmed">
+      <Group justify="space-between" align="baseline" gap="xs" mb={6}>
+        <Text size="xs" c="dimmed" miw={0}>
           {usage.subscriptionTier || 'Grok'} · {periodTypeLabel(usage.periodType) || 'quota'}
         </Text>
-        <Text size="xs" fw={700}>
+        <Text size="xs" fw={600} style={{ fontVariantNumeric: 'tabular-nums' }}>
           {percent === null ? 'Usage unavailable' : `${percent.toFixed(1)}% used`}
         </Text>
       </Group>
@@ -133,7 +145,7 @@ function UsageMeter({ percent, compact = false }: { percent: number; compact?: b
   return (
     <Progress.Root
       size={compact ? 'sm' : 'md'}
-      radius="sm"
+      radius="xl"
       role="meter"
       aria-label="Grok subscription quota used"
       aria-valuemin={0}
@@ -141,6 +153,7 @@ function UsageMeter({ percent, compact = false }: { percent: number; compact?: b
       aria-valuenow={Math.min(100, percent)}
       aria-valuetext={description}
       title={description}
+      // Same-ramp track: tinted version of the state color behind the fill.
       bg={`var(--mantine-color-${color}-light)`}
     >
       <Progress.Section value={Math.min(100, percent)} color={color} withAria={false} />
@@ -150,10 +163,10 @@ function UsageMeter({ percent, compact = false }: { percent: number; compact?: b
 
 function UsageMoney({ label, cents }: { label: string; cents?: number }) {
   return (
-    <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-      <Text size="xs" c="dimmed" fw={500}>{label}</Text>
-      <Text fw={700} size="sm" mt={2}>{formatMoney(cents)}</Text>
-    </div>
+    <Box miw={0} style={{ overflowWrap: 'anywhere' }}>
+      <Text fz={11} tt="uppercase" c="dimmed" fw={600} lh={1.3} style={{ letterSpacing: '0.06em' }}>{label}</Text>
+      <Text fz={16} fw={700} lh={1.35} mt={2} style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>{formatMoney(cents)}</Text>
+    </Box>
   )
 }
 

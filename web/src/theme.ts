@@ -65,7 +65,7 @@ export const theme = createTheme({
   fontSizes: { xs: rem(11.5) },
   components: {
     Card: Card.extend({
-      defaultProps: { withBorder: true, radius: 'lg' },
+      defaultProps: { withBorder: true, radius: 'lg', padding: 'lg' },
     }),
     Paper: Paper.extend({
       defaultProps: { radius: 'lg' },

@@ -1,4 +1,4 @@
-import { Box, Group, Text } from '@mantine/core'
+import { Box, Group, Stack, Text, Title } from '@mantine/core'
 import { useId, type ReactNode } from 'react'
 
 export function PageSection({
@@ -15,20 +15,34 @@ export function PageSection({
   const titleId = useId()
 
   return (
-    <Box component="section" aria-labelledby={titleId} mb="lg" miw={0}>
-      <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm" mb="sm">
-        <Box style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
-          <Text component="h2" id={titleId} fz={11} tt="uppercase" c="dimmed" fw={600} m={0} style={{ letterSpacing: '0.06em' }}>
+    <Box component="section" aria-labelledby={titleId} mb="xl" miw={0}>
+      <Group
+        justify="space-between"
+        align={description ? 'flex-end' : 'center'}
+        wrap="wrap"
+        gap="sm"
+        mb="md"
+      >
+        <Stack gap={4} style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
+          <Title
+            order={2}
+            size="h4"
+            id={titleId}
+            fw={600}
+            m={0}
+            lh={1.3}
+            style={{ letterSpacing: '-0.015em' }}
+          >
             {title}
-          </Text>
+          </Title>
           {description && (
-            <Text size="sm" c="dimmed" mt={2}>
+            <Text size="sm" c="dimmed" lh={1.45} m={0}>
               {description}
             </Text>
           )}
-        </Box>
+        </Stack>
         {extra != null && (
-          <Group gap="xs" wrap="wrap" miw={0} maw="100%">
+          <Group gap="xs" wrap="wrap" miw={0} maw="100%" style={{ flexShrink: 0 }}>
             {extra}
           </Group>
         )}

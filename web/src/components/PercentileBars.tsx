@@ -1,5 +1,5 @@
-import { Box, Text } from '@mantine/core'
-import type { ReactNode } from 'react'
+import { Progress, Table, Text, Tooltip } from '@mantine/core'
+import { useReducedMotion } from '@mantine/hooks'
 import { useChartPalette } from '../palette'
 import { fmtSec, fmtTps } from '../format'
 
@@ -10,74 +10,93 @@ interface PercentileBarsProps {
   max?: number
 }
 
-const labels = ['p50', 'p90', 'p99']
+const labels = ['p50', 'p90', 'p99'] as const
 
-// Ordered percentiles drawn on an ordinal one-hue ramp (light -> dark =
-// low -> high tail). Bars anchor the baseline at the left and round only the
-// data end (pill cap); exact numbers sit in an aligned right-hand column so
-// values stay scannable and nothing is encoded by color alone.
 export default function PercentileBars({ values, unit, max }: PercentileBarsProps) {
   const pal = useChartPalette()
-  const v = [values.p50, values.p90, values.p99]
-  // Without an explicit max each chart normalizes to its own tallest bar;
-  // with one, all three bars share the caller's scale for cross-chart
-  // comparison (e.g. TTFT next to E2E in the model drawer).
-  const scaleMax = max && max > 0 ? max : Math.max(...v)
+  const reduceMotion = useReducedMotion()
+  const observedValues = labels.map((label) => values[label]).filter(isObserved)
+  // Keep the caller's shared scale; missing observations must not poison it.
+  const scaleMax = max !== undefined && isObserved(max)
+    ? max
+    : Math.max(0, ...observedValues)
   const fmt = unit === 's' ? fmtSec : fmtTps
 
   return (
-    <Box>
-      {v.map((val, i) => {
-        const w =
-          scaleMax > 0 && val > 0 ? Math.max((val / scaleMax) * 100, 1.5) : 0
-        return (
-          <Box
-            key={labels[i]}
-            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '3px 0' }}
-            title={`${labels[i]}: ${fmt(val)}${unit === 's' ? '' : ' tok/s'}`}
-          >
-            <Text w={30} size="sm" c="dimmed">
-              {labels[i]}
-            </Text>
-            <Box
-              style={{
-                flex: 1,
-                height: 14,
-                background: pal.dark
-                  ? 'rgba(255,255,255,0.06)'
-                  : 'rgba(0,0,0,0.05)',
-                borderRadius: 999,
-              }}
+    <Table
+      layout="fixed"
+      verticalSpacing={6}
+      horizontalSpacing={0}
+      withRowBorders={false}
+      highlightOnHover
+      captionSide="bottom"
+      style={{ fontVariantNumeric: 'tabular-nums' }}
+    >
+      <Table.Caption ta="left" mt={4}>
+        {scaleMax > 0
+          ? `Scale: 0–${fmt(scaleMax)}${unit === 'tok/s' ? ' tok/s' : ''}${max !== undefined && isObserved(max) ? ' · shared' : ''}`
+          : 'No observations yet'}
+      </Table.Caption>
+      <Table.Thead>
+        <Table.Tr>
+          <Table.Th w={72}>
+            <Text size="xs" c="dimmed" fw={500}>Percentile</Text>
+          </Table.Th>
+          <Table.Th>
+            <Text size="xs" c="dimmed" fw={500}>Distribution</Text>
+          </Table.Th>
+          <Table.Th w={80} ta="right">
+            <Text size="xs" c="dimmed" fw={500}>{unit === 's' ? 'Time' : 'tok/s'}</Text>
+          </Table.Th>
+        </Table.Tr>
+      </Table.Thead>
+      <Table.Tbody>
+        {labels.map((label, i) => {
+          const val = values[label]
+          const observed = isObserved(val)
+          const detail = observed
+            ? `${fmt(val)}${unit === 'tok/s' ? ' tok/s' : ''}`
+            : 'No observations'
+          const width = observed && scaleMax > 0
+            ? Math.min(100, Math.max((val / scaleMax) * 100, 1.5))
+            : 0
+
+          return (
+            <Tooltip
+              key={label}
+              label={`${label}: ${detail}`}
+              events={{ hover: true, focus: true, touch: true }}
+              withArrow
             >
-              {w > 0 && (
-                <div
-                  style={{
-                    width: `${w}%`,
-                    height: '100%',
-                    background: pal.ramp[i],
-                    borderRadius: '0 999px 999px 0',
-                    transition: 'width 250ms ease',
-                  }}
-                />
-              )}
-            </Box>
-            <NumText>{fmt(val)}</NumText>
-          </Box>
-        )
-      })}
-    </Box>
+              <Table.Tr tabIndex={0} className="mantine-focus-auto" h={44}>
+                <Table.Th scope="row">
+                  <Text size="sm" fw={500}>{label}</Text>
+                </Table.Th>
+                <Table.Td>
+                  <Progress
+                    aria-hidden="true"
+                    value={width}
+                    color={pal.ramp[i]}
+                    size={10}
+                    radius={0}
+                    transitionDuration={reduceMotion ? 0 : 250}
+                    styles={{ section: { borderRadius: '0 4px 4px 0' } }}
+                  />
+                </Table.Td>
+                <Table.Td ta="right" pl="xs" aria-label={observed ? detail : 'No observations'}>
+                  <Text size="sm" fw={500} c={observed ? undefined : 'dimmed'} style={{ overflowWrap: 'anywhere' }}>
+                    {observed ? fmt(val) : '—'}
+                  </Text>
+                </Table.Td>
+              </Table.Tr>
+            </Tooltip>
+          )
+        })}
+      </Table.Tbody>
+    </Table>
   )
 }
 
-function NumText({ children }: { children: ReactNode }) {
-  return (
-    <Text
-      w={64}
-      size="sm"
-      ta="right"
-      style={{ fontVariantNumeric: 'tabular-nums' }}
-    >
-      {children}
-    </Text>
-  )
+function isObserved(value: number): boolean {
+  return Number.isFinite(value) && value > 0
 }

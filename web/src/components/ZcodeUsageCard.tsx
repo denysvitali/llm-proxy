@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Card,
   Divider,
   Group,
@@ -24,10 +25,10 @@ export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeU
   return (
     <Card withBorder radius="lg" p="md" style={{ minWidth: 0 }}>
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" mb="sm">
-        <div style={{ minWidth: 0 }}>
+        <Box style={{ minWidth: 0 }}>
           <Title order={5}>ZCode plan</Title>
           <Text size="xs" c="dimmed">Current billing period · units</Text>
-        </div>
+        </Box>
         {query.isFetching && !query.isPending ? <Loader size="xs" aria-label="Refreshing ZCode usage" style={{ flexShrink: 0 }} /> : null}
       </Group>
 
@@ -45,12 +46,12 @@ export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeU
       ) : usage?.plans.length ? (
         <Stack gap="md">
           {usage.plans.map((plan, index) => (
-            <div key={plan.plan_id}>
+            <Box key={plan.plan_id}>
               {index > 0 && <Divider mb="md" />}
               <PlanRow plan={plan} />
-            </div>
+            </Box>
           ))}
-          <Text size="xs" c="dimmed">
+          <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {hasUpdated ? <>Updated <time dateTime={updated.toISOString()} title={updated.toLocaleString()}>{updated.toLocaleTimeString('en-US', { hour12: false })}</time></> : 'Update time unavailable'}
           </Text>
         </Stack>
@@ -80,14 +81,14 @@ function PlanRow({ plan }: { plan: ZcodePlanUsage }) {
   const description = percent === null ? '' : `${percent.toFixed(1)}% used${percent > 100 ? ', over plan limit' : ''}; ${used?.toLocaleString('en-US')} of ${total?.toLocaleString('en-US')} units used`
 
   return (
-    <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+    <Box style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
       <Group justify="space-between" align="baseline" gap="xs" mb={8}>
-        <div style={{ minWidth: 0 }}>
+        <Box style={{ minWidth: 0 }}>
           <Text size="sm" fw={600}>{title}</Text>
           {status && <Text size="xs" c="dimmed">{status}</Text>}
-        </div>
+        </Box>
         {percent !== null && (
-          <Text size="sm" fw={700}>
+          <Text size="sm" fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
             {percent.toFixed(1)}% used
           </Text>
         )}
@@ -108,7 +109,11 @@ function PlanRow({ plan }: { plan: ZcodePlanUsage }) {
           >
             <Progress.Section value={Math.min(100, percent)} color={color} withAria={false} />
           </Progress.Root>
-          {percent > 100 && <Text size="xs" mt={6}>{(percent - 100).toFixed(1)}% over plan limit</Text>}
+          {percent > 100 && (
+            <Text size="xs" mt={6} c="red" fw={500} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {(percent - 100).toFixed(1)}% over plan limit
+            </Text>
+          )}
         </>
       ) : (
         <Text size="sm" c="dimmed">
@@ -124,7 +129,7 @@ function PlanRow({ plan }: { plan: ZcodePlanUsage }) {
         <Text size="xs" c="dimmed" mt={6}>Remaining is calculated from total minus used; it may exclude reserved units.</Text>
       )}
       {period && <Text size="xs" c="dimmed" mt={8}>{period}</Text>}
-    </div>
+    </Box>
   )
 }
 
@@ -134,12 +139,18 @@ function validUnits(value?: number) {
 
 function QuotaValue({ label, value }: { label: string; value: number | null }) {
   return (
-    <div style={{ minWidth: 0 }}>
-      <Text size="xs" c="dimmed">{label}</Text>
-      <Text size="sm" fw={value === null ? 400 : 600} title={value === null ? undefined : `${value.toLocaleString('en-US')} units`}>
+    <Box style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+      <Text size="xs" c="dimmed" fw={500}>{label}</Text>
+      <Text
+        size="sm"
+        fw={value === null ? 400 : 600}
+        c={value === null ? 'dimmed' : undefined}
+        title={value === null ? 'The API did not report this counter' : `${value.toLocaleString('en-US')} units`}
+        style={{ fontVariantNumeric: 'tabular-nums' }}
+      >
         {value === null ? 'Not reported' : fmtInt(value)}
       </Text>
-    </div>
+    </Box>
   )
 }
 
@@ -154,6 +165,7 @@ function formatUnixPeriod(start?: number, end?: number) {
 
 function unixDate(value?: number) {
   if (!value || !Number.isFinite(value)) return undefined
+  // Accept contemporary epochs in either seconds or milliseconds.
   const millis = value > 1e12 ? value : value * 1000
   const date = new Date(millis)
   return Number.isNaN(date.getTime()) ? undefined : date
