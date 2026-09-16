@@ -379,10 +379,12 @@ jobs:
           pkill -f 'llm-proxy serve' || true
           pkill -f 'mock_upstream.py' || true
 
-  # Real-client, real-upstream coverage that needs no repository secrets and
-  # cannot incur provider charges. Both clients traverse the proxy's
-  # translation layer because Zen's community free models speak Chat only.
+  # Optional live coverage: Zen currently restricts free-tier inference to
+  # its own client (MissingSessionID). Enable only when upstream permits this
+  # use again, via the repository variable ENABLE_OPENCODE_FREE_E2E=true.
+  # Keep e2e-mock above unconditional; do not hide unexpected probe failures.
   e2e-opencode-free:
+    if: vars.ENABLE_OPENCODE_FREE_E2E == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
