@@ -25,16 +25,22 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
   const colorScheme = useComputedColorScheme('light')
   const colors = colorScheme === 'dark' ? statusColors.dark : statusColors.light
 
-  if (!requests) {
+  const noTraffic = requests === 0
+  const unavailable = !Number.isFinite(requests) || requests < 0
+    || !Number.isFinite(uptime) || uptime < 0 || uptime > 1
+  if (noTraffic || unavailable) {
+    const description = noTraffic ? 'No requests recorded yet' : 'Request success data is unavailable'
     return (
-      <Tooltip label="No requests recorded yet" withArrow>
+      <Tooltip label={description} withArrow events={{ hover: true, focus: true, touch: true }}>
         <Badge
           color="gray"
           variant="light"
+          tabIndex={0}
+          aria-label={description}
           leftSection={<Dot color={colors.neutral} />}
           styles={{ root: { flex: 'none' }, label: { overflow: 'visible' } }}
         >
-          no traffic
+          {noTraffic ? 'no traffic' : 'no data'}
         </Badge>
       </Tooltip>
     )
@@ -49,9 +55,12 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
     <Tooltip
       label={`${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`}
       withArrow
+      events={{ hover: true, focus: true, touch: true }}
     >
       <Badge
         variant="light"
+        tabIndex={0}
+        aria-label={`${state.label}: ${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`}
         leftSection={<Dot color={state.color} />}
         styles={{
           root: {
@@ -74,6 +83,7 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
 function Dot({ color }: { color: string }) {
   return (
     <span
+      aria-hidden="true"
       style={{
         display: 'inline-block',
         width: 8,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   ActionIcon,
@@ -128,6 +128,11 @@ export default function ModelsPage() {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
 
   const [filter, setFilter] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  function clearFilter() {
+    setFilter('')
+    searchRef.current?.focus()
+  }
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'requests', dir: -1 })
   const [selected, setSelected] = useState<ModelStat | null>(null)
   const [historyRange, setHistoryRange] = useState('24h')
@@ -175,12 +180,7 @@ export default function ModelsPage() {
       <Stack gap="sm" className="models-page">
         <PageHeader
           title="Models"
-          subtitle={
-            // The result count is only interesting while a filter narrows the list.
-            filter.trim() && models.length > 0
-              ? `${rows.length} of ${models.length} match “${filter.trim()}” · tap a ${isMobile ? 'card' : 'row'} for percentiles`
-              : `${models.length} tracked · tap a ${isMobile ? 'card' : 'row'} for percentiles`
-          }
+          subtitle="Recorded model traffic, not the full provider catalog. Open a model for history and percentiles."
         />
 
         {models.length > 0 && (
@@ -193,9 +193,17 @@ export default function ModelsPage() {
         )}
 
         <Stack gap="xs">
+          {/* Live region announces result-count changes to screen readers as
+              the filter narrows the list. */}
+          <Text size="xs" c="dimmed" aria-live="polite">
+            {filter.trim()
+              ? `${rows.length} of ${models.length} match “${filter.trim()}”`
+              : `Showing all ${models.length} tracked models, sorted by ${sortOptions.find((o) => o.value === sort.key)?.label.toLowerCase()} (${sort.dir === 1 ? 'ascending' : 'descending'})`}
+          </Text>
           <TextInput
+            ref={searchRef}
             leftSection={<IconSearch size={14} />}
-            rightSection={filter ? <CloseSearchButton onClear={() => setFilter('')} /> : undefined}
+            rightSection={filter ? <CloseSearchButton onClear={clearFilter} /> : undefined}
             rightSectionWidth={44}
             styles={{ input: { minHeight: 44 } }}
             placeholder="Filter backend or model…"
@@ -256,21 +264,28 @@ export default function ModelsPage() {
             </Stack>
           </Alert>
         ) : rows.length === 0 ? (
-          <EmptyState
-            icon={
-              models.length === 0 ? (
-                <IconInboxOff size={20} stroke={1.6} />
-              ) : (
-                <IconSearchOff size={20} stroke={1.6} />
-              )
-            }
-            title={models.length === 0 ? 'No model traffic yet' : 'No models match that filter'}
-            hint={
-              models.length === 0
-                ? 'Send a request through the proxy and per-model stats will land here.'
-                : 'Try a shorter fragment of the backend or model name.'
-            }
-          />
+          <Stack gap={0} align="center">
+            <EmptyState
+              icon={
+                models.length === 0 ? (
+                  <IconInboxOff size={20} stroke={1.6} />
+                ) : (
+                  <IconSearchOff size={20} stroke={1.6} />
+                )
+              }
+              title={models.length === 0 ? 'No model traffic yet' : 'No models match that filter'}
+              hint={
+                models.length === 0
+                  ? 'Send a request through the proxy and per-model stats will land here.'
+                  : 'Try a shorter fragment of the backend or model name.'
+              }
+            />
+            {filter.trim() && models.length > 0 && (
+              <Button variant="light" mih={44} onClick={clearFilter}>
+                Clear filter
+              </Button>
+            )}
+          </Stack>
         ) : isMobile ? (
           <SimpleGrid cols={1} spacing="sm">
             {rows.map((m) => (
@@ -297,8 +312,13 @@ export default function ModelsPage() {
               >
                 <Table.Tr>
                   {columns.map((c) => (
-                    <Table.Th key={c.key} ta={c.numeric ? 'right' : undefined}>
-                      <UnstyledButton onClick={() => toggleSort(c.key)}>
+                    <Table.Th
+                      key={c.key}
+                      scope="col"
+                      ta={c.numeric ? 'right' : undefined}
+                      aria-sort={sort.key === c.key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}
+                    >
+                      <UnstyledButton mih={44} onClick={() => toggleSort(c.key)} aria-label={`Sort by ${c.label}`}>
                         <Group gap={4} wrap="nowrap" justify={c.numeric ? 'flex-end' : 'flex-start'}>
                           <Text size="xs" fw={600} c="dimmed">
                             {c.label}
@@ -320,12 +340,20 @@ export default function ModelsPage() {
                     <Table.Td>
                       {/* Backend as a muted eyebrow above the model name —
                             the model is what you scan for. */}
-                      <Box style={{ minWidth: 0 }}>
+                      <UnstyledButton
+                        mih={44}
+                        aria-label={`Open details for ${m.backend} ${m.model}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setSelected(m)
+                        }}
+                        style={{ minWidth: 0 }}
+                      >
                         <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>
                           {m.backend}
                         </Text>
-                        <Code>{m.model}</Code>
-                      </Box>
+                        <Code style={{ overflowWrap: 'anywhere' }}>{m.model}</Code>
+                      </UnstyledButton>
                     </Table.Td>
                     <Num td={fmtInt(m.requests)} />
                     <Table.Td>
@@ -355,18 +383,20 @@ export default function ModelsPage() {
         onClose={() => setSelected(null)}
         position="right"
         size={isMobile ? '100%' : 'lg'}
+        styles={{ title: { minWidth: 0, flex: 1 }, close: { flexShrink: 0 } }}
+        closeButtonProps={{ 'aria-label': 'Close model details' }}
         title={
           selected && (
             <Box style={{ minWidth: 0 }}>
               <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>
                 {selected.backend}
               </Text>
-              <Group gap="xs" wrap="nowrap">
-                <Text fw={700} truncate>
+              <Stack gap="xs">
+                <Text fw={700} style={{ overflowWrap: 'anywhere' }}>
                   {selected.model}
                 </Text>
                 <UptimeBadge uptime={selected.uptime} requests={selected.requests} />
-              </Group>
+              </Stack>
             </Box>
           )
         }
@@ -554,12 +584,15 @@ function ModelDetail({
 
   return (
     <Stack gap={18}>
-      <Group justify="space-between" align="center" wrap="nowrap" gap="sm">
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
         <Text size="xs" tt="uppercase" fw={700} c="dimmed" style={{ letterSpacing: '0.04em' }}>
-          Time range
+          History range
         </Text>
         <TimeRangeControl value={range} onChange={onRangeChange} />
       </Group>
+      <Text size="xs" c="dimmed">
+        The range applies to history charts only. Summary stats and percentile bars use all recorded traffic.
+      </Text>
       <Paper withBorder radius="lg" p="md">
         <SimpleGrid cols={{ base: 2, xs: 4 }} spacing="md">
           <DetailStat label="Requests" value={fmtInt(stat.requests)} hint={`${fmtPct(successRate)} succeeded`} />

@@ -1,5 +1,5 @@
 import { Group, Paper, Text, ThemeIcon } from '@mantine/core'
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 
 type Accent = 'brand' | 'teal' | 'orange' | 'grape' | 'gray' | 'red'
 
@@ -11,25 +11,29 @@ interface StatTileProps {
   accent?: Accent
 }
 
-// KPI stat tile, Apple style: quiet uppercase label, SF-weighted headline in
-// tabular figures, small tinted icon chip. No accent bar — hierarchy comes
-// from type, not decoration. The icon chip's tint is the only color.
+// Quiet label, prominent value, and a small tinted icon chip. Keep full labels
+// readable on narrow cards rather than hiding the metric's identity.
 export default function StatTile({ label, value, hint, icon, accent = 'brand' }: StatTileProps) {
+  const labelId = useId()
+  const hasValue = value !== null && value !== undefined && value !== '' && typeof value !== 'boolean'
+    && !(typeof value === 'number' && !Number.isFinite(value))
+
   return (
-    <Paper withBorder p="lg" radius="lg">
+    <Paper withBorder p="lg" radius="lg" role="group" aria-labelledby={labelId} h="100%" miw={0}>
       <Group justify="space-between" align="flex-start" wrap="nowrap" mb={12} gap="xs">
         <Text
+          id={labelId}
           size="xs"
           tt="uppercase"
           c="dimmed"
           fw={600}
-          style={{ letterSpacing: '0.05em' }}
-          lineClamp={1}
+          style={{ letterSpacing: '0.05em', overflowWrap: 'anywhere', minWidth: 0 }}
         >
           {label}
         </Text>
         {icon && (
           <ThemeIcon
+            aria-hidden="true"
             variant="light"
             color={accent}
             size="sm"
@@ -43,16 +47,13 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
       <Text
         fz={32}
         fw={700}
-        lh={1.05}
-        style={{
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.03em',
-        }}
+        lh={1.1}
+        style={{ letterSpacing: '-0.03em', overflowWrap: 'anywhere' }}
       >
-        {value}
+        {hasValue ? value : <span aria-label="No data">—</span>}
       </Text>
-      {hint && (
-        <Text size="xs" c="dimmed" mt={6} lh={1.35}>
+      {hint !== null && hint !== undefined && hint !== false && hint !== '' && (
+        <Text size="xs" c="dimmed" mt={6} lh={1.35} style={{ overflowWrap: 'anywhere' }}>
           {hint}
         </Text>
       )}

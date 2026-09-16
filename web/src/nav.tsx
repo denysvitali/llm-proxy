@@ -12,6 +12,11 @@ export interface NavItem {
   icon: ComponentType<{ size?: number | string; stroke?: number }>
 }
 
+// Match complete path segments, never lookalike prefixes such as /models-old.
+export function isActiveNavPath(pathname: string, path: string): boolean {
+  return pathname === path || (path !== '/' && pathname.startsWith(`${path}/`))
+}
+
 // Order defines both the desktop header order and the mobile bottom-bar order.
 export const NAV: NavItem[] = [
   { path: '/', label: 'Overview', icon: IconActivity },

@@ -11,13 +11,13 @@ export function EmptyState({
   hint?: string
 }) {
   return (
-    <Stack align="center" py="xl" gap={6}>
-      <ThemeIcon variant="light" color="gray" size="lg" radius="xl">
+    <Stack role="status" aria-atomic="true" align="center" py="xl" px="sm" gap={6} miw={0} style={{ overflowWrap: 'anywhere' }}>
+      <ThemeIcon variant="light" color="gray" size="lg" radius="xl" aria-hidden="true">
         {icon}
       </ThemeIcon>
-      <Text fw={600}>{title}</Text>
+      <Text fw={600} ta="center" maw="100%">{title}</Text>
       {hint && (
-        <Text size="sm" c="dimmed" ta="center" maw={340}>
+        <Text size="sm" c="dimmed" ta="center" w="100%" maw={340}>
           {hint}
         </Text>
       )}

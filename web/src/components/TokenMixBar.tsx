@@ -1,4 +1,4 @@
-import { Box, Text } from '@mantine/core'
+import { Box, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 
 export interface MixSegment {
   name: string
@@ -6,10 +6,19 @@ export interface MixSegment {
   value: number
 }
 
-// Stacked composition bar for token kinds within one row. Fixed categorical
-// slot colors per kind; 2px surface gaps between segments; per-segment
-// tooltip titles and a legend-with-values beside/below so no number is
-// encoded by color alone.
+function describeSegment(segment: MixSegment, total: number): string {
+  return `${segment.name}: ${segment.value.toLocaleString('en-US')} tokens (${((segment.value / total) * 100).toFixed(1)}%)`
+}
+
+// Invalid counts cannot describe a meaningful composition. Keep missing data
+// distinct from a valid, all-zero mix instead of drawing a misleading bar.
+function mixTotal(segments: MixSegment[]): number {
+  if (segments.some((s) => !Number.isFinite(s.value) || s.value < 0)) return NaN
+  return segments.reduce((sum, segment) => sum + segment.value, 0)
+}
+
+// Fixed categorical colors and 2px surface gaps. The full mix is available on
+// keyboard focus; each mark also has a hover tooltip. Pair with TokenLegend.
 export default function TokenMixBar({
   segments,
   height = 16,
@@ -17,47 +26,58 @@ export default function TokenMixBar({
   segments: MixSegment[]
   height?: number
 }) {
-  const total = segments.reduce((s, x) => s + x.value, 0)
-  if (total <= 0) {
+  const total = mixTotal(segments)
+  if (!Number.isFinite(total) || total <= 0) {
     return (
       <Text size="sm" c="dimmed">
-        no tokens yet
+        {Number.isFinite(total) ? 'no tokens yet' : 'token data unavailable'}
       </Text>
     )
   }
   const visible = segments.filter((s) => s.value > 0)
+  const description = `Token mix: ${visible.map((s) => describeSegment(s, total)).join('; ')}`
   return (
-    <Box
-      role="img"
-      aria-label={`Token mix: ${visible.map((s) => `${s.name} ${((s.value / total) * 100).toFixed(1)}%`).join(', ')}`}
-      style={{
-        display: 'flex',
-        gap: 2,
-        height,
-        borderRadius: 4,
-        overflow: 'hidden',
-      }}
+    <Tooltip
+      label={visible.map((s) => <div key={s.name}>{describeSegment(s, total)}</div>)}
+      events={{ hover: false, focus: true, touch: true }}
+      multiline
+      withArrow
     >
-      {visible.map((s) => (
-        <div
-          key={s.name}
-          title={`${s.name}: ${s.value.toLocaleString('en-US')} tok (${((s.value / total) * 100).toFixed(1)}%)`}
-          style={{
-            flexGrow: s.value,
-            flexBasis: 0,
-            background: s.color,
-            minWidth: 2,
-          }}
-        />
-      ))}
-    </Box>
+      <Box
+        role="img"
+        tabIndex={0}
+        aria-label={description}
+        style={{
+          display: 'flex',
+          gap: 2,
+          height: Number.isFinite(height) && height > 0 ? height : 16,
+          borderRadius: 4,
+          minWidth: 0,
+        }}
+      >
+        {visible.map((s, index) => (
+          <Tooltip key={s.name} label={describeSegment(s, total)} withArrow>
+            <div
+              style={{
+                flexGrow: s.value / total,
+                flexBasis: 0,
+                background: s.color,
+                minWidth: 0,
+                borderTopLeftRadius: index === 0 ? 4 : 0,
+                borderBottomLeftRadius: index === 0 ? 4 : 0,
+                borderTopRightRadius: index === visible.length - 1 ? 4 : 0,
+                borderBottomRightRadius: index === visible.length - 1 ? 4 : 0,
+              }}
+            />
+          </Tooltip>
+        ))}
+      </Box>
+    </Tooltip>
   )
 }
 
-// Legend under a TokenMixBar. Counts by default; `showPercent` appends each
-// kind's share of the mix (useful when raw counts are huge but the shape of
-// the mix is what matters). Percent is computed against the segment total so
-// it always sums to ~100% regardless of zero-value segments.
+// Counts by default; compact legends show shares while retaining exact counts
+// for assistive technology. Names and values remain readable without color.
 export function TokenLegend({
   segments,
   showPercent = false,
@@ -67,34 +87,35 @@ export function TokenLegend({
   showPercent?: boolean
   compact?: boolean
 }) {
-  const total = segments.reduce((s, x) => s + x.value, 0)
+  const total = mixTotal(segments)
+  if (!Number.isFinite(total) || total <= 0) return null
+
   return (
-    <Box style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 6 }}>
-      {segments
-        .filter((s) => s.value > 0)
-        .map((s) => (
-          <Box key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: 2,
-                background: s.color,
-                display: 'inline-block',
-              }}
-            />
-            {/* Text wears text tokens; the swatch carries identity only. */}
-            <Text size="xs" c="dimmed">
-              {s.name} {!compact && s.value.toLocaleString('en-US')}
-              {(showPercent || compact) && total > 0 && (
-                <Text span c="var(--mantine-color-dimmed)" opacity={0.75}>
-                  {' '}
-                  · {((s.value / total) * 100).toFixed(1)}%
-                </Text>
-              )}
-            </Text>
-          </Box>
-        ))}
+    <Box role="list" aria-label="Token breakdown" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 6 }}>
+      {segments.filter((s) => s.value > 0).map((s) => (
+        <Box key={s.name} role="listitem" style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 9,
+              height: 9,
+              flexShrink: 0,
+              borderRadius: 2,
+              background: s.color,
+              display: 'inline-block',
+            }}
+          />
+          <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' }}>
+            {s.name} {!compact && s.value.toLocaleString('en-US')}
+            {compact && <VisuallyHidden> {s.value.toLocaleString('en-US')} tokens</VisuallyHidden>}
+            {(showPercent || compact) && (
+              <Text span inherit>
+                {' '}· {((s.value / total) * 100).toFixed(1)}%
+              </Text>
+            )}
+          </Text>
+        </Box>
+      ))}
     </Box>
   )
 }

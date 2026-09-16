@@ -18,7 +18,7 @@ import { useQuery } from '@tanstack/react-query'
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { fetchOverview } from './api'
 import { useLiveStatsUpdates } from './useLiveUpdates'
-import { NAV } from './nav'
+import { NAV, isActiveNavPath } from './nav'
 import OverviewPage from './pages/Overview'
 import ModelsPage from './pages/Models'
 import ProvidersPage from './pages/Providers'
@@ -33,6 +33,13 @@ export default function App() {
       footer={isMobile ? { height: 'calc(64px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
       padding="md"
     >
+      <style>{`
+        .app-skip-link { position: fixed; top: 8px; left: 16px; z-index: 300; padding: 10px 16px; border-radius: 8px; background: var(--mantine-color-body); color: var(--mantine-color-text); transform: translateY(-150%); }
+        .app-skip-link:focus { transform: translateY(0); }
+      `}</style>
+      <a href="#main" className="app-skip-link">
+        Skip to content
+      </a>
       <AppShell.Header withBorder={false}>
         <Container size="xl" h="100%" px="md">
           <Group h="100%" justify="space-between" wrap="nowrap" gap="sm">
@@ -43,7 +50,7 @@ export default function App() {
         </Container>
       </AppShell.Header>
 
-      <AppShell.Main>
+      <AppShell.Main id="main" tabIndex={-1}>
         <Container size="xl" pb={40} px={isMobile ? 0 : 'md'}>
           <Routes>
             <Route path="/" element={<OverviewPage />} />
@@ -69,10 +76,22 @@ function HeaderBrand() {
   const { data: ov } = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
   const connected = useLiveStatsUpdates()
   return (
-    <NavLink to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
-      <Group gap={8} wrap="nowrap">
-        {/* App-icon style mark: SF-rounded square with the λ, like an iOS
-            home-screen icon at small size. */}
+    <Group gap={8} wrap="nowrap">
+      {/* App-icon style mark: SF-rounded square with the λ, like an iOS
+          home-screen icon at small size. */}
+      <UnstyledButton
+        component={NavLink}
+        to="/"
+        aria-label="llm-proxy — go to Overview"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexShrink: 0,
+          borderRadius: 10,
+          padding: 2,
+        }}
+      >
         <Box
           style={{
             width: 28,
@@ -115,11 +134,16 @@ function HeaderBrand() {
         >
           llm-proxy
         </Title>
-        {ov?.version && (
-          <Badge variant="light" color="gray" size="sm" visibleFrom="xs">
-            v{ov.version}
-          </Badge>
-        )}
+      </UnstyledButton>
+      {ov?.version && (
+        <Badge variant="light" color="gray" size="sm" visibleFrom="xs">
+          v{ov.version}
+        </Badge>
+      )}
+      {/*
+        Reserve the badge slot so nav and toggle do not shift sideways when
+        the connection state flips. */}
+      <Box visibleFrom="xs" w={54} style={{ display: 'flex', justifyContent: 'center' }}>
         <Tooltip label={connected ? 'Real-time updates connected' : 'Reconnecting to real-time updates'}>
           <Badge
             variant="light"
@@ -127,6 +151,7 @@ function HeaderBrand() {
             size="sm"
             leftSection={
               <span
+                aria-hidden="true"
                 style={{
                   width: 6,
                   height: 6,
@@ -137,13 +162,13 @@ function HeaderBrand() {
               />
             }
             styles={{ root: { cursor: 'default' }, label: { overflow: 'visible' } }}
-            aria-label="Live update status"
+            aria-live="polite"
           >
             {connected ? 'Live' : 'Offline'}
           </Badge>
         </Tooltip>
-      </Group>
-    </NavLink>
+      </Box>
+    </Group>
   )
 }
 
@@ -160,7 +185,7 @@ function DesktopNav() {
       }}
     >
       {NAV.map((item) => {
-        const active = item.path === '/' ? pathname === '/' : pathname.startsWith(item.path)
+        const active = isActiveNavPath(pathname, item.path)
         const Icon = item.icon
         return (
           <UnstyledButton
@@ -197,7 +222,7 @@ function BottomNav() {
   return (
     <Group component="nav" aria-label="Main navigation" h={64} gap={0} px={8} grow wrap="nowrap">
       {NAV.map((item) => {
-        const active = item.path === '/' ? pathname === '/' : pathname.startsWith(item.path)
+        const active = isActiveNavPath(pathname, item.path)
         const Icon = item.icon
         return (
           <UnstyledButton

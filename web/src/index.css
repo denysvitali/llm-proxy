@@ -161,6 +161,10 @@ a,
   border-left: 0.5px solid rgba(255, 255, 255, 0.1);
 }
 
+[data-mantine-color-scheme='dark'] .mantine-Drawer-header {
+  background-color: var(--mantine-color-dark-8);
+}
+
 .mantine-Drawer-header {
   padding-block: 12px;
   min-height: 64px;
@@ -222,13 +226,37 @@ a,
   border-radius: 0 0 var(--mantine-radius-lg) var(--mantine-radius-lg);
 }
 
+/* Inline identifiers may wrap; executable snippets keep their whitespace and
+   horizontal scrolling instead of being reformatted at narrow widths. */
+.mantine-Code-root:not([data-block]) {
+  overflow-wrap: anywhere;
+}
+
 /* Page titles sit above KPI rows; keep a hair of breathing room. */
 .page-header {
   padding-top: 4px;
 }
 
+.page-header > * {
+  min-width: 0;
+}
+
+@media (pointer: coarse) {
+  .mantine-Drawer-close {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .models-page .page-header {
   margin-bottom: 0;
+}
+
+/* Extend Mantine's keyboard ring to plain links and focusable data marks.
+   Keep input/segmented-control proxy focus styling under Mantine's control. */
+:where(a[href], button, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 2px;
 }
 
 .models-page button:focus-visible,
@@ -246,5 +274,25 @@ a,
 @media (hover: hover) {
   .activity-row:hover {
     background-color: var(--mantine-color-default-hover);
+  }
+}
+
+/* Custom inline transitions are outside Mantine's reduced-motion handling.
+   Keep loading indicators functional; suppress decorative interpolation only. */
+@media (prefers-reduced-motion: reduce) {
+  .mantine-AppShell-root,
+  .mantine-AppShell-root *,
+  .mantine-AppShell-root *::before,
+  .mantine-AppShell-root *::after,
+  .mantine-Tooltip-tooltip {
+    transition: none !important;
+  }
+
+  .mantine-Card-root[style*='cursor: pointer']:is(:hover, :active) {
+    transform: none;
+  }
+
+  .snippet-block {
+    scroll-behavior: auto;
   }
 }

@@ -16,50 +16,68 @@ import type { GrokUsage } from '../api'
 export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsage, Error> }) {
   const usage = query.data
   const error = query.error
-  const percent = usage?.hasPercent ? Math.max(0, Math.min(100, usage.percentUsed)) : null
-  const color = usageTone(percent)
+  const percent = usagePercent(usage)
   const moneyTiles = moneyAmounts(usage)
-  const hasMoney = moneyTiles.length > 0
   const extra = extraUsage(usage)
+  const updated = usage ? new Date(usage.fetchedAt) : null
+  const hasUpdated = updated !== null && !Number.isNaN(updated.getTime())
 
   return (
-    <Card withBorder radius="lg" p="md">
-      <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm" mb={usage?.hasPercent ? 10 : 0}>
-        <div>
+    <Card withBorder radius="lg" p="md" style={{ minWidth: 0 }}>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" mb="sm">
+        <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
           <Title order={5}>Grok subscription</Title>
           <Text size="xs" c="dimmed">
             {usage?.subscriptionTier || 'xAI coding subscription'}
             {usage?.email ? ` · ${usage.email}` : ''}
           </Text>
         </div>
-        {query.isFetching ? <Loader size="xs" /> : null}
+        {query.isFetching && !query.isPending ? <Loader size="xs" aria-label="Refreshing Grok usage" style={{ flexShrink: 0 }} /> : null}
       </Group>
 
-      {query.isPending ? (
-        <Group justify="center" py="md"><Loader size="sm" /></Group>
-      ) : error ? (
-        <Alert color="red" variant="light" title="Usage unavailable">
+      {error && (
+        <Alert color="red" variant="light" title={usage ? 'Could not refresh usage' : 'Usage unavailable'} mb={usage ? 'sm' : 0}>
           {sanitizeGrokError(error.message)}
+          {usage && <Text size="sm" mt={4}>Showing the last available data.</Text>}
         </Alert>
-      ) : !usage?.hasPercent ? (
-        <Text c="dimmed">No billing data is available for this account.</Text>
-      ) : (
+      )}
+      {query.isPending ? (
+        <Group justify="center" py="md" role="status">
+          <Loader size="sm" aria-hidden="true" />
+          <Text size="sm" c="dimmed">Loading subscription usage…</Text>
+        </Group>
+      ) : usage ? (
         <>
-          <Group justify="space-between" align="baseline" mb={6}>
-            <Text fz={28} fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {usage.percentUsed.toFixed(1)}%
+          {percent !== null ? (
+            <>
+              <Group justify="space-between" align="baseline" gap="xs" mb={8}>
+                <div>
+                  <Text fz={{ base: 24, sm: 28 }} fw={700} lh={1.2}>
+                    {percent.toFixed(1)}% <Text span size="sm" fw={500}>used</Text>
+                  </Text>
+                  <Text size="xs" c="dimmed" mt={2}>{usedThisPeriodLabel(usage.periodType)}</Text>
+                </div>
+                <Text size="sm" c="dimmed">
+                  {percent > 100 ? `${(percent - 100).toFixed(1)}% over limit` : `${(100 - percent).toFixed(1)}% remaining`}
+                </Text>
+              </Group>
+              <UsageMeter percent={percent} />
+            </>
+          ) : (
+            <Text size="sm" c="dimmed">
+              Usage percentage is unavailable. This does not mean the quota is unused.
             </Text>
-            <Text size="sm" c="dimmed">{usedThisPeriodLabel(usage.periodType)}</Text>
-          </Group>
-          <Progress value={percent ?? 0} color={color} size="lg" radius="sm" aria-label="Grok subscription used" />
-          <Group justify="space-between" mt={6}>
+          )}
+          <Group justify="space-between" gap="xs" mt={8} style={{ overflowWrap: 'anywhere' }}>
             <Text size="xs" c="dimmed">{formatPeriod(usage.periodStart, usage.periodEnd, usage.periodType)}</Text>
-            <Text size="xs" c="dimmed">Updated {new Date(usage.fetchedAt).toLocaleTimeString('en-US', { hour12: false })}</Text>
+            <Text size="xs" c="dimmed">
+              {hasUpdated ? <>Updated <time dateTime={updated.toISOString()} title={updated.toLocaleString()}>{updated.toLocaleTimeString('en-US', { hour12: false })}</time></> : 'Update time unavailable'}
+            </Text>
           </Group>
-          {hasMoney && (
+          {moneyTiles.length > 0 && (
             <>
               <Divider my="md" />
-              <SimpleGrid cols={{ base: 2, sm: moneyTiles.length }} spacing="md">
+              <SimpleGrid cols={{ base: 2, lg: moneyTiles.length }} spacing="sm" verticalSpacing="sm">
                 {moneyTiles.map((tile) => (
                   <UsageMoney key={tile.label} label={tile.label} cents={tile.cents} />
                 ))}
@@ -67,34 +85,35 @@ export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsa
             </>
           )}
           {extra && (
-            <Group gap={6} mt="sm">
-              <IconCoin size={15} stroke={1.8} />
-              <Text size="xs" c="dimmed">
-                Extra usage {formatMoney(usage.onDemandUsedCents)}
-                {usage.onDemandCapCents != null ? ` of ${formatMoney(usage.onDemandCapCents)}` : ''}
+            <Group gap={6} mt="sm" wrap="nowrap" align="flex-start">
+              <IconCoin size={15} stroke={1.8} aria-hidden="true" style={{ flexShrink: 0 }} />
+              <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
+                Extra usage {formatMoney(usage.onDemandUsedCents)} used
+                {usage.onDemandCapCents != null ? ` · ${formatMoney(usage.onDemandCapCents)} limit` : ''}
               </Text>
             </Group>
           )}
         </>
-      )}
+      ) : !error ? (
+        <Text size="sm" c="dimmed">No billing data is available for this account.</Text>
+      ) : null}
     </Card>
   )
 }
 
 export function GrokUsageCompact({ usage }: { usage: GrokUsage }) {
-  if (!usage.hasPercent) return null
-  const percent = Math.max(0, Math.min(100, usage.percentUsed))
+  const percent = usagePercent(usage)
   return (
-    <div>
-      <Group justify="space-between" mb={4}>
+    <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+      <Group justify="space-between" gap="xs" mb={6}>
         <Text size="xs" c="dimmed">
           {usage.subscriptionTier || 'Grok'} · {periodTypeLabel(usage.periodType) || 'quota'}
         </Text>
-        <Text size="xs" fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {usage.percentUsed.toFixed(1)}%
+        <Text size="xs" fw={700}>
+          {percent === null ? 'Usage unavailable' : `${percent.toFixed(1)}% used`}
         </Text>
       </Group>
-      <Progress value={percent} color={usageTone(percent)} size="sm" radius="sm" aria-label="Grok subscription used" />
+      {percent !== null && <UsageMeter percent={percent} compact />}
       <Text size="xs" c="dimmed" mt={4}>
         {formatPeriod(usage.periodStart, usage.periodEnd, usage.periodType)}
       </Text>
@@ -102,11 +121,38 @@ export function GrokUsageCompact({ usage }: { usage: GrokUsage }) {
   )
 }
 
+function usagePercent(usage?: GrokUsage) {
+  return usage?.hasPercent && Number.isFinite(usage.percentUsed) && usage.percentUsed >= 0
+    ? usage.percentUsed
+    : null
+}
+
+function UsageMeter({ percent, compact = false }: { percent: number; compact?: boolean }) {
+  const color = usageTone(percent)
+  const description = `${percent.toFixed(1)}% used${percent > 100 ? ', over subscription limit' : `, ${(100 - percent).toFixed(1)}% remaining`}`
+  return (
+    <Progress.Root
+      size={compact ? 'sm' : 'md'}
+      radius="sm"
+      role="meter"
+      aria-label="Grok subscription quota used"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.min(100, percent)}
+      aria-valuetext={description}
+      title={description}
+      bg={`var(--mantine-color-${color}-light)`}
+    >
+      <Progress.Section value={Math.min(100, percent)} color={color} withAria={false} />
+    </Progress.Root>
+  )
+}
+
 function UsageMoney({ label, cents }: { label: string; cents?: number }) {
   return (
-    <div>
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{label}</Text>
-      <Text fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(cents)}</Text>
+    <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+      <Text size="xs" c="dimmed" fw={500}>{label}</Text>
+      <Text fw={700} size="sm" mt={2}>{formatMoney(cents)}</Text>
     </div>
   )
 }
@@ -118,14 +164,12 @@ function moneyAmounts(usage?: GrokUsage) {
     { label: 'Used', cents: usage.usedCents },
     { label: 'Remaining', cents: usage.remainingCents },
     { label: 'Prepaid', cents: usage.prepaidCents },
-  ].filter((tile) => tile.cents != null && Number.isFinite(tile.cents) && tile.cents !== 0)
+  ].filter((tile) => tile.cents != null && Number.isFinite(tile.cents))
 }
 
 function extraUsage(usage?: GrokUsage) {
   if (!usage) return false
-  const used = usage.onDemandUsedCents
-  const cap = usage.onDemandCapCents
-  return (used != null && used !== 0) || (cap != null && cap > 0)
+  return [usage.onDemandUsedCents, usage.onDemandCapCents].some((value) => value != null && Number.isFinite(value))
 }
 
 export function usageTone(percent: number | null) {
@@ -137,7 +181,7 @@ export function usageTone(percent: number | null) {
 
 function formatMoney(cents?: number) {
   if (cents == null || !Number.isFinite(cents)) return '—'
-  return (Math.abs(cents) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+  return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
 export function periodTypeLabel(periodType?: string) {
@@ -148,9 +192,9 @@ export function periodTypeLabel(periodType?: string) {
 
 function usedThisPeriodLabel(periodType?: string) {
   const label = periodTypeLabel(periodType).toLowerCase()
-  if (label === 'weekly') return 'used this week'
-  if (label === 'monthly') return 'used this month'
-  return 'used this period'
+  if (label === 'weekly') return 'Used this week'
+  if (label === 'monthly') return 'Used this month'
+  return 'Used this period'
 }
 
 export function formatPeriod(start?: string, end?: string, periodType?: string) {

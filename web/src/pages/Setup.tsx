@@ -1,22 +1,26 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   Alert,
+  Anchor,
   Badge,
+  Box,
   Button,
   Card,
   Code,
-  CopyButton,
   Group,
   Loader,
   Stack,
+  Switch,
   Tabs,
   Text,
 } from '@mantine/core'
+import { useClipboard } from '@mantine/hooks'
 import { IconCheck, IconCopy, IconInfoCircle, IconTerminal2 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchOverview } from '../api'
 import { Fade } from '../App'
 import { PageHeader } from '../components/PageHeader'
+import { PageSection } from '../components/PageSection'
 
 export default function SetupPage() {
   const q = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
@@ -24,97 +28,125 @@ export default function SetupPage() {
 
   return (
     <Fade pending={q.isPending}>
-      {!ov ? (
-        <Group justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
-      ) : (
-        <Stack gap="lg" maw={820}>
-          <PageHeader title="Setup" subtitle="Point a coding agent at this proxy" />
+      <Stack gap="md" maw={820} miw={0}>
+        <PageHeader title="Setup" subtitle="Connect your coding agent in two steps. Already have the CLI installed? Start here." />
 
-          <Card withBorder radius="lg" p={0}>
-            <StatusRow label="Listen">
-              <Code>{ov.listen}</Code>
-            </StatusRow>
-            <StatusRow label="Auth" last={ov.exampleModel === '<model>'}>
-              <Badge
-                color={ov.authEnabled ? 'teal' : 'gray'}
-                variant="light"
-                size="sm"
-                tt="none"
-              >
-                {ov.authEnabled ? 'enabled (llx_… keys)' : 'disabled'}
-              </Badge>
-            </StatusRow>
-            {ov.exampleModel !== '<model>' && (
-              <StatusRow label="Example model" last>
-                <Code>{ov.exampleModel}</Code>
-              </StatusRow>
-            )}
-          </Card>
+        {q.isError && (
+          <Alert
+            color="gray"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            title={ov ? 'Setup details could not be refreshed' : 'Setup details unavailable'}
+          >
+            <Stack gap="sm">
+              <Text size="sm">
+                {ov
+                  ? 'Showing the last loaded configuration. Refresh before using these snippets if the proxy configuration has changed.'
+                  : 'The proxy configuration could not be loaded. Check your connection and try again.'}
+              </Text>
+              <Button variant="default" size="sm" loading={q.isFetching} onClick={() => void q.refetch()} style={{ alignSelf: 'flex-start' }}>
+                Try again
+              </Button>
+            </Stack>
+          </Alert>
+        )}
 
-          <Stack gap="sm">
-            {ov.backends.some((b) => b.name === 'grok') && (
-              <Alert color="violet" variant="light" title="Grok uses your xAI account">
-                Grok does not use an upstream API key.{' '}
-                <a href="/login">Sign in with xAI</a> to use your coding subscription.
-              </Alert>
-            )}
+        {!ov && q.isPending && (
+          <Group justify="center" py="xl" role="status">
+            <Loader size="sm" aria-hidden="true" />
+            <Text size="sm" c="dimmed">
+              {q.fetchStatus === 'paused' ? 'Waiting for a connection to load setup…' : 'Loading setup details…'}
+            </Text>
+          </Group>
+        )}
 
-            {ov.backends.some((b) => b.name === 'workbuddy') && (
-              <Alert color="blue" variant="light" title="WorkBuddy uses your account">
-                WorkBuddy does not use an upstream API key.{' '}
-                <a href="/login/workbuddy">Sign in with WorkBuddy</a> to connect your subscription.
-              </Alert>
-            )}
+        {ov && (
+          <>
+            <PageSection title="1. Check your connection" description="Review the proxy configuration and any account sign-ins before launching your agent.">
+              <Stack gap="sm" miw={0}>
+                <Card withBorder radius="lg" p={0} miw={0}>
+                  <StatusRow label="Listen address">
+                    <Code style={{ overflowWrap: 'anywhere' }}>{ov.listen}</Code>
+                  </StatusRow>
+                  <StatusRow label="Proxy authentication" last={ov.exampleModel === '<model>'}>
+                    <Badge color={ov.authEnabled ? 'teal' : 'gray'} variant="light" size="sm" tt="none">
+                      {ov.authEnabled ? 'enabled (llx_… keys)' : 'disabled'}
+                    </Badge>
+                  </StatusRow>
+                  {ov.exampleModel !== '<model>' && (
+                    <StatusRow label="Example model" last>
+                      <Code style={{ overflowWrap: 'anywhere' }}>{ov.exampleModel}</Code>
+                    </StatusRow>
+                  )}
+                </Card>
 
-            {ov.backends.some((b) => b.name === 'codex') && (
-              <Alert color="gray" variant="light" title="Codex uses your ChatGPT account">
-                Codex does not use an upstream API key.{' '}
-                <a href="/login/codex">Sign in with ChatGPT</a> using a one-time device code.
-              </Alert>
-            )}
+                {ov.backends.some((b) => b.name === 'grok') && (
+                  <Alert color="violet" variant="light" title="Grok uses your xAI account">
+                    Grok does not use an upstream API key.{' '}
+                    <Anchor href="/login">Sign in with xAI</Anchor> to use your coding subscription.
+                  </Alert>
+                )}
 
-            {ov.backends.some((b) => b.name === 'zcode') && (
-              <Alert color="violet" variant="light" title="ZCode uses your account">
-                ZCode does not use an upstream API key.{' '}
-                <a href="/login/zcode">Sign in with ZCode</a> to connect your Start Plan.
-              </Alert>
-            )}
-          </Stack>
+                {ov.backends.some((b) => b.name === 'workbuddy') && (
+                  <Alert color="blue" variant="light" title="WorkBuddy uses your account">
+                    WorkBuddy does not use an upstream API key.{' '}
+                    <Anchor href="/login/workbuddy">Sign in with WorkBuddy</Anchor> to connect your subscription.
+                  </Alert>
+                )}
 
-          {ov.authEnabled && (
-            <Alert
-              color="blue"
-              variant="light"
-              icon={<IconInfoCircle size={16} />}
-              title="Authentication is enabled"
-            >
-              Replace the placeholder token in each snippet with one of your proxy
-              API keys.
-            </Alert>
-          )}
+                {ov.backends.some((b) => b.name === 'codex') && (
+                  <Alert color="gray" variant="light" title="Codex uses your ChatGPT account">
+                    Codex does not use an upstream API key.{' '}
+                    <Anchor href="/login/codex">Sign in with ChatGPT</Anchor> using a one-time device code.
+                  </Alert>
+                )}
 
-          <Card withBorder radius="lg" p={0}>
-            <Tabs defaultValue="claude" keepMounted={false}>
-              <Tabs.List px="md" pt="sm" pb={4}>
-                <Tabs.Tab value="claude" leftSection={<IconTerminal2 size={14} />}>
-                  Claude Code
-                </Tabs.Tab>
-                <Tabs.Tab value="codex" leftSection={<IconTerminal2 size={14} />}>
-                  Codex CLI
-                </Tabs.Tab>
-              </Tabs.List>
-              <Tabs.Panel value="claude">
-                <Snippet title="Claude Code" snippet={ov.claudeSnippet} />
-              </Tabs.Panel>
-              <Tabs.Panel value="codex">
-                <Snippet title="Codex CLI" snippet={ov.codexSnippet} />
-              </Tabs.Panel>
-            </Tabs>
-          </Card>
-        </Stack>
-      )}
+                {ov.backends.some((b) => b.name === 'zcode') && (
+                  <Alert color="violet" variant="light" title="ZCode uses your account">
+                    ZCode does not use an upstream API key.{' '}
+                    <Anchor href="/login/zcode">Sign in with ZCode</Anchor> to connect your Start Plan.
+                  </Alert>
+                )}
+              </Stack>
+            </PageSection>
+
+            <PageSection title="2. Configure your agent" description="Choose your CLI, copy its snippet, and review the placeholders before using it.">
+              <Stack gap="sm" miw={0}>
+                <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />} title={ov.authEnabled ? 'Use a proxy API key' : 'Proxy authentication is disabled'}>
+                  {ov.authEnabled
+                    ? 'For Claude Code, replace <key> with your proxy API key. For Codex CLI, set LLM_PROXY_API_KEY in your terminal environment before launching. Use a proxy key, not an upstream provider key.'
+                    : 'No proxy key is required. For Claude Code, replace <key> with a non-empty placeholder such as unused. For Codex CLI, set LLM_PROXY_API_KEY to a non-empty placeholder so the client can start.'}
+                </Alert>
+
+                {ov.exampleModel === '<model>' && (
+                  <Alert color="gray" variant="light" icon={<IconInfoCircle size={16} />} title="Choose a model before launching">
+                    No example model is available. Replace <Code>{'<model>'}</Code> in the snippet with a configured model or route. Check the <Anchor href="/models">model catalog</Anchor> or your proxy configuration.
+                  </Alert>
+                )}
+
+                <Card withBorder radius="lg" p={0} miw={0}>
+                  <Tabs defaultValue="claude" keepMounted={false}>
+                    <Tabs.List px="md" pt="sm" pb={4} aria-label="Coding agent">
+                      <Tabs.Tab value="claude" leftSection={<IconTerminal2 size={14} />}>
+                        Claude Code
+                      </Tabs.Tab>
+                      <Tabs.Tab value="codex" leftSection={<IconTerminal2 size={14} />}>
+                        Codex CLI
+                      </Tabs.Tab>
+                    </Tabs.List>
+                    <Tabs.Panel value="claude">
+                      <Snippet title="Claude Code" description="Run this command in your terminal after replacing the placeholders." snippet={ov.claudeSnippet} />
+                    </Tabs.Panel>
+                    <Tabs.Panel value="codex">
+                      <Snippet title="Codex CLI" description="Merge this provider section into ~/.codex/config.toml without replacing your other settings. Then run the launch command shown in the comment." snippet={ov.codexSnippet} />
+                    </Tabs.Panel>
+                  </Tabs>
+                </Card>
+              </Stack>
+            </PageSection>
+          </>
+        )}
+      </Stack>
     </Fade>
   )
 }
@@ -131,47 +163,59 @@ function StatusRow({
   return (
     <Group
       justify="space-between"
-      wrap="nowrap"
-      gap="md"
+      wrap="wrap"
+      gap="xs"
       px="md"
       py="sm"
+      miw={0}
       style={
         last
           ? undefined
           : { borderBottom: '0.5px solid var(--mantine-color-default-border)' }
       }
     >
-      <Text size="sm">{label}</Text>
-      {children}
+      <Text size="sm" c="dimmed">{label}</Text>
+      <Box miw={0} maw="100%" style={{ overflowWrap: 'anywhere' }}>{children}</Box>
     </Group>
   )
 }
 
-function Snippet({ title, snippet }: { title: string; snippet: string }) {
+function Snippet({ title, description, snippet }: { title: string; description: string; snippet: string }) {
+  const clipboard = useClipboard({ timeout: 2000 })
+  const [wrapLines, setWrapLines] = useState(false)
+
   return (
-    <div>
-      <Group justify="space-between" px="md" py="xs">
-        <Text fz={11} tt="uppercase" fw={600} c="dimmed" style={{ letterSpacing: '0.06em' }}>
-          Install
-        </Text>
-        <CopyButton value={snippet}>
-          {({ copied, copy }) => (
-            <Button
-              size="compact-xs"
-              variant={copied ? 'light' : 'default'}
-              color={copied ? 'teal' : undefined}
-              leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
-              onClick={copy}
-              aria-label={`Copy ${title} snippet`}
-            >
-              {copied ? 'Copied' : 'Copy'}
-            </Button>
-          )}
-        </CopyButton>
-      </Group>
-      <pre className="snippet-block">
+    <Box miw={0}>
+      <Stack gap="sm" p="md">
+        <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{description}</Text>
+        <Group justify="space-between" gap="sm">
+          <Switch size="sm" label="Wrap lines" checked={wrapLines} onChange={(event) => setWrapLines(event.currentTarget.checked)} />
+          <Button
+            size="sm"
+            variant={clipboard.copied ? 'light' : 'default'}
+            color={clipboard.copied ? 'teal' : undefined}
+            leftSection={clipboard.copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
+            onClick={() => clipboard.copy(snippet)}
+            aria-label={`Copy ${title} snippet`}
+          >
+            <span aria-live="polite">{clipboard.copied ? 'Copied' : 'Copy snippet'}</span>
+          </Button>
+        </Group>
+        {clipboard.error && (
+          <Text size="sm" role="alert">
+            Clipboard access is unavailable. Select the snippet below and copy it manually.
+          </Text>
+        )}
+      </Stack>
+      <pre
+        className="snippet-block"
+        tabIndex={0}
+        role="region"
+        aria-label={`${title} setup snippet`}
+        style={{ maxWidth: '100%', whiteSpace: wrapLines ? 'pre-wrap' : 'pre', overflowWrap: wrapLines ? 'anywhere' : 'normal' }}
+      >
         <code>{snippet}</code>
       </pre>
-    </div>
+    </Box>
   )
 }

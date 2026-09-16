@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   Box,
   Alert,
@@ -17,6 +17,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
 } from '@mantine/core'
 import {
   IconActivity,
@@ -26,6 +27,8 @@ import {
   IconShieldCheck,
   IconTool,
   IconServerOff,
+  IconRefresh,
+  IconInboxOff,
 } from '@tabler/icons-react'
 import { BarChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
@@ -44,6 +47,7 @@ import StatusChips from '../components/StatusChips'
 import UptimeBadge from '../components/UptimeBadge'
 import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
 import { HistoryLineChart, historyData, historyFormatters } from '../components/HistoryCharts'
+import { EmptyState } from '../components/EmptyState'
 import { Fade } from '../App'
 
 export default function OverviewPage() {
@@ -81,6 +85,7 @@ export default function OverviewPage() {
   const requestsQ = useQuery({ queryKey: ['recent-requests'], queryFn: fetchRequests, refetchInterval: 30_000 })
 
   const models = statsQ.data?.models ?? []
+  const statsError = statsQ.error instanceof Error ? statsQ.error.message : undefined
   const pal = useChartPalette()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
 
@@ -91,8 +96,7 @@ export default function OverviewPage() {
   const toolErrors = models.reduce((s, m) => s + m.tool_errors, 0)
   const toolCalls = models.reduce((s, m) => s + m.tool_calls, 0)
 
-  // Requests-weighted median throughput across models: the honest aggregate
-  // of per-model p50s we can compute without the raw histogram buckets.
+  // Median of active per-model p50s, not a request-weighted fleet percentile.
   const busy = models.filter((m) => m.throughput_tps.p50 > 0)
   let medianTps = 0
   if (busy.length > 0) {
@@ -124,7 +128,17 @@ export default function OverviewPage() {
           subtitle={ov ? `${ov.name} v${ov.version} · ${ov.listen} · auth ${ov.authEnabled ? 'on' : 'off'}` : undefined}
         />
 
-        <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md">
+        {ovQ.isError && (
+          <ErrorRetryCard
+            title="Instance details unavailable"
+            message="Configuration and subscription visibility could not be refreshed. Traffic statistics are loaded separately."
+            onRetry={() => ovQ.refetch({ cancelRefetch: false })}
+            retrying={ovQ.isFetching}
+          />
+        )}
+
+        <Text size="xs" c="dimmed">Traffic summary · all recorded statistics · independent of the chart time range</Text>
+        {statsQ.data ? <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md">
           <StatTile
             label="Requests"
             value={fmtInt(totalRequests)}
@@ -133,8 +147,8 @@ export default function OverviewPage() {
             accent="brand"
           />
           <StatTile
-            label="Uptime"
-            value={fmtPct(totalRequests ? totalSuccess / totalRequests : 0)}
+            label="Success rate"
+            value={totalRequests ? `${(100 * totalSuccess / totalRequests).toFixed(1)}%` : '—'}
             hint="succeeded / total"
             icon={<IconShieldCheck size={16} />}
             accent="teal"
@@ -162,18 +176,33 @@ export default function OverviewPage() {
           />
           <StatTile
             label="Tool error rate"
-            value={fmtPct(clampRate(toolCalls ? toolErrors / toolCalls : 0))}
+            value={toolCalls ? `${(100 * clampRate(toolErrors / toolCalls)).toFixed(1)}%` : '—'}
             hint={`${fmtInt(toolErrors)} errored · ${fmtInt(toolCalls)} calls`}
             icon={<IconAlertTriangle size={16} />}
             accent={toolErrors > 0 ? 'red' : 'gray'}
           />
-        </SimpleGrid>
+        </SimpleGrid> : statsQ.isPending ? (
+          <Group justify="center" py="xl" role="status"><Loader size="sm" /><Text size="sm" c="dimmed">Loading traffic statistics…</Text></Group>
+        ) : null}
 
-        {models.length === 0 && !statsQ.isPending && (
-          <Text c="dimmed" size="sm">
-            No model traffic recorded yet — send a request through the proxy and it will show up here.
-          </Text>
-        )}
+        {statsQ.isError ? (
+          <ErrorRetryCard
+            title="Couldn't load proxy statistics"
+            message={
+              statsError
+                ? `Model statistics are temporarily unavailable. ${statsError}`
+                : 'Model statistics are temporarily unavailable.'
+            }
+            onRetry={() => statsQ.refetch({ cancelRefetch: false })}
+            retrying={statsQ.isFetching}
+          />
+        ) : models.length === 0 && !statsQ.isPending ? (
+          <EmptyState
+            icon={<IconInboxOff size={20} stroke={1.6} />}
+            title="No model traffic yet"
+            hint="Send a request through the proxy and per-model stats will land here."
+          />
+        ) : null}
 
         {(grokUsageEnabled || zcodeUsageEnabled) && (
           bothUsage ? (
@@ -193,7 +222,9 @@ export default function OverviewPage() {
             <div>
               <Title order={5}>Performance over time</Title>
               <Text size="xs" c="dimmed">
-                {seriesQ.isError ? 'History unavailable' : `${requestCount.toLocaleString('en-US')} requests in range`}
+                {seriesQ.isError
+                  ? 'History unavailable'
+                  : `${requestCount.toLocaleString('en-US')} requests in range`}
               </Text>
             </div>
             <TimeRangeControl value={range} onChange={setRange} />
@@ -202,9 +233,12 @@ export default function OverviewPage() {
           {seriesQ.isPending ? (
             <Group justify="center" py="xl"><Loader size="sm" /></Group>
           ) : seriesQ.isError ? (
-            <Text c="dimmed" py="xl" ta="center">
-              Time history requires <Code>stats.persist_file</Code> to be configured.
-            </Text>
+            <ErrorRetryCard
+              title="Couldn't load time history"
+              message={<>History is unavailable. Check connectivity and whether <Code>stats.persist_file</Code> or Redis history is configured.</>}
+              onRetry={() => seriesQ.refetch({ cancelRefetch: false })}
+              retrying={seriesQ.isFetching}
+            />
           ) : (
             <SimpleGrid cols={{ base: 1, lg: 3 }} spacing="lg">
               <HistoryLineChart
@@ -337,13 +371,70 @@ export default function OverviewPage() {
           </ScrollArea>
         </Card>
 
-        <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} isMobile={isMobile} />
-
-        {errorsQ.data && errorsQ.data.errors.length > 0 && (
-          <UpstreamErrorsCard errors={errorsQ.data.errors} />
-        )}
+        <Stack gap="sm">
+          <div>
+            <Title order={4}>Recent activity</Title>
+            <Text size="xs" c="dimmed">Instance-local upstream attempts · refreshed every 30 seconds · not filtered by chart range</Text>
+          </div>
+          {requestsQ.isError && (
+            <ErrorRetryCard title="Couldn't refresh recent requests"
+              message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
+              onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />
+          )}
+          {(requestsQ.data || requestsQ.isPending) && (
+            <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} isMobile={isMobile} />
+          )}
+          {errorsQ.isError && (
+            <ErrorRetryCard title="Couldn't refresh upstream errors"
+              message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
+              onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />
+          )}
+          {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors} /> : errorsQ.isPending ? (
+            <Group justify="center" py="md" role="status"><Loader size="sm" /><Text size="sm" c="dimmed">Loading upstream errors…</Text></Group>
+          ) : null}
+        </Stack>
       </Stack>
     </Fade>
+  )
+}
+
+function ErrorRetryCard({ title, message, onRetry, retrying }: {
+  title: string
+  message: ReactNode
+  onRetry: () => unknown
+  retrying: boolean
+}) {
+  return (
+    <Alert color="red" variant="light" title={title} icon={<IconAlertTriangle size={16} />}>
+      <Stack gap="sm" align="flex-start">
+        <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{message}</Text>
+        <Button size="xs" variant="light" color="red" loading={retrying} disabled={retrying}
+          leftSection={<IconRefresh size={14} />} onClick={() => { if (!retrying) void onRetry() }}>
+          Retry loading
+        </Button>
+      </Stack>
+    </Alert>
+  )
+}
+
+// Compact timestamp: same-day events show clock time, older ones get a short
+// date + time; the tooltip always carries the full locale timestamp so the
+// exact moment is never hidden by the compact form.
+function EventTime({ at }: { at: string }) {
+  const parsed = new Date(at)
+  if (Number.isNaN(parsed.getTime())) {
+    return <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>{at}</Text>
+  }
+  const sameDay = new Date().toDateString() === parsed.toDateString()
+  const primary = sameDay
+    ? parsed.toLocaleTimeString('en-US', { hour12: false })
+    : parsed.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+  return (
+    <Tooltip label={parsed.toLocaleString('en-US')}>
+      <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums', cursor: 'default' }}>
+        {primary}
+      </Text>
+    </Tooltip>
   )
 }
 
@@ -433,24 +524,26 @@ function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
           {errors.length === 1 ? '1 failure' : `${fmtInt(errors.length)} failures · newest first`}
         </Text>
       </Group>
-      <Stack gap={6}>
+      {errors.length === 0 ? (
+        <EmptyState icon={<IconShieldCheck size={20} />} title="No recent upstream errors"
+          hint="No failures are present in this instance's retained error history. This is separate from the chart time range." />
+      ) : <Stack gap={6}>
         {shown.map((e, i) => (
           <Paper key={`${e.at}-${i}`} withBorder radius="md" p="xs" bg="var(--mantine-color-default-hover)">
             <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
               <Box style={{ minWidth: 0 }}>
                 <Group gap={6} wrap="nowrap">
                   <StatusBadge status={e.status} />
-                  <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {formatEventTime(e.at)}
-                  </Text>
+                  <EventTime at={e.at} />
                 </Group>
-                <Text size="sm" fw={500} mt={4} truncate>
+                <Text size="sm" fw={500} mt={4} style={{ overflowWrap: 'anywhere' }}>
                   {e.backend} / {e.model}
                 </Text>
                 {e.message && (
-                  <Text size="xs" c="dimmed" lineClamp={2} mt={2}>
-                    {e.message}
-                  </Text>
+                  <Box component="details" mt={4} style={{ overflowWrap: 'anywhere' }}>
+                    <Text component="summary" size="xs" c="dimmed" style={{ cursor: 'pointer' }}>View error message</Text>
+                    <Text size="xs" mt={6} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{e.message}</Text>
+                  </Box>
                 )}
                 {e.request_id && <RequestInspectButton id={e.request_id} />}
               </Box>
@@ -458,9 +551,9 @@ function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
           </Paper>
         ))}
         {errors.length > shown.length && (
-          <Text size="xs" c="dimmed">…and {fmtInt(errors.length - shown.length)} older</Text>
+          <Text size="xs" c="dimmed">Showing the newest {shown.length} of {fmtInt(errors.length)} retained errors.</Text>
         )}
-      </Stack>
+      </Stack>}
     </Card>
   )
 }
@@ -555,7 +648,7 @@ function RequestInspectButton({ id }: { id: string }) {
 function RequestDetail({ request }: { request: InspectedRequest }) {
   return <Stack gap="sm">
     <Group gap="xs"><StatusBadge status={request.status} /><Text size="sm">{request.backend} / {request.model}</Text></Group>
-    <Text size="xs" c="dimmed">Proxy request ID: {request.proxy_request_id || 'unavailable'} · wire format: {request.kind || 'unknown'}</Text>
+    <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>Proxy request ID: {request.proxy_request_id || 'unavailable'} · wire format: {request.kind || 'unknown'}</Text>
     {request.error && <Alert color="red" variant="light">{request.error}</Alert>}
     <Alert color="blue" variant="light">
       Request payloads are not retained by the proxy, so prompts, tool inputs, and credentials cannot appear in dashboard history.

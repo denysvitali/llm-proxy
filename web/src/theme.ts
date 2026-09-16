@@ -45,6 +45,8 @@ export const theme = createTheme({
   primaryColor: 'brand',
   primaryShade: { light: 6, dark: 8 },
   autoContrast: true,
+  // Mantine transitions (including portalled drawers) follow the OS preference.
+  respectReducedMotion: true,
   colors: { brand, dark },
   defaultRadius: 'lg',
   cursorType: 'pointer',

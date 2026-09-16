@@ -1,4 +1,12 @@
-import { SegmentedControl } from '@mantine/core'
+import { rem, SegmentedControl, VisuallyHidden } from '@mantine/core'
+import { useReducedMotion } from '@mantine/hooks'
+
+const ranges = [
+  { value: '1h', description: 'Last 1 hour' },
+  { value: '6h', description: 'Last 6 hours' },
+  { value: '24h', description: 'Last 24 hours' },
+  { value: '7d', description: 'Last 7 days' },
+]
 
 export function TimeRangeControl({
   value,
@@ -9,6 +17,8 @@ export function TimeRangeControl({
   onChange: (v: string) => void
   disabled?: boolean
 }) {
+  const reduceMotion = useReducedMotion()
+
   return (
     <SegmentedControl
       size="xs"
@@ -17,12 +27,27 @@ export function TimeRangeControl({
       value={value}
       onChange={onChange}
       disabled={disabled}
-      data={[
-        { value: '1h', label: '1h' },
-        { value: '6h', label: '6h' },
-        { value: '24h', label: '24h' },
-        { value: '7d', label: '7d' },
-      ]}
+      transitionDuration={reduceMotion ? 0 : undefined}
+      styles={{
+        root: { maxWidth: '100%', flexShrink: 0 },
+        label: {
+          minHeight: rem(44),
+          minWidth: rem(44),
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: `0 ${rem(8)}`,
+        },
+      }}
+      data={ranges.map(({ value, description }) => ({
+        value,
+        label: (
+          <>
+            <span aria-hidden="true">{value}</span>
+            <VisuallyHidden>{description}</VisuallyHidden>
+          </>
+        ),
+      }))}
     />
   )
 }
