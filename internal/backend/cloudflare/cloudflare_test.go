@@ -42,7 +42,7 @@ func TestRegistrationAndCatalog(t *testing.T) {
 		t.Fatal("registry accepted missing base_url")
 	}
 	for _, kind := range []backend.Kind{backend.KindOpenAIChat, backend.KindAnthropic, backend.KindOpenAIResponses, "unknown"} {
-		if c.Supports(kind) != (kind == backend.KindOpenAIChat) {
+		if c.Supports(kind) != (kind != "unknown") {
 			t.Errorf("Supports(%q) = %v", kind, c.Supports(kind))
 		}
 	}
@@ -58,62 +58,74 @@ func TestRegistrationAndCatalog(t *testing.T) {
 }
 
 func TestSend(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		streaming bool
-		status    int
-		body      string
+	for _, wire := range []struct {
+		kind    backend.Kind
+		path    string
+		version string
 	}{
-		{"json", false, 200, `{"choices":[{"message":{"content":"Paris"}}]}`},
-		{"sse", true, 200, "data: {\"choices\":[{\"delta\":{\"content\":\"Paris\"}}]}\n\ndata: [DONE]\n\n"},
-		{"unauthorized", false, 401, `{"error":{"message":"invalid token"}}`},
-		{"rate_limit", false, 429, `{"error":{"message":"quota"}}`},
-		{"server_error", false, 503, `{"error":{"message":"unavailable"}}`},
+		{backend.KindOpenAIChat, "/chat/completions", ""},
+		{backend.KindAnthropic, "/messages", "2023-06-01"},
+		{backend.KindOpenAIResponses, "/responses", ""},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := `{"model":"stealth/union-alpha", "messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":16,"stream":false}`
-			accept := "application/json"
-			if tc.streaming {
-				accept = "text/event-stream"
-				body = `{"model":"stealth/union-alpha", "messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":16,"stream":true}`
-			}
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/client/v4/accounts/test/ai/v1/chat/completions" {
-					t.Errorf("request = %s %s", r.Method, r.URL.Path)
-				}
-				for key, want := range map[string]string{"Authorization": "Bearer upstream-key", "Content-Type": "application/json", "Accept": accept, "X-Api-Key": "", "Cookie": "", "X-Client-Secret": ""} {
-					if got := r.Header.Get(key); got != want {
-						t.Errorf("header %s = %q, want %q", key, got, want)
+		t.Run(string(wire.kind), func(t *testing.T) {
+			for _, tc := range []struct {
+				name      string
+				streaming bool
+				status    int
+				body      string
+			}{
+				{"json", false, 200, `{"choices":[{"message":{"content":"Paris"}}]}`},
+				{"sse", true, 200, "data: {\"choices\":[{\"delta\":{\"content\":\"Paris\"}}]}\n\ndata: [DONE]\n\n"},
+				{"unauthorized", false, 401, `{"error":{"message":"invalid token"}}`},
+				{"rate_limit", false, 429, `{"error":{"message":"quota"}}`},
+				{"server_error", false, 503, `{"error":{"message":"unavailable"}}`},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					body := `{"model":"stealth/union-alpha", "messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":16,"stream":false}`
+					accept := "application/json"
+					if tc.streaming {
+						accept = "text/event-stream"
+						body = `{"model":"stealth/union-alpha", "messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":16,"stream":true}`
 					}
-				}
-				got, err := io.ReadAll(r.Body)
-				if err != nil || string(got) != body {
-					t.Errorf("body = %s, err = %v", got, err)
-				}
-				w.Header().Set("Content-Type", accept)
-				w.Header().Set("Retry-After", "12")
-				w.WriteHeader(tc.status)
-				_, _ = io.WriteString(w, tc.body)
-			}))
-			defer upstream.Close()
-			c, err := cloudflare.New(upstream.URL+"/client/v4/accounts/test/ai/v1/", "upstream-key")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer c.HTTP.CloseIdleConnections()
-			headers := http.Header{"Authorization": {"Bearer client-key"}, "X-Api-Key": {"client-key"}, "Cookie": {"session=private"}, "X-Client-Secret": {"private"}}
-			original := headers.Clone()
-			resp, err := c.Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat, Model: "stealth/union-alpha", RawBody: []byte(body), Header: headers, Streaming: tc.streaming})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = resp.Body.Close() }()
-			got, err := io.ReadAll(resp.Body)
-			if err != nil || string(got) != tc.body || resp.Status != tc.status || resp.Header.Get("Content-Type") != accept || resp.Header.Get("Retry-After") != "12" {
-				t.Fatalf("response = %+v, body = %s, err = %v", resp, got, err)
-			}
-			if !reflect.DeepEqual(headers, original) {
-				t.Fatal("client headers mutated")
+					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.Method != http.MethodPost || r.URL.Path != "/client/v4/accounts/test/ai/v1"+wire.path {
+							t.Errorf("request = %s %s", r.Method, r.URL.Path)
+						}
+						for key, want := range map[string]string{"Authorization": "Bearer upstream-key", "Content-Type": "application/json", "Accept": accept, "Anthropic-Version": wire.version, "X-Api-Key": "", "Cookie": "", "X-Client-Secret": ""} {
+							if got := r.Header.Get(key); got != want {
+								t.Errorf("header %s = %q, want %q", key, got, want)
+							}
+						}
+						got, err := io.ReadAll(r.Body)
+						if err != nil || string(got) != body {
+							t.Errorf("body = %s, err = %v", got, err)
+						}
+						w.Header().Set("Content-Type", accept)
+						w.Header().Set("Retry-After", "12")
+						w.WriteHeader(tc.status)
+						_, _ = io.WriteString(w, tc.body)
+					}))
+					defer upstream.Close()
+					c, err := cloudflare.New(upstream.URL+"/client/v4/accounts/test/ai/v1/", "upstream-key")
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer c.HTTP.CloseIdleConnections()
+					headers := http.Header{"Authorization": {"Bearer client-key"}, "X-Api-Key": {"client-key"}, "Cookie": {"session=private"}, "X-Client-Secret": {"private"}}
+					original := headers.Clone()
+					resp, err := c.Send(context.Background(), &backend.Request{Kind: wire.kind, Model: "stealth/union-alpha", RawBody: []byte(body), Header: headers, Streaming: tc.streaming})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() { _ = resp.Body.Close() }()
+					got, err := io.ReadAll(resp.Body)
+					if err != nil || string(got) != tc.body || resp.Status != tc.status || resp.Header.Get("Content-Type") != accept || resp.Header.Get("Retry-After") != "12" {
+						t.Fatalf("response = %+v, body = %s, err = %v", resp, got, err)
+					}
+					if !reflect.DeepEqual(headers, original) {
+						t.Fatal("client headers mutated")
+					}
+				})
 			}
 		})
 	}
@@ -133,7 +145,7 @@ func TestSendInvalidAndCanceled(t *testing.T) {
 		t.Fatalf("missing key: %v", err)
 	}
 	c.Key = "key"
-	for _, kind := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIResponses, "unknown"} {
+	for _, kind := range []backend.Kind{"", "unknown"} {
 		if _, err := c.Send(context.Background(), &backend.Request{Kind: kind}); !backend.IsTerminal(err) {
 			t.Fatalf("unsupported kind %q: %v", kind, err)
 		}

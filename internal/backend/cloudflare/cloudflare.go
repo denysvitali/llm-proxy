@@ -1,5 +1,5 @@
-// Package cloudflare implements Cloudflare's account-scoped OpenAI-compatible
-// Chat Completions endpoint.
+// Package cloudflare implements Cloudflare's account-scoped native Messages,
+// Chat Completions, and Responses endpoints.
 package cloudflare
 
 import (
@@ -49,7 +49,21 @@ func init() {
 func (c *Client) Name() string { return "cloudflare" }
 
 func (c *Client) Supports(kind backend.Kind) bool {
-	return kind == backend.KindOpenAIChat
+	_, ok := endpoint(kind)
+	return ok
+}
+
+func endpoint(kind backend.Kind) (string, bool) {
+	switch kind {
+	case backend.KindAnthropic:
+		return "/messages", true
+	case backend.KindOpenAIChat:
+		return "/chat/completions", true
+	case backend.KindOpenAIResponses:
+		return "/responses", true
+	default:
+		return "", false
+	}
 }
 
 // Models returns the known inference model without assuming a discovery API.
@@ -64,15 +78,19 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if c.Key == "" {
 		return nil, backend.Terminal(fmt.Errorf("cloudflare backend has no API key configured"))
 	}
-	if !c.Supports(req.Kind) {
+	path, ok := endpoint(req.Kind)
+	if !ok {
 		return nil, backend.Terminal(fmt.Errorf("cloudflare backend does not support kind %q", req.Kind))
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(req.RawBody))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(req.RawBody))
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	httpReq.Header.Set("Content-Type", "application/json")
+	if req.Kind == backend.KindAnthropic {
+		httpReq.Header.Set("Anthropic-Version", "2023-06-01")
+	}
 	httpReq.Header.Set("Accept", "application/json")
 	if req.Streaming {
 		httpReq.Header.Set("Accept", "text/event-stream")

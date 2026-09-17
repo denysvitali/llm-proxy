@@ -30,7 +30,7 @@ not upstream API keys.
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
-| `cloudflare` | [Cloudflare inference](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) | Chat Completions (OpenAI-compatible) | Account-scoped endpoint; static `stealth/union-alpha` catalog. Anthropic and Responses requests are translated server-side. |
+| `cloudflare` | [Cloudflare inference](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) | Chat Completions, Messages, Responses (all native) | Account-scoped endpoint; static `stealth/union-alpha` catalog. Provider-specific fields pass through unchanged. |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
 
@@ -246,9 +246,11 @@ backends:
     default_model: stealth/union-alpha
 ```
 
-The backend sends bearer-authenticated requests to `<base_url>/chat/completions`.
-Chat JSON and SSE bodies pass through unchanged; other client APIs use the
-proxy's normal translation paths. Select `cloudflare/stealth/union-alpha` in
+The backend routes each client API to Cloudflare's native endpoint:
+`<base_url>/chat/completions`, `<base_url>/messages` (with the
+`Anthropic-Version: 2023-06-01` header), and `<base_url>/responses`. Request
+JSON and SSE bodies — including provider-specific fields — pass through
+unchanged; only the model is rewritten. Select `cloudflare/stealth/union-alpha` in
 clients. The catalog is a static list containing `stealth/union-alpha`, not a
 live discovery endpoint or a guarantee of account access. To use another model
 your account can reach, configure an explicit route with a non-qualified alias
