@@ -250,7 +250,12 @@ The backend routes each client API to Cloudflare's native endpoint:
 `<base_url>/chat/completions`, `<base_url>/messages` (with the
 `Anthropic-Version: 2023-06-01` header), and `<base_url>/responses`. Request
 JSON and SSE bodies — including provider-specific fields — pass through
-unchanged; only the model is rewritten. Select `cloudflare/stealth/union-alpha` in
+unchanged; only the model is rewritten. One Messages-specific exception:
+Anthropic lets custom tools omit `type` (it defaults to `"custom"`), but
+Cloudflare's gateway requires the discriminator, so tools on `/messages`
+requests that lack a `type` key get `"type": "custom"` added; explicit types
+are never touched, and Chat/Responses payloads are forwarded as-is. Select
+`cloudflare/stealth/union-alpha` in
 clients. The catalog is a static list containing `stealth/union-alpha`, not a
 live discovery endpoint or a guarantee of account access. To use another model
 your account can reach, configure an explicit route with a non-qualified alias

@@ -5,6 +5,7 @@ package cloudflare
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -74,6 +75,46 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	return []string{"stealth/union-alpha"}, nil
 }
 
+// defaultMessagesToolTypes fills only absent tool discriminators. Raw messages
+// preserve unknown fields and numeric precision; invalid shapes remain upstream's
+// responsibility, and bodies needing no defaults are returned byte-for-byte.
+func defaultMessagesToolTypes(body []byte) ([]byte, error) {
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(body, &request); err != nil {
+		return body, nil
+	}
+	var tools []json.RawMessage
+	if err := json.Unmarshal(request["tools"], &tools); err != nil {
+		return body, nil
+	}
+	changed := false
+	for i, raw := range tools {
+		var tool map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &tool); err != nil || tool == nil {
+			continue
+		}
+		if _, exists := tool["type"]; exists {
+			continue
+		}
+		tool["type"] = json.RawMessage(`"custom"`)
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			return nil, err
+		}
+		tools[i] = encoded
+		changed = true
+	}
+	if !changed {
+		return body, nil
+	}
+	encoded, err := json.Marshal(tools)
+	if err != nil {
+		return nil, err
+	}
+	request["tools"] = encoded
+	return json.Marshal(request)
+}
+
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
 	if c.Key == "" {
 		return nil, backend.Terminal(fmt.Errorf("cloudflare backend has no API key configured"))
@@ -82,7 +123,15 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if !ok {
 		return nil, backend.Terminal(fmt.Errorf("cloudflare backend does not support kind %q", req.Kind))
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(req.RawBody))
+	body := req.RawBody
+	if req.Kind == backend.KindAnthropic {
+		var err error
+		body, err = defaultMessagesToolTypes(body)
+		if err != nil {
+			return nil, backend.Terminal(fmt.Errorf("normalize Cloudflare Messages tools: %w", err))
+		}
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
