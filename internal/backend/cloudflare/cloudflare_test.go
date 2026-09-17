@@ -2,7 +2,6 @@ package cloudflare_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -43,7 +42,7 @@ func TestRegistrationAndCatalog(t *testing.T) {
 		t.Fatal("registry accepted missing base_url")
 	}
 	for _, kind := range []backend.Kind{backend.KindOpenAIChat, backend.KindAnthropic, backend.KindOpenAIResponses, "unknown"} {
-		if c.Supports(kind) != (kind != "unknown") {
+		if c.Supports(kind) != (kind == backend.KindOpenAIChat || kind == backend.KindOpenAIResponses) {
 			t.Errorf("Supports(%q) = %v", kind, c.Supports(kind))
 		}
 	}
@@ -65,7 +64,6 @@ func TestSend(t *testing.T) {
 		version string
 	}{
 		{backend.KindOpenAIChat, "/chat/completions", ""},
-		{backend.KindAnthropic, "/messages", "2023-06-01"},
 		{backend.KindOpenAIResponses, "/responses", ""},
 	} {
 		t.Run(string(wire.kind), func(t *testing.T) {
@@ -132,79 +130,6 @@ func TestSend(t *testing.T) {
 	}
 }
 
-func TestSendMessagesNormalizesToolType(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		body string
-		want string
-	}{
-		{
-			name: "missing_type_becomes_custom",
-			body: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`,
-			want: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"get_weather","input_schema":{"type":"object"},"type":"custom"}]}`,
-		},
-		{
-			name: "explicit_function_untouched",
-			body: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","name":"lookup","input_schema":{"type":"object"}}]}`,
-			want: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","name":"lookup","input_schema":{"type":"object"}}]}`,
-		},
-		{
-			name: "explicit_custom_untouched",
-			body: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"grep","input_schema":{"type":"object"}}]}`,
-			want: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"grep","input_schema":{"type":"object"}}]}`,
-		},
-		{
-			name: "nested_tool_arrays_untouched",
-			body: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"outer","input_schema":{"type":"object"},"input_examples":[[{"name":"inner","input_schema":{}}]]}]}`,
-			want: `{"model":"stealth/union-alpha","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"outer","input_schema":{"type":"object"},"input_examples":[[{"name":"inner","input_schema":{}}]]}]}`,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var seen []byte
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/client/v4/accounts/test/ai/v1/messages" {
-					t.Errorf("request = %s %s", r.Method, r.URL.Path)
-				}
-				got, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Errorf("read body: %v", err)
-				}
-				seen = got
-				w.WriteHeader(http.StatusOK)
-				_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"stealth/union-alpha","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
-			}))
-			defer upstream.Close()
-			c, err := cloudflare.New(upstream.URL+"/client/v4/accounts/test/ai/v1/", "upstream-key")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer c.HTTP.CloseIdleConnections()
-			resp, err := c.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic, Model: "stealth/union-alpha", RawBody: []byte(tc.body)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if err != nil || resp.Status != http.StatusOK {
-				t.Fatalf("response = %d, body = %s, err = %v", resp.Status, got, err)
-			}
-			var actual, want any
-			if err := json.Unmarshal(seen, &actual); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(actual, want) {
-				t.Errorf("forwarded body = %s, want %s", seen, tc.want)
-			}
-			if tc.body == tc.want && string(seen) != tc.body {
-				t.Errorf("unchanged payload was reserialized: %s", seen)
-			}
-		})
-	}
-}
-
 func TestSendLeavesNonMessagesToolsUntouched(t *testing.T) {
 	for _, kind := range []backend.Kind{backend.KindOpenAIChat, backend.KindOpenAIResponses} {
 		t.Run(string(kind), func(t *testing.T) {
@@ -255,7 +180,7 @@ func TestSendInvalidAndCanceled(t *testing.T) {
 		t.Fatalf("missing key: %v", err)
 	}
 	c.Key = "key"
-	for _, kind := range []backend.Kind{"", "unknown"} {
+	for _, kind := range []backend.Kind{backend.KindAnthropic, "", "unknown"} {
 		if _, err := c.Send(context.Background(), &backend.Request{Kind: kind}); !backend.IsTerminal(err) {
 			t.Fatalf("unsupported kind %q: %v", kind, err)
 		}

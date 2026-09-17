@@ -30,7 +30,7 @@ not upstream API keys.
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
-| `cloudflare` | [Cloudflare inference](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) | Chat Completions, Messages, Responses (all native) | Account-scoped endpoint; static `stealth/union-alpha` catalog. Provider-specific fields pass through unchanged. |
+| `cloudflare` | [Cloudflare inference](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) | Chat Completions, Responses native; Messages translated via Chat | Account-scoped endpoint; static `stealth/union-alpha` catalog. Native wire provider-specific fields pass through unchanged. |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
 | `venice`    | [Venice AI](https://venice.ai/)   | Chat Completions (OpenAI-compatible)     | Anthropic and Responses requests are translated server-side. |
 
@@ -246,18 +246,19 @@ backends:
     default_model: stealth/union-alpha
 ```
 
-The backend routes each client API to Cloudflare's native endpoint:
-`<base_url>/chat/completions`, `<base_url>/messages` (with the
-`Anthropic-Version: 2023-06-01` header), and `<base_url>/responses`. Request
-JSON and SSE bodies — including provider-specific fields — pass through
-unchanged; only the model is rewritten. One Messages-specific exception:
-Anthropic lets custom tools omit `type` (it defaults to `"custom"`), but
-Cloudflare's gateway requires the discriminator, so tools on `/messages`
-requests that lack a `type` key get `"type": "custom"` added; explicit types
-are never touched, and Chat/Responses payloads are forwarded as-is. Select
-`cloudflare/stealth/union-alpha` in
-clients. The catalog is a static list containing `stealth/union-alpha`, not a
-live discovery endpoint or a guarantee of account access. To use another model
+Chat Completions and Responses use Cloudflare's native
+`<base_url>/chat/completions` and `<base_url>/responses` endpoints. Their
+request JSON (apart from the model rewrite) and response/SSE bodies, including
+provider-specific fields, pass through unchanged.
+
+Anthropic Messages clients use the proxy's existing Chat Completions translation:
+requests, tool definitions, tool calls/results, responses, and SSE events are
+converted between the two formats. The current `stealth/union-alpha` route emits
+Chat wire data even on Cloudflare's `/messages` endpoint, so the backend does not
+use that endpoint. Anthropic-specific and provider-specific fields are subject to
+the translation layer's supported mappings, not arbitrary passthrough. Select
+`cloudflare/stealth/union-alpha` in clients. The catalog is a static list containing
+`stealth/union-alpha`, not a live discovery endpoint or a guarantee of account access. To use another model
 your account can reach, configure an explicit route with a non-qualified alias
 and the upstream model ID; unlisted qualified IDs are subject to the normal
 catalog safeguard.
