@@ -35,11 +35,11 @@ const (
 	// zcodeAppVersion and the identity headers below match the current ZCode
 	// desktop client. They are fixed so an arbitrary inbound client cannot
 	// create an inconsistent identity that triggers the gateway's abuse checks.
-	// The version tracks the released build: @zcode/desktop 3.11.2 (2026-09-11)
-	// carries the same model-request fingerprint as 3.10.2 — gin/fin/RRi in
-	// resources/glm/zcode.cjs were only renamed (csn/usn/x4i) — so only the
-	// advertised version needed to move.
-	zcodeAppVersion = "3.11.2"
+	// The version tracks the released build: @zcode/desktop 3.12.3 (2026-09-16).
+	// Static analysis of resources/glm/zcode.cjs confirms the model-request
+	// header, attribution, metadata, and Anthropic transport shapes are
+	// unchanged from 3.11.2; the advertised version is the wire-level change.
+	zcodeAppVersion = "3.12.3"
 	zcodeLanguage   = "en-US"
 
 	// zcodeOSVersion is the kernel release advertised to the plan gateway.
@@ -97,10 +97,9 @@ type captchaRefresher interface {
 	RefreshCaptchaVerifyParam(context.Context, string) (string, error)
 }
 
-// defaultModels is the model included in the currently published Start Plan
-// entitlement. Explicit route entries can address another model if ZCode
-// enables it for the account.
-var defaultModels = []string{"glm-5.3-flash"}
+// defaultModels are the models enabled for the Start Plan by the current
+// builtin provider catalog.
+var defaultModels = []string{"glm-5.3-flash", "glm-5.2", "glm-5-turbo"}
 
 // Client sends requests to the ZCode plan gateway using either a configured
 // JWT or, preferably, a TokenSource populated by the browser sign-in flow.

@@ -754,7 +754,7 @@ func TestModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Models() error = %v", err)
 	}
-	want := []string{"glm-5.3-flash"}
+	want := []string{"glm-5.3-flash", "glm-5.2", "glm-5-turbo"}
 	if !reflect.DeepEqual(models, want) {
 		t.Errorf("Models() = %#v, want %#v", models, want)
 	}

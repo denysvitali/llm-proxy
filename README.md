@@ -199,7 +199,12 @@ their own account and session identifiers) is rewritten to the official ZCode
 device identity, so client identifiers never reach the plan gateway.
 Client-supplied session correlation values are one-way derived into opaque
 proxy UUIDs before they are used in the ZCode headers or metadata, preserving
-affinity without forwarding the client's identifier.
+affinity without forwarding the client's identifier. The inbound client system
+prompt is also replaced with a ZCode system envelope, including the runtime's
+ZCode-only tool and workflow names, so Claude Code's harness fingerprint is not
+included in the upstream request. The actual tool definitions and conversation
+messages remain intact; unavailable ZCode-only names are prompt context rather
+than callable tools.
 
 ZCode's risk control can also block the whole session with code 3012
 ("request has been blocked due to unusual activity"). That block targets the
@@ -216,9 +221,9 @@ The backend forwards requests to
 `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`. Chat
 Completions and Responses requests are translated to Anthropic Messages
 before forwarding because ZCode's legacy `/chat/completions` plan route is no
-longer accepted. The current Start Plan catalog entry is `glm-5.3-flash`. To
-use another model that ZCode enables for the account, add an explicit route
-for it.
+longer accepted. The current Start Plan catalog entries are `glm-5.3-flash`,
+`glm-5.2`, and `glm-5-turbo`. Use a qualified model such as
+`zcode/glm-5.2`, or add an explicit route for a shorter client-facing name.
 
 The proxy exposes read-only account quota data after sign-in:
 `GET /api/zcode/usage` reports current plan entitlements, while
