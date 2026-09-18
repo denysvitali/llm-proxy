@@ -15,11 +15,11 @@ func TestTransformStartPlanRequestAddsGatewayIdentityAndCacheControl(t *testing.
 		t.Fatalf("decode transformed request: %v", err)
 	}
 	system, ok := body["system"].([]any)
-	if !ok || len(system) != 5 {
-		t.Fatalf("system blocks = %#v, want 5 blocks", body["system"])
+	if !ok || len(system) != 3 {
+		t.Fatalf("system blocks = %#v, want 3 blocks", body["system"])
 	}
 	encodedSystem, _ := json.Marshal(system)
-	for _, want := range []string{"You are ZCode", "# ZCode Desktop Context", "::code-comment", "ReadSessionContext", "AskUserQuestion", "ExitPlanMode", "CronCreate", "OffPeakCreate", "powered by the model named account:zai-start-plan/GLM-5.3-Flash"} {
+	for _, want := range []string{"You are ZCode", "# Communicating with the user", "# Context management", "powered by the model named account:zai-start-plan/GLM-5.3-Flash"} {
 		if !strings.Contains(string(encodedSystem), want) {
 			t.Errorf("system blocks do not contain %q", want)
 		}
@@ -27,16 +27,21 @@ func TestTransformStartPlanRequestAddsGatewayIdentityAndCacheControl(t *testing.
 	if strings.Contains(string(encodedSystem), "client system") {
 		t.Errorf("system blocks leak the inbound client prompt: %s", encodedSystem)
 	}
-	desktopBlock := system[2].(map[string]any)
-	if desktopText, _ := desktopBlock["text"].(string); desktopText != zcodeDesktopContext {
-		t.Errorf("desktop context block = %q, want verbatim official text", desktopText)
-	}
-	envBlock := system[4].(map[string]any)
-	if envText, _ := envBlock["text"].(string); !strings.HasSuffix(envText, "- You are powered by the model named account:zai-start-plan/GLM-5.3-Flash.") {
-		t.Errorf("model line must be the last line of the Environment block, got %q", envText)
+	contextBlock := system[2].(map[string]any)
+	if contextText, _ := contextBlock["text"].(string); !strings.Contains(contextText, "- You are powered by the model named account:zai-start-plan/GLM-5.3-Flash.\n\n# Context management") {
+		t.Errorf("model line must occur at the end of the embedded Environment section, got %q", contextText)
 	}
 	if got := body["model"]; got != "GLM-5.3-Flash" {
 		t.Errorf("model = %v, want canonical GLM-5.3-Flash", got)
+	}
+	if got := body["max_tokens"]; got != float64(128000) {
+		t.Errorf("max_tokens = %v, want captured value 128000", got)
+	}
+	if thinking, _ := body["thinking"].(map[string]any); thinking["type"] != "enabled" {
+		t.Errorf("thinking = %#v, want enabled", body["thinking"])
+	}
+	if output, _ := body["output_config"].(map[string]any); output["effort"] != "max" {
+		t.Errorf("output_config = %#v, want max effort", body["output_config"])
 	}
 	messages := body["messages"].([]any)
 	message := messages[0].(map[string]any)
@@ -60,8 +65,8 @@ func TestTransformStartPlanRequestReplacesArraySystemPrompt(t *testing.T) {
 		t.Fatalf("decode transformed request: %v", err)
 	}
 	system, ok := body["system"].([]any)
-	if !ok || len(system) != 5 {
-		t.Fatalf("system blocks = %#v, want the 5-block ZCode envelope", body["system"])
+	if !ok || len(system) != 3 {
+		t.Fatalf("system blocks = %#v, want the captured 3-block ZCode envelope", body["system"])
 	}
 }
 
