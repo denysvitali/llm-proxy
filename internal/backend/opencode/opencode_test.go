@@ -217,6 +217,7 @@ func TestSendSpoofsOpenCodeIdentityHeaders(t *testing.T) {
 		"x-opencode-client":  openCodeClient,
 		"x-opencode-project": openCodeProject,
 		"x-opencode-session": "caller-session",
+		"X-Session-Id":       "caller-session",
 	}
 	for header, want := range checks {
 		if got := rec.Header.Get(header); got != want {

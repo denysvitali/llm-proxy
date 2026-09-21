@@ -155,6 +155,10 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 	httpReq.Header.Set("x-opencode-client", openCodeClient)
 	httpReq.Header.Set("x-opencode-project", openCodeProject)
 	httpReq.Header.Set("x-opencode-session", session)
+	// Zen's anonymous/free relay checks the generic session alias as well as
+	// the OpenCode attribution header. The official client uses this alias for
+	// non-OpenCode providers, and Zen accepts it for free-tier access.
+	httpReq.Header.Set("X-Session-Id", session)
 	httpReq.Header.Set("x-opencode-request", "req-"+requestID)
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
