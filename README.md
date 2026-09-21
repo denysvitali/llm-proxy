@@ -285,15 +285,18 @@ Export `OPENCODE_API_KEY` in the proxy server's environment and restart the
 server after changing it. For example, select `opencode/kimi-k3` in your client
 to route explicitly to Zen's Chat Completions API. The client authenticates
 to llm-proxy with its `llx_` key; the proxy supplies the separate Zen key
-upstream. Requests to paid models incur provider charges.
+upstream. Requests to paid models incur provider charges. For Zen requests,
+llm-proxy also sends the OpenCode-compatible client identity headers required by
+the free tier, including generated session/request IDs, so free models such as
+`opencode/mimo-v2.6-flash-free` can be attempted through the proxy.
 
 If the provider returns **403: OpenCode's free tier can only be used from
-within OpenCode**, the selected free-tier access is restricted to OpenCode.
-The client may label this `authentication_failed`, but this particular message
-indicates an upstream access restriction. Retrying or replacing the local
-`llx_` key does not remove it. Use the free offering inside OpenCode, or select
-a paid API model with the appropriate account access. Merely adding a Zen key
-does not guarantee access to a restricted free model.
+within OpenCode**, the provider rejected the compatibility identity or the
+account/model is not eligible. The client may label this
+`authentication_failed`, but this particular message indicates an upstream
+access restriction. Retrying or replacing the local `llx_` key does not remove
+an account-level restriction. Use the free offering inside OpenCode, or select
+a paid API model with the appropriate account access if the 403 persists.
 
 The public `/models` catalog is discovery information, not proof that your
 account or client can call every listed model. llm-proxy preserves upstream

@@ -196,6 +196,71 @@ func TestSendAnthropicHeaders(t *testing.T) {
 	}
 }
 
+func TestSendSpoofsOpenCodeIdentityHeaders(t *testing.T) {
+	c, rec := newRecordingClient(t, http.StatusOK, "application/json", `{}`)
+	req := &backend.Request{
+		Kind: backend.KindOpenAIChat,
+		Header: http.Header{
+			"User-Agent":         []string{"caller-agent/1.0"},
+			"X-Opencode-Session": []string{"caller-session"},
+		},
+		RawBody: []byte(`{"model":"mimo-v2.6-flash-free"}`),
+	}
+	resp, err := c.Send(t.Context(), req)
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	checks := map[string]string{
+		"User-Agent":         openCodeUserAgent,
+		"x-opencode-client":  openCodeClient,
+		"x-opencode-project": openCodeProject,
+		"x-opencode-session": "caller-session",
+	}
+	for header, want := range checks {
+		if got := rec.Header.Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+	if got := rec.Header.Get("x-opencode-request"); !strings.HasPrefix(got, "req-") || len(got) != len("req-")+12 {
+		t.Errorf("x-opencode-request = %q, want req- followed by 12 hex characters", got)
+	}
+	if got := req.Header.Get("x-opencode-session"); got != "caller-session" {
+		t.Errorf("request session = %q, want %q", got, "caller-session")
+	}
+	if got := rec.Header.Get("User-Agent"); got == req.Header.Get("User-Agent") {
+		t.Errorf("forwarded caller User-Agent %q instead of OpenCode identity", got)
+	}
+}
+
+func TestSendGeneratesAndReusesOpenCodeSession(t *testing.T) {
+	c, rec := newRecordingClient(t, http.StatusOK, "application/json", `{}`)
+	req := &backend.Request{Kind: backend.KindOpenAIChat, RawBody: []byte(`{}`)}
+
+	resp, err := c.Send(t.Context(), req)
+	if err != nil {
+		t.Fatalf("first Send returned error: %v", err)
+	}
+	_ = resp.Body.Close()
+	firstSession := req.Header.Get("x-opencode-session")
+	if firstSession == "" {
+		t.Fatal("first Send did not store a generated session")
+	}
+	if got := rec.Header.Get("x-opencode-session"); got != firstSession {
+		t.Errorf("first outbound session = %q, want %q", got, firstSession)
+	}
+
+	resp, err = c.Send(t.Context(), req)
+	if err != nil {
+		t.Fatalf("second Send returned error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got := rec.Header.Get("x-opencode-session"); got != firstSession {
+		t.Errorf("second outbound session = %q, want reused %q", got, firstSession)
+	}
+}
+
 func TestSendAuthorization(t *testing.T) {
 	tests := []struct {
 		name     string

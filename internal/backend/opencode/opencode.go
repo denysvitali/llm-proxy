@@ -7,6 +7,8 @@ package opencode
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +24,12 @@ const (
 
 	// anthropicVersion is the API version header Zen expects on /messages.
 	anthropicVersion = "2023-06-01"
+
+	// Zen's free tier expects the client identity headers sent by OpenCode.
+	// These values identify llm-proxy's compatibility layer, not the caller.
+	openCodeUserAgent = "opencode/1.18.31"
+	openCodeClient    = "tui"
+	openCodeProject   = "vscode"
 )
 
 type Client struct {
@@ -50,7 +58,8 @@ func New(baseURL, key string) *Client {
 }
 
 // HasAPIKey reports whether an upstream API key is configured. Key presence
-// does not establish model access; Zen may restrict free offerings to OpenCode.
+// does not establish model access; Zen may restrict offerings by account or
+// model.
 func (c *Client) HasAPIKey() bool {
 	return c.Key != ""
 }
@@ -105,6 +114,14 @@ func isAnthropicNativeModel(model string) bool {
 // Do performs a request against the Zen API, attaching the bearer token when
 // a key is configured. A nil body means no request body is sent.
 func (c *Client) Do(ctx context.Context, method, path string, body []byte, accept string) (*http.Response, error) {
+	return c.do(ctx, method, path, body, accept, "")
+}
+
+// do is the request path used by Send when it can preserve the caller's
+// session affinity across retries. Zen's free tier checks for the identity
+// headers emitted by the OpenCode CLI, so every Zen request carries the same
+// compatibility header set.
+func (c *Client) do(ctx context.Context, method, path string, body []byte, accept, session string) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -123,6 +140,22 @@ func (c *Client) Do(ctx context.Context, method, path string, body []byte, accep
 	if accept != "" {
 		httpReq.Header.Set("Accept", accept)
 	}
+	if session == "" {
+		var err error
+		session, err = randomHexID(16)
+		if err != nil {
+			return nil, fmt.Errorf("generate OpenCode session ID: %w", err)
+		}
+	}
+	requestID, err := randomHexID(6)
+	if err != nil {
+		return nil, fmt.Errorf("generate OpenCode request ID: %w", err)
+	}
+	httpReq.Header.Set("User-Agent", openCodeUserAgent)
+	httpReq.Header.Set("x-opencode-client", openCodeClient)
+	httpReq.Header.Set("x-opencode-project", openCodeProject)
+	httpReq.Header.Set("x-opencode-session", session)
+	httpReq.Header.Set("x-opencode-request", "req-"+requestID)
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to OpenCode Zen failed: %w", err)
@@ -144,11 +177,38 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if req.Streaming {
 		accept = "text/event-stream"
 	}
-	resp, err := c.Do(ctx, http.MethodPost, path, req.RawBody, accept)
+	session, err := sessionForRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.do(ctx, http.MethodPost, path, req.RawBody, accept, session)
 	if err != nil {
 		return nil, err
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
+func sessionForRequest(req *backend.Request) (string, error) {
+	if req.Header == nil {
+		req.Header = make(http.Header)
+	}
+	if session := req.Header.Get("x-opencode-session"); session != "" {
+		return session, nil
+	}
+	session, err := randomHexID(16)
+	if err != nil {
+		return "", fmt.Errorf("generate OpenCode session ID: %w", err)
+	}
+	req.Header.Set("x-opencode-session", session)
+	return session, nil
+}
+
+func randomHexID(size int) (string, error) {
+	b := make([]byte, size)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 type modelList struct {
