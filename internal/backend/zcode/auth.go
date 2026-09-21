@@ -160,8 +160,8 @@ func (m *Manager) HasSession() bool {
 }
 
 // CaptchaSolverConfigured reports whether an automatic CAPTCHA solver is
-// wired up for the optional plan-claim flow. Browser-minted proofs are not
-// used when the solver exists.
+// wired up for optional plan claims and model-request challenge recovery.
+// Browser-minted proofs are not used when the solver exists.
 func (m *Manager) CaptchaSolverConfigured() bool {
 	return strings.TrimSpace(m.CaptchaSolverURL) != ""
 }

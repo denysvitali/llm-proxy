@@ -391,6 +391,103 @@ func TestSendUsesOptionalCaptchaOnlyAfterGatewayChallenge(t *testing.T) {
 	}
 }
 
+type automaticCaptchaSource struct {
+	proofs      []string
+	taken       int
+	invalidated []string
+}
+
+func (s *automaticCaptchaSource) AccessToken(context.Context) (string, error) {
+	return "session-token", nil
+}
+
+func (s *automaticCaptchaSource) CaptchaSolverConfigured() bool { return true }
+
+func (s *automaticCaptchaSource) TakeCaptchaVerifyParam(context.Context) (string, error) {
+	if s.taken >= len(s.proofs) {
+		return "", fmt.Errorf("CAPTCHA solver unavailable")
+	}
+	proof := s.proofs[s.taken]
+	s.taken++
+	return proof, nil
+}
+
+func (s *automaticCaptchaSource) InvalidateCaptcha(proof string) {
+	s.invalidated = append(s.invalidated, proof)
+}
+
+func TestSendRefreshesAutomaticCaptchaAfterRejectedProof(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch requests {
+		case 1:
+			if got := r.Header.Get(aliyunCaptchaHeader); got != "" {
+				t.Errorf("initial CAPTCHA = %q, want omitted", got)
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
+		case 2:
+			if got := r.Header.Get(aliyunCaptchaHeader); got != "proof-1" {
+				t.Errorf("first retry CAPTCHA = %q, want proof-1", got)
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
+		case 3:
+			if got := r.Header.Get(aliyunCaptchaHeader); got != "proof-2" {
+				t.Errorf("second retry CAPTCHA = %q, want proof-2", got)
+			}
+			_, _ = fmt.Fprint(w, `{"type":"message","content":[]}`)
+		default:
+			t.Fatalf("unexpected upstream request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	source := &automaticCaptchaSource{proofs: []string{"proof-1", "proof-2"}}
+	client := New(server.URL, "unused")
+	client.Tokens = source
+	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.Status != http.StatusOK || requests != 3 || source.taken != 2 {
+		t.Fatalf("status=%d requests=%d proofs=%d", response.Status, requests, source.taken)
+	}
+	if len(source.invalidated) != 1 || source.invalidated[0] != "proof-1" {
+		t.Fatalf("invalidated proofs = %#v, want [proof-1]", source.invalidated)
+	}
+}
+
+func TestSendDoesNotHideAutomaticCaptchaSolverFailure(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
+	}))
+	defer server.Close()
+
+	source := &automaticCaptchaSource{}
+	client := New(server.URL, "unused")
+	client.Tokens = source
+	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if response != nil {
+		_ = response.Body.Close()
+		t.Fatal("Send() returned a response after the automatic solver failed")
+	}
+	if err == nil || !strings.Contains(err.Error(), "obtain ZCode CAPTCHA proof") || !strings.Contains(err.Error(), "CAPTCHA solver unavailable") {
+		t.Fatalf("Send() error = %v, want the solver failure", err)
+	}
+	if !backend.IsTerminal(err) {
+		t.Fatal("automatic CAPTCHA solver failure is not terminal; the server would retry the gateway")
+	}
+	if requests != 1 {
+		t.Fatalf("upstream requests = %d, want 1", requests)
+	}
+}
+
 func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 	// Claude Code's inbound body carries its own account and session
 	// identifiers in metadata.user_id; the wire body must replace them with

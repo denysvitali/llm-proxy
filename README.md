@@ -170,7 +170,10 @@ page open until it confirms success. The resulting ZCode session is stored at
 when the session expires.
 
 Model requests follow the current open-source ZCode client: the saved ZCode JWT
-is sent as a bearer token and no browser CAPTCHA is required. The proxy emits
+is sent as a bearer token and normally no browser CAPTCHA is required. If the
+gateway sporadically challenges a model request, a configured automatic solver
+can mint a fresh one-use proof and the proxy retries the request with a bounded
+fresh-proof retry. The proxy emits
 the current client version, platform, locale, timezone, and attribution headers
 while keeping credentials and client identity fields under proxy control;
 inbound clients cannot override them. Request-body attribution is replaced the
@@ -523,7 +526,7 @@ flags are applied afterwards.
 | `workbuddy_auth_file`        | `LLM_PROXY_WORKBUDDY_AUTH_FILE`    | `~/.config/llm-proxy/workbuddy-auth.json` | Account session created by the WorkBuddy browser sign-in flow. |
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
-| —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for the optional plan-claim endpoint. Model requests do not use it. |
+| —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
 | `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`) use their web sign-in sessions instead. |

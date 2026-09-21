@@ -53,6 +53,10 @@ const (
 	aliyunCaptchaHeader       = "X-Aliyun-Captcha-Verify-Param"
 	aliyunCaptchaRegionHeader = "X-Aliyun-Captcha-Verify-Region"
 	aliyunCaptchaRegion       = "sgp"
+	// A challenged model request gets one initial proof and at most one fresh
+	// replacement. More attempts can turn a bad solver result into the
+	// account-wide unusual-activity block (code 3012).
+	maxAutomaticModelCaptchaRetries = 2
 
 	// gatewayEnvelopePeek bounds how much of a failed response body is buffered
 	// to look for a plan-gateway error envelope. An envelope is small; anything
@@ -71,7 +75,7 @@ var (
 
 // CAPTCHA is not part of the open-source client's normal model request. These
 // narrow interfaces are only used if the live gateway challenges a request
-// with code 3007 and the proxy has an optional claim-flow proof available.
+// with code 3007 and the proxy has an automatic solver or a browser proof.
 type captchaSource interface {
 	CaptchaVerifyParam(context.Context) (string, error)
 }
@@ -82,6 +86,10 @@ type captchaConsumer interface {
 
 type captchaInvalidator interface {
 	InvalidateCaptcha(string)
+}
+
+type captchaSolverConfig interface {
+	CaptchaSolverConfigured() bool
 }
 
 // defaultModels are the models enabled for the Start Plan by the current
@@ -245,8 +253,19 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		c.markUnusualActivity()
 	}
 	if inspection.captcha {
-		captchaParam := c.optionalModelCaptcha(ctx, requestCaptcha)
-		if captchaParam != "" {
+		for captchaRetry := 0; captchaRetry < maxAutomaticModelCaptchaRetries; captchaRetry++ {
+			captchaParam, automatic, captchaErr := c.optionalModelCaptcha(ctx, requestCaptcha)
+			if captchaErr != nil {
+				_ = resp.Body.Close()
+				// Do not let the server's generic transport retry loop hammer the
+				// gateway while the configured solver is unavailable. A solver
+				// outage is definitive for this request; a later client request can
+				// try again once the solver is healthy.
+				return nil, backend.Terminal(fmt.Errorf("obtain ZCode CAPTCHA proof after security challenge: %w", captchaErr))
+			}
+			if captchaParam == "" {
+				break
+			}
 			_ = resp.Body.Close()
 			retryReq, buildErr := buildRequest(captchaParam)
 			if buildErr != nil {
@@ -261,10 +280,14 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			if inspection.unusualActivity {
 				c.markUnusualActivity()
 			}
-			if inspection.captcha {
-				if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
-					invalidator.InvalidateCaptcha(captchaParam)
-				}
+			if !inspection.captcha {
+				break
+			}
+			if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
+				invalidator.InvalidateCaptcha(captchaParam)
+			}
+			if !automatic {
+				break
 			}
 		}
 	}
@@ -276,17 +299,34 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
 
-func (c *Client) optionalModelCaptcha(ctx context.Context, clientParam string) string {
-	if consumer, ok := c.Tokens.(captchaConsumer); ok {
-		if param, err := consumer.TakeCaptchaVerifyParam(ctx); err == nil {
-			return strings.TrimSpace(param)
-		}
-	} else if source, ok := c.Tokens.(captchaSource); ok {
-		if param, err := source.CaptchaVerifyParam(ctx); err == nil {
-			return strings.TrimSpace(param)
-		}
+func (c *Client) optionalModelCaptcha(ctx context.Context, clientParam string) (string, bool, error) {
+	automatic := false
+	if solver, ok := c.Tokens.(captchaSolverConfig); ok {
+		automatic = solver.CaptchaSolverConfigured()
 	}
-	return strings.TrimSpace(clientParam)
+	if consumer, ok := c.Tokens.(captchaConsumer); ok {
+		param, err := consumer.TakeCaptchaVerifyParam(ctx)
+		if err != nil {
+			if automatic {
+				return "", true, err
+			}
+			return strings.TrimSpace(clientParam), false, nil
+		}
+		return strings.TrimSpace(param), automatic, nil
+	} else if source, ok := c.Tokens.(captchaSource); ok {
+		param, err := source.CaptchaVerifyParam(ctx)
+		if err != nil {
+			if automatic {
+				return "", true, err
+			}
+			return strings.TrimSpace(clientParam), false, nil
+		}
+		return strings.TrimSpace(param), automatic, nil
+	}
+	if automatic {
+		return "", true, fmt.Errorf("automatic CAPTCHA solver is configured but no proof source is available")
+	}
+	return strings.TrimSpace(clientParam), false, nil
 }
 
 // normalizeZCodeResponse converts the plan gateway's JSON error envelope into
