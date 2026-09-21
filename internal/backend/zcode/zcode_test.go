@@ -346,6 +346,51 @@ func TestSendUsesOpenSourceClientHeaders(t *testing.T) {
 	_ = response.Body.Close()
 }
 
+type challengedCaptchaSource struct {
+	taken int
+}
+
+func (s *challengedCaptchaSource) AccessToken(context.Context) (string, error) {
+	return "session-token", nil
+}
+
+func (s *challengedCaptchaSource) TakeCaptchaVerifyParam(context.Context) (string, error) {
+	s.taken++
+	return "challenge-proof", nil
+}
+
+func TestSendUsesOptionalCaptchaOnlyAfterGatewayChallenge(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			if got := r.Header.Get(aliyunCaptchaHeader); got != "" {
+				t.Errorf("initial CAPTCHA = %q, want omitted", got)
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
+			return
+		}
+		if got := r.Header.Get(aliyunCaptchaHeader); got != "challenge-proof" {
+			t.Errorf("retry CAPTCHA = %q, want challenge-proof", got)
+		}
+		_, _ = fmt.Fprint(w, `{"type":"message","content":[]}`)
+	}))
+	defer server.Close()
+
+	source := &challengedCaptchaSource{}
+	client := New(server.URL, "unused")
+	client.Tokens = source
+	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.Status != http.StatusOK || requests != 2 || source.taken != 1 {
+		t.Fatalf("status=%d requests=%d proofs=%d", response.Status, requests, source.taken)
+	}
+}
+
 func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 	// Claude Code's inbound body carries its own account and session
 	// identifiers in metadata.user_id; the wire body must replace them with
@@ -542,10 +587,13 @@ func TestInspectRejectionClassification(t *testing.T) {
 		name                string
 		status              int
 		body                string
+		wantCaptcha         bool
 		wantUnusualActivity bool
 	}{
+		{name: "captcha challenge", status: http.StatusForbidden, body: `{"code":3007,"msg":"captcha verify failed"}`, wantCaptcha: true},
 		{name: "unusual activity on 405", status: http.StatusMethodNotAllowed, body: `{"code":3012,"msg":"request has been blocked due to unusual activity."}`, wantUnusualActivity: true},
 		{name: "unusual activity on 400", status: http.StatusBadRequest, body: `{"code":3012,"msg":"request has been blocked due to unusual activity."}`, wantUnusualActivity: true},
+		{name: "aliyun block page", status: http.StatusMethodNotAllowed, body: `<!doctype html><title>405</title><p>Sorry, your request has been blocked</p>`, wantCaptcha: true},
 		{name: "other error code", status: http.StatusMethodNotAllowed, body: `{"code":1302,"msg":"rate limit"}`},
 		{name: "success untouched", status: http.StatusOK, body: `{"type":"message"}`},
 	} {
@@ -557,6 +605,9 @@ func TestInspectRejectionClassification(t *testing.T) {
 			}
 			if string(replayed) != test.body {
 				t.Errorf("replayed body = %q, want %q", replayed, test.body)
+			}
+			if inspection.captcha != test.wantCaptcha {
+				t.Errorf("captcha = %v, want %v", inspection.captcha, test.wantCaptcha)
 			}
 			if inspection.unusualActivity != test.wantUnusualActivity {
 				t.Errorf("unusualActivity = %v, want %v", inspection.unusualActivity, test.wantUnusualActivity)
