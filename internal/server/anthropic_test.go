@@ -189,12 +189,10 @@ func TestMessagesUnknownModelNoDefault(t *testing.T) {
 	}
 }
 
-// A qualified "<backend>/<model>" ID whose pinned backend's live catalog no
-// longer lists the model must 404 locally instead of forwarding: relaying the
-// upstream's own rejection (production shape: Zen's 401 "Model
-// x-preview-f-free is not supported") makes clients retry it as a transient
-// auth failure.
-func TestMessagesQualifiedModelMissingFromCatalog(t *testing.T) {
+// A qualified "<backend>/<model>" ID is forwarded even when the backend's
+// catalog does not list it. Catalogs are discovery hints, not an allowlist;
+// providers can accept models before publishing them.
+func TestMessagesQualifiedModelMissingFromCatalogForwards(t *testing.T) {
 	fb := &msgFakeBackend{
 		supported: map[backend.Kind]bool{backend.KindAnthropic: true},
 		models:    []string{"catalog-only-model"},
@@ -205,18 +203,14 @@ func TestMessagesQualifiedModelMissingFromCatalog(t *testing.T) {
 	s := newMsgServer(t, fb, nil)
 
 	rec := postMsg(t, s, "/v1/messages", `{"model":"fake/gone-model","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
 	}
-	parsed := decodeAnthropicError(t, rec)
-	if parsed.Type != "error" || parsed.Error.Type != "not_found_error" {
-		t.Errorf("error shape = %+v, want not_found_error", parsed)
+	if fb.sendCount != 1 {
+		t.Fatalf("upstream hits = %d, want 1", fb.sendCount)
 	}
-	if !strings.Contains(parsed.Error.Message, "fake/gone-model") {
-		t.Errorf("message = %q, want it to name the model", parsed.Error.Message)
-	}
-	if fb.sendCount != 0 {
-		t.Errorf("upstream hits = %d, want 0 (catalog miss must not forward)", fb.sendCount)
+	if _, model, _, _ := fb.captured(); model != "gone-model" {
+		t.Errorf("upstream model = %q, want gone-model", model)
 	}
 }
 

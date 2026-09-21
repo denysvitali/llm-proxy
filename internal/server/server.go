@@ -248,13 +248,15 @@ const maxRouteChain = 4
 // DefaultRoute, and the primary backend's own fallback list. A qualified
 // "<backend>/<model>" ID pins the request to that exact backend: the caller
 // asked for that upstream specifically, so the backend's own `fallbacks:`
-// list is skipped, and a pinned backend whose live catalog does not list the
-// model answers 404. Falling back to a different provider on a 502/503 from
-// the pinned upstream silently reroutes a deliberate choice to an unrelated
-// model (e.g. opencode-go/glm-5.3-flash → zcode/glm-5.3-flash on a zcode
-// fallback, which fails a different quota and confuses the user about which
-// upstream is slow). Fallbacks naming unknown, disabled or repeated backends
-// are skipped; an empty model rewrite keeps the primary's upstream model.
+// list is skipped. The model is still forwarded even when it is absent from
+// the backend catalog: catalogs are discovery hints, not an allowlist, and
+// providers such as Grok may accept models before they publish them. Falling
+// back to a different provider on a 502/503 from the pinned upstream silently
+// reroutes a deliberate choice to an unrelated model (e.g.
+// opencode-go/glm-5.3-flash → zcode/glm-5.3-flash on a zcode fallback, which
+// fails a different quota and confuses the user about which upstream is slow).
+// Fallbacks naming unknown, disabled or repeated backends are skipped; an
+// empty model rewrite keeps the primary's upstream model.
 func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool) {
 	normalized, _, err := normalizeCodexModelSelector(model)
 	if err != nil {
@@ -269,19 +271,6 @@ func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool)
 			fallbacks = append(fallbacks, bc.Fallbacks...)
 		}
 	}
-	// A qualified ID pins one backend, so that backend's live catalog is
-	// authoritative for what the pin may request. A model the catalog no
-	// longer lists must not be forwarded: the upstream's own rejection
-	// (e.g. Zen's 401 "Model x is not supported") reads as an auth failure
-	// to clients, which retry it instead of failing fast. The caller chose
-	// this backend+model pair, so it answers 404 directly instead of being
-	// silently re-routed to a different provider via the route's fallbacks.
-	// A catalog that cannot be fetched stays fail-open so a broken /models
-	// endpoint cannot 404 known-good models.
-	if upstream, pinned := qualifiedPin(normalized, primary.backend.Name()); pinned &&
-		s.catalogLacksModel(ctx, primary.backend, upstream) {
-		return nil, false
-	}
 	return s.appendFallbacks([]route{primary}, fallbacks, primary.model), true
 }
 
@@ -294,19 +283,6 @@ func qualifiedPin(model, backendName string) (string, bool) {
 		return "", false
 	}
 	return rest, true
-}
-
-// catalogLacksModel reports whether the backend's live catalog loaded,
-// lists anything at all, and does not list model. Fetch errors and empty
-// catalogs report false so callers stay fail-open: an unreachable or
-// auth-gated /models endpoint (which can legitimately answer an empty list)
-// must not 404 models the backend actually serves.
-func (s *Server) catalogLacksModel(ctx context.Context, b backend.Backend, model string) bool {
-	models, err := s.catalog(ctx, b)
-	if err != nil || len(models) == 0 {
-		return false
-	}
-	return !hasModel(models, model)
 }
 
 // appendFallbacks appends the fallback entries that can serve the request to

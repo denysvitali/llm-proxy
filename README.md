@@ -250,8 +250,8 @@ the translation layer's supported mappings, not arbitrary passthrough. Select
 `cloudflare/stealth/union-alpha` in clients. The catalog is a static list containing
 `stealth/union-alpha`, not a live discovery endpoint or a guarantee of account access. To use another model
 your account can reach, configure an explicit route with a non-qualified alias
-and the upstream model ID; unlisted qualified IDs are subject to the normal
-catalog safeguard.
+and the upstream model ID, or send a qualified ID directly. Catalogs are
+discovery hints, not an allowlist.
 
 ### OpenRouter
 
@@ -448,14 +448,12 @@ Every inbound request carries a model name, which resolves in this order:
    nested upstream names work: `nous/nousresearch/hermes-4-70b` routes to the
    `nous` backend with model `nousresearch/hermes-4-70b`. This lets a client
    be configured once with the proxy hostname and select per-request which
-   backend serves it. The pinned backend's live catalog is authoritative: a
-   qualified ID the catalog no longer lists is not forwarded (the upstream's
-   own rejection would relay as a misleading 4xx — e.g. a removed model
-   surfacing as a 401 auth failure clients keep retrying); the backend's
-   fallback chain serves it instead, and with none configured the request
-   answers `404` like any unroutable model. A catalog that cannot be fetched,
-   or answers an empty list, fails open and the request is forwarded as
-   before.
+   backend serves it. The model is forwarded even when the pinned backend's
+   live catalog does not list it: catalogs are discovery hints, not an
+   allowlist, so providers may accept models before publishing them. The
+   backend's own fallback chain is skipped for a pinned ID, so a failure does
+   not silently reroute the request to another provider. A catalog that
+   cannot be fetched, or answers an empty list, does not affect forwarding.
 1. **Explicit routes** — an exact match in `routes`.
 2. **Backend catalogs** — the enabled backends' live model lists, consulted in
    configuration order; first catalog containing the model wins. Catalogs are
@@ -494,10 +492,9 @@ backends:
 Fallback entries carry an optional model rewrite (`model`); without one the
 primary's upstream model name is kept. The route entry's `fallbacks` run
 first, then the primary backend's own, capped at four backends per request
-including the primary. Fallbacks also apply to qualified IDs like
-`opencode/model`, which bypass routes entirely — both when the pinned backend
-fails mid-request and when its catalog no longer lists the model (the primary
-is skipped without a round trip).
+including the primary. Qualified IDs like `opencode/model` bypass routes
+entirely and stay pinned to the named backend; its configured fallback chain is
+not used.
 
 Each hand-off increments `llm_proxy_fallbacks_total{from_backend,to_backend}`;
 retry metrics carry `backend` and `model` labels, so exhaustion per backend

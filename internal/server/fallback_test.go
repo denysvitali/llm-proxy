@@ -168,11 +168,11 @@ func TestQualifiedIDDoesNotFallback(t *testing.T) {
 	})
 }
 
-// TestQualifiedIDMissingFromCatalogAnswers404: a qualified ID whose pinned
-// backend's catalog does not list the model never reaches that backend and
-// never silently re-routes to a different provider — the caller chose this
-// backend+model pair, so the proxy answers 404 instead.
-func TestQualifiedIDMissingFromCatalogAnswers404(t *testing.T) {
+// TestQualifiedIDMissingFromCatalogIsForwarded: a qualified ID whose pinned
+// backend's catalog does not list the model is still sent to that backend.
+// Catalogs are discovery hints, not an allowlist. The ID remains pinned, so
+// a failure does not silently re-route to a different provider.
+func TestQualifiedIDMissingFromCatalogIsForwarded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		primary := newNamedScripted("fake", backend.KindOpenAIChat,
 			step{resp: unavailableResponse(http.StatusServiceUnavailable, `{"error":{"message":"down"}}`)})
@@ -180,19 +180,20 @@ func TestQualifiedIDMissingFromCatalogAnswers404(t *testing.T) {
 			step{resp: sseResponse("text/event-stream", fullChatSSE)})
 		s := newFallbackServer(t, primary, secondary,
 			config.BackendConfig{
-				Type:      "fake",
-				APIKey:    "k",
-				Fallbacks: []config.FallbackRoute{{Backend: "second", Model: "rewrite-m1"}},
+				Type:          "fake",
+				APIKey:        "k",
+				RetryAttempts: 1,
+				Fallbacks:     []config.FallbackRoute{{Backend: "second", Model: "rewrite-m1"}},
 			}, nil)
 
 		// scriptedBackend's catalog lists only "m1", so fake/gone is a miss.
 		rec := postMsg(t, s, "/v1/messages",
 			`{"model":"fake/gone","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404 (qualified ID catalog miss must not re-route)", rec.Code)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503 relayed from pinned backend", rec.Code)
 		}
-		if primary.callCount() != 0 {
-			t.Fatalf("primary attempts = %d, want 0 (catalog miss must skip the pinned backend)", primary.callCount())
+		if primary.callCount() != 2 {
+			t.Fatalf("primary attempts = %d, want 2 (catalog miss must still forward)", primary.callCount())
 		}
 		if secondary.callCount() != 0 {
 			t.Fatalf("fallback attempts = %d, want 0 (qualified ID must not re-route)", secondary.callCount())
