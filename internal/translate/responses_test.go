@@ -642,6 +642,106 @@ func TestResponsesStreamWriter(t *testing.T) {
 	}
 }
 
+// TestResponsesStreamWriterItemArgumentsOnDone covers Responses upstreams that
+// carry complete function-call arguments on the output item instead of
+// streaming response.function_call_arguments.delta events. Without the item
+// fallback the tool_use block ships with input:{}, and the client's schema
+// validation rejects the call — the failure mode of session
+// c4c6df72dd26c87dbfa9a6985, where every later tool call arrived this way.
+func TestResponsesStreamWriterItemArgumentsOnDone(t *testing.T) {
+	stream := `data: {"type":"response.created","response":{"id":"resp_a1","model":"m"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_a1","name":"prometheus_query"}}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_a1","name":"prometheus_query","arguments":"{\"query\":\"up\"}"}}
+
+data: {"type":"response.completed","response":{"id":"resp_a1","status":"completed"}}
+`
+	var buffer bytes.Buffer
+	writer := NewResponsesStreamWriter(&buffer, nil, "m", false)
+	if err := writer.Consume(strings.NewReader(stream)); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	writer.Finish()
+
+	got := accumulateJSONArgs(t, buffer.String())
+	if got != `{"query":"up"}` {
+		t.Fatalf("input_json_delta accumulated to %q, want %q", got, `{"query":"up"}`)
+	}
+}
+
+// TestResponsesStreamWriterItemArgumentsOnAdded covers upstreams that put the
+// complete arguments on output_item.added and never stream deltas.
+func TestResponsesStreamWriterItemArgumentsOnAdded(t *testing.T) {
+	stream := `data: {"type":"response.created","response":{"id":"resp_a2","model":"m"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_a2","name":"search_traces","arguments":"{\"service\":\"happy-server\"}"}}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_a2","name":"search_traces","arguments":"{\"service\":\"happy-server\"}"}}
+
+data: {"type":"response.completed","response":{"id":"resp_a2","status":"completed"}}
+`
+	var buffer bytes.Buffer
+	writer := NewResponsesStreamWriter(&buffer, nil, "m", false)
+	if err := writer.Consume(strings.NewReader(stream)); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	writer.Finish()
+
+	got := accumulateJSONArgs(t, buffer.String())
+	if got != `{"service":"happy-server"}` {
+		t.Fatalf("input_json_delta accumulated to %q, want %q", got, `{"service":"happy-server"}`)
+	}
+}
+
+// TestResponsesStreamWriterItemArgumentsNotDuplicated: when argument deltas
+// already streamed, the complete arguments on output_item.done must not be
+// emitted again — partial_json fragments concatenate client-side and the input
+// would otherwise become the deltas followed by the full JSON.
+func TestResponsesStreamWriterItemArgumentsNotDuplicated(t *testing.T) {
+	stream := `data: {"type":"response.created","response":{"id":"resp_a3","model":"m"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_a3","name":"get_weather"}}
+
+data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"city\":"}
+
+data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"\"SF\"}"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_a3","name":"get_weather","arguments":"{\"city\":\"SF\"}"}}
+
+data: {"type":"response.completed","response":{"id":"resp_a3","status":"completed"}}
+`
+	var buffer bytes.Buffer
+	writer := NewResponsesStreamWriter(&buffer, nil, "m", false)
+	if err := writer.Consume(strings.NewReader(stream)); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	writer.Finish()
+
+	got := accumulateJSONArgs(t, buffer.String())
+	if got != `{"city":"SF"}` {
+		t.Fatalf("input_json_delta accumulated to %q, want %q", got, `{"city":"SF"}`)
+	}
+}
+
+// accumulateJSONArgs concatenates every input_json_delta partial_json in an
+// emitted Anthropic SSE stream — i.e. exactly what the client assembles into
+// the tool_use input.
+func accumulateJSONArgs(t *testing.T, sse string) string {
+	t.Helper()
+	var parts []string
+	for _, event := range parseSSE(t, sse) {
+		if event.Name != "content_block_delta" {
+			continue
+		}
+		delta := jmap(t, event.Data["delta"], "delta")
+		if jstr(t, delta["type"]) == "input_json_delta" {
+			parts = append(parts, jstr(t, delta["partial_json"]))
+		}
+	}
+	return strings.Join(parts, "")
+}
+
 func TestResponsesStreamWriterThinking(t *testing.T) {
 	stream := `data: {"type":"response.created","response":{"id":"resp_t1","model":"m"}}
 

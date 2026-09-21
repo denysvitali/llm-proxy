@@ -32,6 +32,11 @@ type responsesOutBlock struct {
 	index int
 	kind  string // "text", "thinking", "tool_use", or "ignored"
 	open  bool
+	// sentArgDelta records that input_json bytes were already forwarded for
+	// this tool_use block (via function_call_arguments.delta or the item
+	// fallback). Partial JSON fragments concatenate client-side, so the
+	// complete arguments must never be re-emitted after any delta went out.
+	sentArgDelta bool
 }
 
 // ResponsesStreamWriter converts an OpenAI Responses SSE stream into the
@@ -123,13 +128,14 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		case "message":
 			s.openUpstreamBlock(event.OutputIndex, "text", nil)
 		case "function_call":
-			s.openUpstreamBlock(event.OutputIndex, "tool_use", map[string]any{
+			block := s.openUpstreamBlock(event.OutputIndex, "tool_use", map[string]any{
 				"type":  "tool_use",
 				"id":    event.Item.CallID,
 				"name":  event.Item.Name,
 				"input": map[string]any{},
 			})
 			s.stopReason = "tool_use"
+			s.maybeEmitItemArguments(block, event.Item)
 		case "reasoning":
 			if !s.includeThinking {
 				s.blocks[event.OutputIndex] = &responsesOutBlock{kind: "ignored"}
@@ -155,8 +161,12 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 			return false
 		}
 		s.emitDelta(block.index, map[string]any{"type": "input_json_delta", "partial_json": event.Delta})
+		block.sentArgDelta = true
 
 	case "response.output_item.done":
+		if event.Item != nil {
+			s.maybeEmitItemArguments(s.blocks[event.OutputIndex], event.Item)
+		}
 		s.closeUpstreamBlock(event.OutputIndex)
 
 	case "response.completed", "response.incomplete":
@@ -228,6 +238,27 @@ func (s *ResponsesStreamWriter) openUpstreamBlock(outputIndex int, kind string, 
 		"content_block": start,
 	})
 	return block
+}
+
+// maybeEmitItemArguments forwards complete function-call arguments carried on
+// the output item itself. Some Responses upstreams put the final arguments on
+// output_item.added/output_item.done instead of streaming
+// response.function_call_arguments.delta events; without this fallback the
+// tool_use block ships with an empty input object and the client's schema
+// validation rejects the call (session c4c6df72dd26c87dbfa9a6985 lost every
+// tool argument this way). Deltas that already went out win: partial_json
+// fragments concatenate client-side, so re-emitting the complete arguments
+// would corrupt the assembled input.
+func (s *ResponsesStreamWriter) maybeEmitItemArguments(block *responsesOutBlock, item *responsesOutputItem) {
+	if item == nil || block == nil || block.kind != "tool_use" || block.sentArgDelta {
+		return
+	}
+	args := strings.TrimSpace(item.Arguments)
+	if args == "" {
+		return
+	}
+	s.emitDelta(block.index, map[string]any{"type": "input_json_delta", "partial_json": args})
+	block.sentArgDelta = true
 }
 
 func (s *ResponsesStreamWriter) closeUpstreamBlock(outputIndex int) {
