@@ -269,6 +269,37 @@ The catalog includes every model visible to the key, so use a qualified route
 such as `openrouter/vendor/model` when a bare ID would be ambiguous across
 backends.
 
+### OpenCode Zen
+
+[OpenCode Zen](https://opencode.ai/docs/zen/) provides a paid API as well as
+free model offerings. For API access through llm-proxy, configure a Zen key
+with available credit and select a paid model your account can use:
+
+```yaml
+backends:
+  - type: opencode
+    api_key_env: OPENCODE_API_KEY
+```
+
+Export `OPENCODE_API_KEY` in the proxy server's environment and restart the
+server after changing it. For example, select `opencode/kimi-k3` in your client
+to route explicitly to Zen's Chat Completions API. The client authenticates
+to llm-proxy with its `llx_` key; the proxy supplies the separate Zen key
+upstream. Requests to paid models incur provider charges.
+
+If the provider returns **403: OpenCode's free tier can only be used from
+within OpenCode**, the selected free-tier access is restricted to OpenCode.
+The client may label this `authentication_failed`, but this particular message
+indicates an upstream access restriction. Retrying or replacing the local
+`llx_` key does not remove it. Use the free offering inside OpenCode, or select
+a paid API model with the appropriate account access. Merely adding a Zen key
+does not guarantee access to a restricted free model.
+
+The public `/models` catalog is discovery information, not proof that your
+account or client can call every listed model. llm-proxy preserves upstream
+error responses, including this 403. OpenCode Go subscribers should use the
+separate `opencode-go` backend below.
+
 ### OpenCode Go
 
 [OpenCode Go](https://opencode.ai/docs/go/) is a low-cost subscription with

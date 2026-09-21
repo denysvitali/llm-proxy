@@ -49,8 +49,8 @@ func New(baseURL, key string) *Client {
 	}
 }
 
-// HasAPIKey reports whether an upstream API key is configured. Without one,
-// Zen only serves its free models.
+// HasAPIKey reports whether an upstream API key is configured. Key presence
+// does not establish model access; Zen may restrict free offerings to OpenCode.
 func (c *Client) HasAPIKey() bool {
 	return c.Key != ""
 }
@@ -157,8 +157,8 @@ type modelList struct {
 	} `json:"data"`
 }
 
-// Models lists the models the account can use through Zen. The catalog
-// endpoint is public, so this works with or without a key.
+// Models lists Zen's public catalog, which can be read with or without a key.
+// Inclusion in the catalog does not guarantee account or client access.
 func (c *Client) Models(ctx context.Context) ([]string, error) {
 	resp, err := c.Do(ctx, http.MethodGet, "/models", nil, "application/json")
 	if err != nil {

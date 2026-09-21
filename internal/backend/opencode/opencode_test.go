@@ -203,7 +203,7 @@ func TestSendAuthorization(t *testing.T) {
 		wantAuth string // empty means the header must be absent
 	}{
 		{"with key", "test-key", "Bearer test-key"},
-		{"without key (free models)", "", ""},
+		{"without key", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -272,6 +272,29 @@ func TestSendRawBodyForwardedByteForByte(t *testing.T) {
 	}
 	if !bytes.Equal(rec.Body, raw) {
 		t.Errorf("forwarded body = %q, want %q", rec.Body, raw)
+	}
+}
+
+func TestSendPreservesFreeTierRestriction(t *testing.T) {
+	const body = `{"error":{"message":"OpenCode's free tier can only be used from within OpenCode"}}`
+	for _, kind := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat} {
+		for _, streaming := range []bool{false, true} {
+			c, _ := newRecordingClient(t, http.StatusForbidden, "application/json", body)
+			resp, err := c.Send(t.Context(), &backend.Request{
+				Kind: kind, RawBody: []byte(`{"model":"restricted-free-model"}`), Streaming: streaming,
+			})
+			if err != nil {
+				t.Fatalf("Send(%s, streaming=%v): %v", kind, streaming, err)
+			}
+			got, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Status != http.StatusForbidden || string(got) != body || resp.Header.Get("Content-Type") != "application/json" {
+				t.Fatalf("Send(%s, streaming=%v) changed provider error: status=%d header=%v body=%s", kind, streaming, resp.Status, resp.Header, got)
+			}
+		}
 	}
 }
 
