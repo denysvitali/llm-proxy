@@ -29,6 +29,7 @@ not upstream API keys.
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
+| `mimo-token-plan` | [Xiaomi MiMo Token Plan](https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/subscription) | Chat Completions, Responses | Uses only MiMo's OpenAI-compatible regional endpoint; Anthropic Messages requests are translated through Chat Completions. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `cloudflare` | [Cloudflare inference](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) | Chat Completions, Responses native; Messages translated via Chat | Account-scoped endpoint; static `stealth/union-alpha` catalog. Native wire provider-specific fields pass through unchanged. |
 | `openrouter` | [OpenRouter](https://openrouter.ai/docs) | Chat Completions (OpenAI-compatible) | Anthropic and Responses requests are translated server-side. Models use `vendor/model` slugs. |
@@ -268,6 +269,32 @@ backends:
 The catalog includes every model visible to the key, so use a qualified route
 such as `openrouter/vendor/model` when a bare ID would be ambiguous across
 backends.
+
+### Xiaomi MiMo Token Plan
+
+[Xiaomi MiMo Token Plan](https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/subscription)
+provides OpenAI-compatible Chat Completions and Responses APIs for coding tools.
+Configure the `tp-...` key from the Token Plan page and use the regional base
+URL assigned there:
+
+```yaml
+backends:
+  - type: mimo-token-plan
+    base_url: https://token-plan-sgp.xiaomimimo.com/v1
+    api_key_env: MIMO_TOKEN_PLAN_API_KEY
+```
+
+The Singapore endpoint above is the default. Replace it with the China
+(`https://token-plan-cn.xiaomimimo.com/v1`) or Europe
+(`https://token-plan-ams.xiaomimimo.com/v1`) endpoint shown for your plan.
+The backend publishes `mimo-v2.5-pro` and `mimo-v2.5`; use qualified IDs such
+as `mimo-token-plan/mimo-v2.5-pro` to pin routing.
+
+This backend never calls MiMo's Anthropic compatibility API. OpenAI Responses
+clients pass through to `/responses`, Chat Completions clients pass through to
+`/chat/completions`, and Anthropic Messages clients use llm-proxy's
+Chat Completions translation path. All requests authenticate upstream with the
+Token Plan `api-key` header.
 
 ### OpenCode Zen
 
@@ -558,7 +585,7 @@ flags are applied afterwards.
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |

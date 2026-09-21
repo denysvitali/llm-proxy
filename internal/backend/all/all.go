@@ -10,6 +10,7 @@ import (
 	_ "github.com/denysvitali/llm-proxy/internal/backend/cloudflare"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/codex"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/grok"
+	_ "github.com/denysvitali/llm-proxy/internal/backend/mimotokenplan"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/nous"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/opencode"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/opencodego"
