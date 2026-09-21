@@ -224,8 +224,8 @@ func TestSendSpoofsOpenCodeIdentityHeaders(t *testing.T) {
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
 	}
-	if got := rec.Header.Get("x-opencode-request"); !strings.HasPrefix(got, "req-") || len(got) != len("req-")+12 {
-		t.Errorf("x-opencode-request = %q, want req- followed by 12 hex characters", got)
+	if got := rec.Header.Get("x-opencode-request"); !strings.HasPrefix(got, "msg_") || len(got) != len("msg_")+12 {
+		t.Errorf("x-opencode-request = %q, want msg_ followed by 12 hex characters", got)
 	}
 	if got := req.Header.Get("x-opencode-session"); got != "caller-session" {
 		t.Errorf("request session = %q, want %q", got, "caller-session")
@@ -247,6 +247,9 @@ func TestSendGeneratesAndReusesOpenCodeSession(t *testing.T) {
 	firstSession := req.Header.Get("x-opencode-session")
 	if firstSession == "" {
 		t.Fatal("first Send did not store a generated session")
+	}
+	if !strings.HasPrefix(firstSession, "ses_") {
+		t.Errorf("generated session = %q, want ses_ prefix", firstSession)
 	}
 	if got := rec.Header.Get("x-opencode-session"); got != firstSession {
 		t.Errorf("first outbound session = %q, want %q", got, firstSession)

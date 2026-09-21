@@ -27,9 +27,9 @@ const (
 
 	// Zen's free tier expects the client identity headers sent by OpenCode.
 	// These values identify llm-proxy's compatibility layer, not the caller.
-	openCodeUserAgent = "opencode/1.18.31"
-	openCodeClient    = "tui"
-	openCodeProject   = "vscode"
+	openCodeUserAgent = "opencode/1.18.4"
+	openCodeClient    = "cli"
+	openCodeProject   = "global"
 )
 
 type Client struct {
@@ -142,7 +142,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 	}
 	if session == "" {
 		var err error
-		session, err = randomHexID(16)
+		session, err = newOpenCodeSessionID()
 		if err != nil {
 			return nil, fmt.Errorf("generate OpenCode session ID: %w", err)
 		}
@@ -159,7 +159,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 	// the OpenCode attribution header. The official client uses this alias for
 	// non-OpenCode providers, and Zen accepts it for free-tier access.
 	httpReq.Header.Set("X-Session-Id", session)
-	httpReq.Header.Set("x-opencode-request", "req-"+requestID)
+	httpReq.Header.Set("x-opencode-request", "msg_"+requestID)
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to OpenCode Zen failed: %w", err)
@@ -199,7 +199,7 @@ func sessionForRequest(req *backend.Request) (string, error) {
 	if session := req.Header.Get("x-opencode-session"); session != "" {
 		return session, nil
 	}
-	session, err := randomHexID(16)
+	session, err := newOpenCodeSessionID()
 	if err != nil {
 		return "", fmt.Errorf("generate OpenCode session ID: %w", err)
 	}
@@ -213,6 +213,14 @@ func randomHexID(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func newOpenCodeSessionID() (string, error) {
+	id, err := randomHexID(16)
+	if err != nil {
+		return "", err
+	}
+	return "ses_" + id, nil
 }
 
 type modelList struct {
