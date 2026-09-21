@@ -13,7 +13,7 @@ import (
 func TestZcodeUsageEndpoint(t *testing.T) {
 	isolatePrometheus(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/zcode-plan/billing/current" {
+		if r.URL.Path != "/api/v1/zcode-plan/billing/balance" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")

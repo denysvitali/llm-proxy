@@ -159,8 +159,9 @@ func TestZCodeGatewayErrorStatus(t *testing.T) {
 		ok     bool
 	}{
 		{name: "quota exhausted", body: `{"code":1005,"msg":"exceed quota limit"}`, status: http.StatusTooManyRequests, ok: true},
-		{name: "captcha", body: `{"code":3007,"msg":"captcha verify failed"}`, status: http.StatusBadRequest, ok: true},
+		{name: "security rejection", body: `{"code":3007,"msg":"security verification failed"}`, status: http.StatusForbidden, ok: true},
 		{name: "unusual activity", body: `{"code":"3012","msg":"request has been blocked"}`, status: http.StatusMethodNotAllowed, ok: true},
+		{name: "explicit unsuccessful envelope", body: `{"success":false,"code":0,"msg":"temporarily unavailable"}`, status: http.StatusBadGateway, ok: true},
 		{name: "success message", body: `{"type":"message","content":[]}`, ok: false},
 		{name: "unrelated code without message", body: `{"code":3012}`, ok: false},
 	} {
@@ -269,23 +270,21 @@ func TestSendPreservesErrorBodyLargerThanEnvelopePeek(t *testing.T) {
 	}
 }
 
-func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
+func TestSendUsesOpenSourceClientHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for name, want := range map[string]string{
-			"X-Aliyun-Captcha-Verify-Param": "fresh-param",
-			aliyunCaptchaRegionHeader:       aliyunCaptchaRegion,
-			"X-ZCode-App-Version":           zcodeAppVersion,
-			"X-ZCode-Agent":                 "glm",
-			"User-Agent":                    "ZCode/" + zcodeAppVersion,
-			"HTTP-Referer":                  "https://zcode.z.ai",
-			"X-Title":                       "Z Code@electron",
-			"X-Platform":                    runtime.GOOS + "-" + zcodeArch(),
-			"X-Release-Channel":             "production",
-			"X-Client-Language":             zcodeLanguage,
-			"X-Client-Timezone":             "UTC",
-			"X-Os-Category":                 runtime.GOOS,
-			"X-Os-Version":                  zcodeOSVersion,
-			"X-ZCode-Session-Type":          "main",
+			"X-ZCode-App-Version":  zcodeAppVersion,
+			"X-ZCode-Agent":        "glm",
+			"User-Agent":           "ZCode/" + zcodeAppVersion,
+			"HTTP-Referer":         "https://zcode.z.ai",
+			"X-Title":              "Z Code@electron",
+			"X-Platform":           runtime.GOOS + "-" + zcodeArch(),
+			"X-Release-Channel":    "production",
+			"X-Client-Language":    zcodeLanguage,
+			"X-Client-Timezone":    zcodeClientTimezone(),
+			"X-Os-Category":        zcodeOSCategory(),
+			"X-Os-Version":         zcodeOSVersion,
+			"X-ZCode-Session-Type": "main",
 		} {
 			if got := r.Header.Get(name); got != want {
 				t.Errorf("%s = %q, want %q", name, got, want)
@@ -319,8 +318,10 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 		if got := r.Header.Get("X-Device-Mid"); got != "" {
 			t.Errorf("X-Device-Mid = %q, want omitted from model requests", got)
 		}
-		if got := r.Header.Get(aliyunCaptchaRegionHeader); got != aliyunCaptchaRegion {
-			t.Errorf("%s = %q, want %q", aliyunCaptchaRegionHeader, got, aliyunCaptchaRegion)
+		for _, name := range []string{aliyunCaptchaHeader, aliyunCaptchaRegionHeader} {
+			if got := r.Header.Get(name); got != "" {
+				t.Errorf("%s = %q, want omitted from model requests", name, got)
+			}
 		}
 		_, _ = fmt.Fprint(w, `{"ok":true}`)
 	}))
@@ -329,16 +330,14 @@ func TestSendForwardsCaptchaAndRuntimeHeaders(t *testing.T) {
 	response, err := New(server.URL, "secret").Send(context.Background(), &backend.Request{
 		Kind: backend.KindAnthropic,
 		Header: http.Header{
-			"X-Aliyun-Captcha-Verify-Param":  []string{"fresh-param"},
-			"X-ZCode-App-Version":            []string{"3.7.7"},
-			"X-Title":                        []string{"Z Code@test"},
-			"X-Device-Mid":                   []string{"untrusted-device"},
-			"X-Platform":                     []string{"untrusted-platform"},
-			"X-Aliyun-Captcha-Verify-Region": []string{"untrusted-region"},
-			"X-ZCode-Api-Key":                []string{"must-not-forward"},
-			"X-Request-Id":                   []string{"reused-request-id"},
-			"X-ZCode-Trace-Id":               []string{"reused-trace-id"},
-			"X-Query-Id":                     []string{"reused-query-id"},
+			"X-ZCode-App-Version": []string{"3.7.7"},
+			"X-Title":             []string{"Z Code@test"},
+			"X-Device-Mid":        []string{"untrusted-device"},
+			"X-Platform":          []string{"untrusted-platform"},
+			"X-ZCode-Api-Key":     []string{"must-not-forward"},
+			"X-Request-Id":        []string{"reused-request-id"},
+			"X-ZCode-Trace-Id":    []string{"reused-trace-id"},
+			"X-Query-Id":          []string{"reused-query-id"},
 		},
 	})
 	if err != nil {
@@ -363,8 +362,7 @@ func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 
 	client := New(server.URL, "secret")
 	requestHeaders := http.Header{
-		"X-Aliyun-Captcha-Verify-Param": []string{"fresh-param"},
-		"X-Session-Id":                  []string{"sess_proxy-session-1"},
+		"X-Session-Id": []string{"sess_proxy-session-1"},
 	}
 	response, err := client.Send(context.Background(), &backend.Request{
 		Kind:    backend.KindAnthropic,
@@ -453,37 +451,19 @@ func TestDeviceMIDIsStableAndSessionSpecific(t *testing.T) {
 	}
 }
 
-type invalidatingTokenAndCaptchaSource struct {
-	invalidated string
-}
-
-func (s *invalidatingTokenAndCaptchaSource) AccessToken(context.Context) (string, error) {
-	return "session-token", nil
-}
-
-func (s *invalidatingTokenAndCaptchaSource) CaptchaVerifyParam(context.Context) (string, error) {
-	return "source-param", nil
-}
-
-func (s *invalidatingTokenAndCaptchaSource) InvalidateCaptcha(param string) {
-	s.invalidated = param
-}
-
-func TestSendPreservesCaptchaOnUnusualActivityRejection(t *testing.T) {
+func TestSendPreservesUnusualActivityRejection(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if got := r.Header.Get(aliyunCaptchaHeader); got != "source-param" {
-			t.Errorf("captcha header = %q, want source-param", got)
+		if got := r.Header.Get(aliyunCaptchaHeader); got != "" {
+			t.Errorf("captcha header = %q, want omitted", got)
 		}
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		_, _ = fmt.Fprint(w, `{"code":3012,"msg":"request has been blocked due to unusual activity."}`)
 	}))
 	defer server.Close()
 
-	source := &invalidatingTokenAndCaptchaSource{}
-	client := New(server.URL, "unused")
-	client.Tokens = source
+	client := New(server.URL, "secret")
 	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
@@ -496,10 +476,6 @@ func TestSendPreservesCaptchaOnUnusualActivityRejection(t *testing.T) {
 	if string(body) != `{"code":3012,"msg":"request has been blocked due to unusual activity."}` {
 		t.Errorf("response body = %q, want original rejection", body)
 	}
-	if source.invalidated != "" {
-		t.Errorf("invalidated captcha = %q on 3012, want proof preserved", source.invalidated)
-	}
-
 	// The rejection arms a cooldown: the next request fails fast without
 	// reaching ZCode, so a blocked session stops hammering the gateway and
 	// server-level fallback routes can take over.
@@ -524,19 +500,6 @@ func TestSendPreservesCaptchaOnUnusualActivityRejection(t *testing.T) {
 	if requests != 2 || third.Status != http.StatusMethodNotAllowed {
 		t.Fatalf("requests = %d status = %d after cooldown, want 2 and 405", requests, third.Status)
 	}
-}
-
-type countingCaptchaConsumer struct {
-	taken int
-}
-
-func (s *countingCaptchaConsumer) AccessToken(context.Context) (string, error) {
-	return "session-token", nil
-}
-
-func (s *countingCaptchaConsumer) TakeCaptchaVerifyParam(context.Context) (string, error) {
-	s.taken++
-	return fmt.Sprintf("proof-%d", s.taken), nil
 }
 
 func TestUnusualActivityCooldownDoublesAndCaps(t *testing.T) {
@@ -574,42 +537,15 @@ func TestUnusualActivityCooldownDoublesAndCaps(t *testing.T) {
 	}
 }
 
-func TestSendCooldownDoesNotConsumeCaptchaProof(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		_, _ = fmt.Fprint(w, `{"code":3012,"msg":"request has been blocked due to unusual activity."}`)
-	}))
-	defer server.Close()
-
-	consumer := &countingCaptchaConsumer{}
-	client := New(server.URL, "unused")
-	client.Tokens = consumer
-	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	_ = response.Body.Close()
-	if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic}); err == nil {
-		t.Fatal("second Send() during cooldown succeeded, want fail-fast error")
-	}
-	if consumer.taken != 1 {
-		t.Errorf("browser proofs consumed = %d, want 1 (cooldown must not burn proofs)", consumer.taken)
-	}
-}
-
 func TestInspectRejectionClassification(t *testing.T) {
-	const blockPage = `<!doctype html><title>405</title><p>Sorry, your request has been blocked as it may cause potential threats to the server's security.</p>`
 	for _, test := range []struct {
 		name                string
 		status              int
 		body                string
-		wantCaptcha         bool
 		wantUnusualActivity bool
 	}{
-		{name: "captcha challenge", status: http.StatusBadRequest, body: `{"code":3007,"msg":"captcha verify failed"}`, wantCaptcha: true},
 		{name: "unusual activity on 405", status: http.StatusMethodNotAllowed, body: `{"code":3012,"msg":"request has been blocked due to unusual activity."}`, wantUnusualActivity: true},
 		{name: "unusual activity on 400", status: http.StatusBadRequest, body: `{"code":3012,"msg":"request has been blocked due to unusual activity."}`, wantUnusualActivity: true},
-		{name: "aliyun html block page", status: http.StatusMethodNotAllowed, body: blockPage, wantCaptcha: true},
 		{name: "other error code", status: http.StatusMethodNotAllowed, body: `{"code":1302,"msg":"rate limit"}`},
 		{name: "success untouched", status: http.StatusOK, body: `{"type":"message"}`},
 	} {
@@ -622,130 +558,10 @@ func TestInspectRejectionClassification(t *testing.T) {
 			if string(replayed) != test.body {
 				t.Errorf("replayed body = %q, want %q", replayed, test.body)
 			}
-			if inspection.captcha != test.wantCaptcha {
-				t.Errorf("captcha = %v, want %v", inspection.captcha, test.wantCaptcha)
-			}
 			if inspection.unusualActivity != test.wantUnusualActivity {
 				t.Errorf("unusualActivity = %v, want %v", inspection.unusualActivity, test.wantUnusualActivity)
 			}
 		})
-	}
-}
-
-func TestSendInvalidatesCaptchaOnVerificationFailure(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
-	}))
-	defer server.Close()
-
-	source := &invalidatingTokenAndCaptchaSource{}
-	client := New(server.URL, "unused")
-	client.Tokens = source
-	response, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	_ = response.Body.Close()
-	if source.invalidated != "source-param" {
-		t.Errorf("invalidated captcha = %q, want source-param", source.invalidated)
-	}
-}
-
-type refreshingTokenAndCaptchaSource struct {
-	invalidated []string
-	refreshed   int
-}
-
-func (s *refreshingTokenAndCaptchaSource) AccessToken(context.Context) (string, error) {
-	return "session-token", nil
-}
-
-func (s *refreshingTokenAndCaptchaSource) CaptchaVerifyParam(context.Context) (string, error) {
-	return "first-param", nil
-}
-
-func (s *refreshingTokenAndCaptchaSource) InvalidateCaptcha(param string) {
-	s.invalidated = append(s.invalidated, param)
-}
-
-func (s *refreshingTokenAndCaptchaSource) RefreshCaptchaVerifyParam(context.Context, string) (string, error) {
-	s.refreshed++
-	return "fresh-param", nil
-}
-
-func TestSendRetriesCaptchaChallengeWithFreshSolverProof(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		wantParam := "first-param"
-		if requests == 2 {
-			wantParam = "fresh-param"
-		}
-		if got := r.Header.Get(aliyunCaptchaHeader); got != wantParam {
-			t.Errorf("request %d CAPTCHA = %q, want %q", requests, got, wantParam)
-		}
-		if requests == 1 {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(w, `{"code":3007,"msg":"captcha verify failed"}`)
-			return
-		}
-		_, _ = fmt.Fprint(w, `{"type":"message","content":[]}`)
-	}))
-	defer server.Close()
-
-	source := &refreshingTokenAndCaptchaSource{}
-	client := New(server.URL, "unused")
-	client.Tokens = source
-	response, err := client.Send(context.Background(), &backend.Request{
-		Kind:    backend.KindAnthropic,
-		RawBody: []byte(`{"model":"glm-5.3-flash","messages":[]}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.Status != http.StatusOK || requests != 2 || source.refreshed != 1 {
-		t.Fatalf("status=%d requests=%d refreshed=%d", response.Status, requests, source.refreshed)
-	}
-	if !reflect.DeepEqual(source.invalidated, []string{"first-param"}) {
-		t.Fatalf("invalidated = %#v", source.invalidated)
-	}
-}
-
-func TestSendRetriesAliyunBlockPageWithFreshSolverProof(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		wantParam := "first-param"
-		if requests == 2 {
-			wantParam = "fresh-param"
-		}
-		if got := r.Header.Get(aliyunCaptchaHeader); got != wantParam {
-			t.Errorf("request %d CAPTCHA = %q, want %q", requests, got, wantParam)
-		}
-		if requests == 1 {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = fmt.Fprint(w, `<!doctype html><title>405</title><p>Sorry, your request has been blocked as it may cause potential threats to the server's security.</p>`)
-			return
-		}
-		_, _ = fmt.Fprint(w, `{"type":"message","content":[]}`)
-	}))
-	defer server.Close()
-
-	source := &refreshingTokenAndCaptchaSource{}
-	client := New(server.URL, "unused")
-	client.Tokens = source
-	response, err := client.Send(context.Background(), &backend.Request{
-		Kind:    backend.KindAnthropic,
-		RawBody: []byte(`{"model":"glm-5.3-flash","messages":[]}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.Status != http.StatusOK || requests != 2 || source.refreshed != 1 {
-		t.Fatalf("status=%d requests=%d refreshed=%d", response.Status, requests, source.refreshed)
 	}
 }
 
@@ -792,16 +608,6 @@ func (s staticTokenSource) AccessToken(context.Context) (string, error) {
 	return string(s), nil
 }
 
-type staticTokenAndCaptchaSource struct{}
-
-func (staticTokenAndCaptchaSource) AccessToken(context.Context) (string, error) {
-	return "session-token", nil
-}
-
-func (staticTokenAndCaptchaSource) CaptchaVerifyParam(context.Context) (string, error) {
-	return "source-param", nil
-}
-
 func TestSendUsesTokenSourceInsteadOfConfiguredKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer session-token" {
@@ -815,28 +621,6 @@ func TestSendUsesTokenSourceInsteadOfConfiguredKey(t *testing.T) {
 	client.Tokens = staticTokenSource("session-token")
 	response, err := client.Send(context.Background(), &backend.Request{
 		Kind:    backend.KindAnthropic,
-		RawBody: []byte(`{"model":"glm-5.3-flash"}`),
-	})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	_ = response.Body.Close()
-}
-
-func TestSendUsesCaptchaSourceWhenClientDidNotProvideOne(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(aliyunCaptchaHeader); got != "source-param" {
-			t.Errorf("captcha header = %q, want source-param", got)
-		}
-		_, _ = fmt.Fprint(w, `{"ok":true}`)
-	}))
-	defer server.Close()
-
-	client := New(server.URL, "stale-configured-key")
-	client.Tokens = staticTokenAndCaptchaSource{}
-	response, err := client.Send(context.Background(), &backend.Request{
-		Kind:    backend.KindAnthropic,
-		Header:  http.Header{aliyunCaptchaHeader: []string{"stale-client-param"}},
 		RawBody: []byte(`{"model":"glm-5.3-flash"}`),
 	})
 	if err != nil {

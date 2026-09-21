@@ -169,34 +169,16 @@ page open until it confirms success. The resulting ZCode session is stored at
 `zcode_auth_file` at the top level to change the path. Revisit the same page
 when the session expires.
 
-After signing in, click **Verify browser session** on that page before making a
-model request — but only when the optional CAPTCHA solver is **not** configured.
-ZCode's plan gateway requires the short-lived Aliyun browser verification
-parameter; the proxy stores one proof for up to about 40 seconds and consumes it
-for one model request, matching ZCode's one-use verification flow. Verify again
-before the next request. When `stats.redis_url` points to Redis or Valkey, the
-proof is stored in that shared service so exactly one replica can consume it.
-Without shared Redis/Valkey, a separate owner-only file beside
-`zcode-auth.json` is used for a local single-replica deployment.
-
-When the CAPTCHA solver sidecar is configured
-(`LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL`), manual browser verification is
-disabled: the login page says so and the endpoint rejects posted proofs.
-A browser proof is minted inside the operator's browser, while the model
-request leaves from the proxy's own network; presenting that foreign proof
-correlated with code-3012 unusual-activity blocks (observed 2026-09-02:
-three blocks, each within two minutes of a manual verification, while
-solver-minted proofs kept returning 200). Solver deployments use only
-solver-minted proofs — if the solver is down, model requests fail with the
-solver's error rather than risking an account-level block.
-
-Without a solver, a fresh proxy verification takes precedence over a stale
-client-supplied `X-Aliyun-Captcha-Verify-Param`. The proxy emits the current
-ZCode platform headers and keeps client identity fields under proxy control;
+Model requests follow the current open-source ZCode client: the saved ZCode JWT
+is sent as a bearer token and no browser CAPTCHA is required. The proxy emits
+the current client version, platform, locale, timezone, and attribution headers
+while keeping credentials and client identity fields under proxy control;
 inbound clients cannot override them. Request-body attribution is replaced the
 same way: `metadata.user_id` (where API clients such as Claude Code embed
-their own account and session identifiers) is rewritten to the official ZCode
-device identity, so client identifiers never reach the plan gateway.
+their own account and session identifiers) is rewritten to the ZCode device
+identity, so client identifiers never reach the plan gateway.
+The browser verification UI remains available only for the optional legacy plan
+claim endpoint; it is not part of model authentication.
 Client-supplied session correlation values are one-way derived into opaque
 proxy UUIDs before they are used in the ZCode headers or metadata, preserving
 affinity without forwarding the client's identifier. The inbound client system
@@ -541,7 +523,7 @@ flags are applied afterwards.
 | `workbuddy_auth_file`        | `LLM_PROXY_WORKBUDDY_AUTH_FILE`    | `~/.config/llm-proxy/workbuddy-auth.json` | Account session created by the WorkBuddy browser sign-in flow. |
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
-| —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof as `{"verify_param":"..."}` for every upstream request. |
+| —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for the optional plan-claim endpoint. Model requests do not use it. |
 | `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`) use their web sign-in sessions instead. |
@@ -628,8 +610,8 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET/POST | `/login`                    | Web-only xAI account sign-in for Grok |
 | GET/POST | `/login/workbuddy`          | Web-only WorkBuddy account sign-in |
 | GET/POST | `/login/codex`              | ChatGPT device-code sign-in for Codex |
-| GET/POST | `/login/zcode`              | Web-only ZCode account sign-in and browser verification |
-| POST     | `/login/zcode/captcha`      | Stores the current browser verification parameter |
+| GET/POST | `/login/zcode`              | Web-only ZCode account sign-in and optional plan-claim verification |
+| POST     | `/login/zcode/captcha`      | Stores a browser verification parameter for the optional plan-claim flow |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |

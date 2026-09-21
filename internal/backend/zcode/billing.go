@@ -10,21 +10,34 @@ import (
 	"strings"
 )
 
-// PlanUsage is one plan reported by ZCode's billing/current endpoint: the
-// plan identity plus the units granted and consumed for the current period.
-// A plan without an active entitlement carries Kind "unavailable" and a
-// Reason instead of unit totals.
+// PlanUsage is one plan reported by ZCode's authoritative billing/balance
+// endpoint. The open-source client uses plan metadata for entitlement status
+// and balances for quota counters; older billing/current responses are no
+// longer authoritative.
 type PlanUsage struct {
-	PlanID         string  `json:"plan_id"`
-	Name           string  `json:"name,omitempty"`
-	Status         string  `json:"status,omitempty"`
-	Kind           string  `json:"kind,omitempty"`
-	Reason         string  `json:"reason,omitempty"`
-	TotalUnits     float64 `json:"total_units,omitempty"`
-	UsedUnits      float64 `json:"used_units,omitempty"`
-	AvailableUnits float64 `json:"available_units,omitempty"`
-	PeriodStart    int64   `json:"period_start,omitempty"`
-	PeriodEnd      int64   `json:"period_end,omitempty"`
+	PlanID         string            `json:"plan_id"`
+	UserPlanID     string            `json:"user_plan_id,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	Status         string            `json:"status,omitempty"`
+	Kind           string            `json:"kind,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	TotalUnits     float64           `json:"total_units,omitempty"`
+	UsedUnits      float64           `json:"used_units,omitempty"`
+	AvailableUnits float64           `json:"available_units,omitempty"`
+	PeriodStart    int64             `json:"period_start,omitempty"`
+	PeriodEnd      int64             `json:"period_end,omitempty"`
+	StartsAt       int64             `json:"starts_at,omitempty"`
+	EndsAt         int64             `json:"ends_at,omitempty"`
+	Entitlements   []PlanEntitlement `json:"entitlements,omitempty"`
+}
+
+// PlanEntitlement describes the model capability attached to a plan. It is
+// part of the balance response even when no quota bucket is currently active.
+type PlanEntitlement struct {
+	EntitlementID string `json:"entitlement_id,omitempty"`
+	ShowName      string `json:"show_name,omitempty"`
+	Period        string `json:"period,omitempty"`
+	EffectiveAt   int64  `json:"effective_at,omitempty"`
 }
 
 // PlanBalance is one quota bucket reported by ZCode's billing/balance
@@ -53,16 +66,27 @@ type PlanQuota struct {
 }
 
 type planUsagePayload struct {
-	PlanID         string        `json:"plan_id"`
-	Name           string        `json:"name"`
-	Status         string        `json:"status"`
-	Kind           string        `json:"kind"`
-	Reason         string        `json:"reason"`
-	TotalUnits     flexibleFloat `json:"total_units"`
-	UsedUnits      flexibleFloat `json:"used_units"`
-	AvailableUnits flexibleFloat `json:"available_units"`
-	PeriodStart    int64         `json:"period_start"`
-	PeriodEnd      int64         `json:"period_end"`
+	PlanID         string                   `json:"plan_id"`
+	UserPlanID     string                   `json:"user_plan_id"`
+	Name           string                   `json:"name"`
+	Status         string                   `json:"status"`
+	Kind           string                   `json:"kind"`
+	Reason         string                   `json:"reason"`
+	TotalUnits     flexibleFloat            `json:"total_units"`
+	UsedUnits      flexibleFloat            `json:"used_units"`
+	AvailableUnits flexibleFloat            `json:"available_units"`
+	PeriodStart    flexibleFloat            `json:"period_start"`
+	PeriodEnd      flexibleFloat            `json:"period_end"`
+	StartsAt       flexibleFloat            `json:"starts_at"`
+	EndsAt         flexibleFloat            `json:"ends_at"`
+	Entitlements   []planEntitlementPayload `json:"entitlements"`
+}
+
+type planEntitlementPayload struct {
+	EntitlementID string        `json:"entitlement_id"`
+	ShowName      string        `json:"show_name"`
+	Period        string        `json:"period"`
+	EffectiveAt   flexibleFloat `json:"effective_at"`
 }
 
 type planBalancePayload struct {
@@ -80,9 +104,10 @@ type planBalancePayload struct {
 }
 
 type planBillingEnvelope struct {
-	Code any    `json:"code"`
-	Msg  string `json:"msg"`
-	Data struct {
+	Code    any    `json:"code"`
+	Msg     string `json:"msg"`
+	Success *bool  `json:"success"`
+	Data    struct {
 		Plans    []planUsagePayload   `json:"plans"`
 		Balances []planBalancePayload `json:"balances"`
 	} `json:"data"`
@@ -92,7 +117,7 @@ type planBillingEnvelope struct {
 // the endpoint behind the same stable client identity as Start Plan model
 // requests, but it needs no CAPTCHA verification parameter.
 func (m *Manager) PlanUsage(ctx context.Context) ([]PlanUsage, error) {
-	envelope, err := m.fetchPlanBilling(ctx, "/api/v1/zcode-plan/billing/current?app_version="+zcodeAppVersion, "plan usage")
+	envelope, err := m.fetchPlanBilling(ctx, "/api/v1/zcode-plan/billing/balance?app_version="+zcodeAppVersion, "plan usage")
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +162,7 @@ func (m *Manager) fetchPlanBilling(ctx context.Context, path, label string) (pla
 		return planBillingEnvelope{}, fmt.Errorf("decode ZCode %s response (HTTP %d)", label, resp.StatusCode)
 	}
 	code := numericCode(envelope.Code)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || code != 0 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || code != 0 || (envelope.Success != nil && !*envelope.Success) {
 		message := strings.TrimSpace(envelope.Msg)
 		if message == "" {
 			message = http.StatusText(resp.StatusCode)
@@ -161,8 +186,8 @@ func (m *Manager) newPlanBillingRequest(ctx context.Context, path, token string)
 	req.Header.Set("X-Platform", runtime.GOOS+"-"+zcodeArch())
 	req.Header.Set("X-Release-Channel", "production")
 	req.Header.Set("X-Client-Language", zcodeLanguage)
-	req.Header.Set("X-Client-Timezone", "UTC")
-	req.Header.Set("X-Os-Category", runtime.GOOS)
+	req.Header.Set("X-Client-Timezone", zcodeClientTimezone())
+	req.Header.Set("X-Os-Category", zcodeOSCategory())
 	req.Header.Set("X-Os-Version", zcodeOSVersion)
 	req.Header.Set("X-Device-Mid", deviceMID(token))
 	return req, nil
@@ -173,6 +198,7 @@ func normalizePlanUsage(payload []planUsagePayload) []PlanUsage {
 	for _, plan := range payload {
 		plans = append(plans, PlanUsage{
 			PlanID:         plan.PlanID,
+			UserPlanID:     plan.UserPlanID,
 			Name:           plan.Name,
 			Status:         plan.Status,
 			Kind:           plan.Kind,
@@ -180,11 +206,27 @@ func normalizePlanUsage(payload []planUsagePayload) []PlanUsage {
 			TotalUnits:     float64(plan.TotalUnits),
 			UsedUnits:      float64(plan.UsedUnits),
 			AvailableUnits: float64(plan.AvailableUnits),
-			PeriodStart:    plan.PeriodStart,
-			PeriodEnd:      plan.PeriodEnd,
+			PeriodStart:    int64(plan.PeriodStart),
+			PeriodEnd:      int64(plan.PeriodEnd),
+			StartsAt:       int64(plan.StartsAt),
+			EndsAt:         int64(plan.EndsAt),
+			Entitlements:   normalizePlanEntitlements(plan.Entitlements),
 		})
 	}
 	return plans
+}
+
+func normalizePlanEntitlements(payload []planEntitlementPayload) []PlanEntitlement {
+	entitlements := make([]PlanEntitlement, 0, len(payload))
+	for _, entitlement := range payload {
+		entitlements = append(entitlements, PlanEntitlement{
+			EntitlementID: entitlement.EntitlementID,
+			ShowName:      entitlement.ShowName,
+			Period:        entitlement.Period,
+			EffectiveAt:   int64(entitlement.EffectiveAt),
+		})
+	}
+	return entitlements
 }
 
 func normalizePlanBalances(payload []planBalancePayload) []PlanBalance {

@@ -160,9 +160,8 @@ func (m *Manager) HasSession() bool {
 }
 
 // CaptchaSolverConfigured reports whether an automatic CAPTCHA solver is
-// wired up. Callers use it to steer operators away from the login page's
-// browser verification: browser-minted proofs are not used when the solver
-// exists (see CaptchaVerifyParam).
+// wired up for the optional plan-claim flow. Browser-minted proofs are not
+// used when the solver exists.
 func (m *Manager) CaptchaSolverConfigured() bool {
 	return strings.TrimSpace(m.CaptchaSolverURL) != ""
 }
@@ -224,11 +223,11 @@ func (m *Manager) SetCaptchaVerifyParamContext(ctx context.Context, param string
 	return nil
 }
 
-// CaptchaVerifyParam returns the verification parameter for one model
-// request. It implements the optional source used by the ZCode backend.
+// CaptchaVerifyParam returns the verification parameter for an optional plan
+// claim.
 //
 // When an automatic solver is configured it is the only source consulted: a
-// solver proof is minted in the same egress context the model request leaves
+// solver proof is minted in the same egress context the claim request leaves
 // from, while a browser-minted proof was solved from the operator's own
 // browser. Presenting that foreign proof from the proxy correlated with
 // code-3012 unusual-activity blocks on 2026-09-02 (three blocks, each 19-84 s
@@ -252,13 +251,10 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 	return "", captchaVerificationRequiredError()
 }
 
-// TakeCaptchaVerifyParam returns a proof for one model request and consumes
-// cached browser proofs atomically. Aliyun verification parameters are
-// one-use credentials; reusing the same certifyId across model calls is
-// treated as suspicious activity by the upstream gateway. Solver proofs are
-// already minted one per call, so they do not need to be stored. Like
-// CaptchaVerifyParam, a configured solver is authoritative and browser proofs
-// are left untouched: see the 3012 evidence on CaptchaVerifyParam.
+// TakeCaptchaVerifyParam returns a proof for an optional plan claim and
+// consumes cached browser proofs atomically. Aliyun verification parameters
+// are one-use credentials. Solver proofs are already minted one per call, so
+// they do not need to be stored.
 func (m *Manager) TakeCaptchaVerifyParam(ctx context.Context) (string, error) {
 	select {
 	case <-ctx.Done():
@@ -356,10 +352,11 @@ func (m *Manager) cachedCaptchaVerifyParam(ctx context.Context) (string, error) 
 }
 
 func captchaVerificationRequiredError() error {
-	return errors.New("ZCode CAPTCHA verification is required; open /login/zcode and click Verify browser session")
+	return errors.New("ZCode CAPTCHA verification is required for this optional plan claim; open /login/zcode and click Verify for plan claim")
 }
 
-// RefreshCaptchaVerifyParam returns a distinct proof after an upstream 3007.
+// RefreshCaptchaVerifyParam returns a distinct proof after an upstream 3007
+// during the optional plan-claim flow.
 // Manual browser proofs cannot be refreshed without user interaction, while
 // the optional localhost solver mints one-use proofs on demand.
 func (m *Manager) RefreshCaptchaVerifyParam(ctx context.Context, rejected string) (string, error) {

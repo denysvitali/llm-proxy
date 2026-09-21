@@ -29,7 +29,7 @@ func TestZCodeLoginPageIsWebOnly(t *testing.T) {
 			t.Errorf("login page does not contain %q", want)
 		}
 	}
-	for _, want := range []string{"Verify browser session", "AliyunCaptcha.js", "/login/zcode/captcha", "startRequested", "automatically when ready", "if(verificationActive)return", "button:'#zcode-captcha-sdk-trigger'"} {
+	for _, want := range []string{"Verify for plan claim", "Optional plan-claim verification", "AliyunCaptcha.js", "/login/zcode/captcha", "startRequested", "automatically when ready", "if(verificationActive)return", "button:'#zcode-captcha-sdk-trigger'"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("login page does not contain %q", want)
 		}
@@ -92,7 +92,7 @@ func TestZCodeLoginPageWarnsOffBrowserVerificationWhenSolverConfigured(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "solves ZCode's browser verification automatically") {
+	if !strings.Contains(rec.Body.String(), "automatic solver for the optional plan-claim flow") {
 		t.Errorf("login page does not tell solver deployments to skip manual verification: %s", rec.Body.String())
 	}
 }

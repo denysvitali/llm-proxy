@@ -14,9 +14,9 @@ func (s *Server) zcodeLoginPage(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "ZCode account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	captchaNote := "ZCode requires a short-lived browser verification before model requests. Run this in the same browser that can access this proxy."
+	captchaNote := "Model requests do not require browser verification. This optional proof is only used when claiming a plan offer."
 	if !s.zcodeCaptchaAllowed() {
-		captchaNote = "This proxy solves ZCode's browser verification automatically. Do not run a manual verification: browser-minted proofs are presented from a different network than the proxy and have triggered upstream unusual-activity blocks."
+		captchaNote = "Model requests do not require browser verification. This proxy has an automatic solver for the optional plan-claim flow, so manual proofs are disabled."
 	}
 	loginHeaders(w)
 	// The CAPTCHA SDK runs in the user's browser and needs to contact Aliyun
@@ -25,7 +25,7 @@ func (s *Server) zcodeLoginPage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://*.alicdn.com https://*.aliyuncs.com 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://*.aliyuncs.com https://*.alicdn.com; frame-src https://*.aliyuncs.com https://*.alicdn.com; img-src 'self' data: https://*.alicdn.com https://*.aliyuncs.com; style-src 'self' https://*.alicdn.com https://*.aliyuncs.com 'unsafe-inline'; font-src 'self' data: https://*.alicdn.com https://*.aliyuncs.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; worker-src blob:")
 	_, _ = fmt.Fprint(w, `<script>window.AliyunCaptchaConfig={region:'sgp',prefix:'no8xfe'};</script>`)
 	_, _ = fmt.Fprint(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to ZCode</title><style>
-body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.wrap{max-width:560px;margin:10vh auto;padding:24px}.card{background:white;border:1px solid #dfe4ec;border-radius:18px;padding:32px;box-shadow:0 12px 32px #18223012}h1{margin:0 0 12px;font-size:28px}h2{font-size:19px;margin:28px 0 8px}p{line-height:1.55;color:#526174}.btn{display:inline-block;border:0;border-radius:10px;background:#1769e0;color:white;padding:12px 18px;font-size:16px;cursor:pointer}.btn:disabled{opacity:.55;cursor:wait}.muted{color:#68778b;font-size:14px}.steps{padding:12px 0 20px}.step{margin:12px 0}.step b{display:block;margin-bottom:3px}.captcha{border-top:1px solid #e5e9f0;padding-top:12px}.status{min-height:24px;color:#526174}.ok{color:#117a54}.err{color:#b42318}</style></head><body><main class="wrap"><section class="card"><h1>Sign in to ZCode</h1><p>Connect your ZCode account to use the Start Plan through this proxy. No JWT or upstream API key is needed in your configuration; the session is stored locally for this proxy.</p><div class="steps"><div class="step"><b>1. Start sign-in</b><span class="muted">Click the button to create a one-time browser authorization.</span></div><div class="step"><b>2. Approve in ZCode</b><span class="muted">Sign in with the account that has your Start Plan offer.</span></div><div class="step"><b>3. Return here</b><span class="muted">Keep this page open until the session is ready.</span></div></div><form method="post"><button class="btn" type="submit">Sign in with ZCode</button></form><div class="captcha"><h2>Browser verification</h2><p class="muted">`+captchaNote+`</p><div id="zcode-captcha"></div><button class="btn" id="verify-captcha" type="button">Verify browser session</button><p class="status" id="captcha-status" aria-live="polite"></p></div><p class="muted"><a href="/">Back to dashboard</a></p></section></main><script src="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"></script><script>
+body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.wrap{max-width:560px;margin:10vh auto;padding:24px}.card{background:white;border:1px solid #dfe4ec;border-radius:18px;padding:32px;box-shadow:0 12px 32px #18223012}h1{margin:0 0 12px;font-size:28px}h2{font-size:19px;margin:28px 0 8px}p{line-height:1.55;color:#526174}.btn{display:inline-block;border:0;border-radius:10px;background:#1769e0;color:white;padding:12px 18px;font-size:16px;cursor:pointer}.btn:disabled{opacity:.55;cursor:wait}.muted{color:#68778b;font-size:14px}.steps{padding:12px 0 20px}.step{margin:12px 0}.step b{display:block;margin-bottom:3px}.captcha{border-top:1px solid #e5e9f0;padding-top:12px}.status{min-height:24px;color:#526174}.ok{color:#117a54}.err{color:#b42318}</style></head><body><main class="wrap"><section class="card"><h1>Sign in to ZCode</h1><p>Connect your ZCode account to use the Start Plan through this proxy. No JWT or upstream API key is needed in your configuration; the session is stored locally for this proxy.</p><div class="steps"><div class="step"><b>1. Start sign-in</b><span class="muted">Click the button to create a one-time browser authorization.</span></div><div class="step"><b>2. Approve in ZCode</b><span class="muted">Sign in with the account that has your Start Plan offer.</span></div><div class="step"><b>3. Return here</b><span class="muted">Keep this page open until the session is ready.</span></div></div><form method="post"><button class="btn" type="submit">Sign in with ZCode</button></form><div class="captcha"><h2>Optional plan-claim verification</h2><p class="muted">`+captchaNote+`</p><div id="zcode-captcha"></div><button class="btn" id="verify-captcha" type="button">Verify for plan claim</button><p class="status" id="captcha-status" aria-live="polite"></p></div><p class="muted"><a href="/">Back to dashboard</a></p></section></main><script src="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"></script><script>
 (function(){
   var button=document.getElementById('verify-captcha');
   var status=document.getElementById('captcha-status');
@@ -54,7 +54,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.w
         setStatus('Verification received. Saving it to the proxy…');
         fetch('/login/zcode/captcha',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({verify_param:param})})
           .then(function(response){return response.json().then(function(body){return {ok:response.ok,body:body};});})
-          .then(function(result){if(!result.ok)throw new Error(result.body.error||'proxy rejected the verification');verificationActive=false;setStatus('Browser verification saved for the next model request.','ok');button.disabled=false;})
+        .then(function(result){if(!result.ok)throw new Error(result.body.error||'proxy rejected the verification');verificationActive=false;setStatus('Verification saved for the next optional plan claim.','ok');button.disabled=false;})
           .catch(function(error){startRequested=false;verificationActive=false;setStatus('Could not save verification: '+error.message,'err');button.disabled=false;});
       },
       fail:function(){startRequested=false;verificationActive=false;setStatus('Browser verification failed. Retry when ready.','err');button.disabled=false;},
@@ -95,14 +95,12 @@ func (s *Server) zcodeCaptcha(w http.ResponseWriter, r *http.Request) {
 }
 
 // zcodeCaptchaDisabledExplanation is returned when a browser verification is
-// posted while an automatic solver is configured. Browser-minted proofs
-// correlated with code-3012 unusual-activity blocks (2026-09-02: three
-// blocks, each within two minutes of a manual verification), so accepting
-// them would arm the very failure the operator is trying to clear.
-const zcodeCaptchaDisabledExplanation = "automatic CAPTCHA solving is configured for this proxy; browser verification is not used and is disabled because browser-minted proofs have triggered upstream unusual-activity blocks"
+// posted while an automatic solver is configured. The proof is only relevant
+// to the optional plan-claim flow; model requests never consume it.
+const zcodeCaptchaDisabledExplanation = "automatic CAPTCHA solving is configured for this proxy; manual browser verification is disabled for the optional plan-claim flow"
 
 // zcodeCaptchaAllowed reports whether browser-minted proofs may be stored at
-// all for this deployment.
+// all for this deployment. Model requests do not use this state.
 func (s *Server) zcodeCaptchaAllowed() bool {
 	return s.zcodeAuth != nil && !s.zcodeAuth.CaptchaSolverConfigured()
 }

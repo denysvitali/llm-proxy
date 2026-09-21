@@ -32,20 +32,11 @@ const (
 	// anthropicVersion is required by the Anthropic Messages API.
 	anthropicVersion = "2023-06-01"
 
-	// zcodeAppVersion and the identity headers below match the current ZCode
-	// desktop client. They are fixed so an arbitrary inbound client cannot
-	// create an inconsistent identity that triggers the gateway's abuse checks.
-	// The version tracks the released build: @zcode/desktop 3.12.3 (2026-09-16).
-	// Static analysis of resources/glm/zcode.cjs confirms the model-request
-	// header, attribution, metadata, and Anthropic transport shapes are
-	// unchanged from 3.11.2; the advertised version is the wire-level change.
-	zcodeAppVersion = "3.12.3"
+	// zcodeAppVersion identifies the current open-source ZCode client build.
+	// Keep this in sync with ZCode's package.json because the plan gateway uses
+	// it for client capability and billing responses.
+	zcodeAppVersion = "3.14.0"
 	zcodeLanguage   = "en-US"
-
-	// zcodeOSVersion is the kernel release advertised to the plan gateway.
-	// The official client reports its host kernel; the proxy pins one value
-	// instead so every replica presents the same stable device identity.
-	zcodeOSVersion = "6.8.0-92-generic"
 
 	// unusualActivityCooldown is how long model requests pause after the plan
 	// gateway reports code 3012 ("request has been blocked due to unusual
@@ -77,25 +68,6 @@ var (
 	zcodeSessionPrefixes = []string{"sess_", "subagent_agent_"}
 	zcodeQueryPrefixes   = []string{"query_"}
 )
-
-// captchaSource is implemented by the ZCode account manager. Keeping this
-// interface local avoids making CAPTCHA state part of the generic backend
-// contract used by unrelated providers.
-type captchaSource interface {
-	CaptchaVerifyParam(context.Context) (string, error)
-}
-
-type captchaConsumer interface {
-	TakeCaptchaVerifyParam(context.Context) (string, error)
-}
-
-type captchaInvalidator interface {
-	InvalidateCaptcha(string)
-}
-
-type captchaRefresher interface {
-	RefreshCaptchaVerifyParam(context.Context, string) (string, error)
-}
 
 // defaultModels are the models enabled for the Start Plan by the current
 // builtin provider catalog.
@@ -188,29 +160,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 	identity := requestIdentity(token, req.Header)
 	requestBody := transformStartPlanRequest(req.RawBody, identity)
-	captchaParam := strings.TrimSpace(req.Header.Get(aliyunCaptchaHeader))
-	if consumer, ok := c.Tokens.(captchaConsumer); ok {
-		// Browser proofs are one-use credentials. Account managers consume a
-		// cached proof before sending so concurrent requests cannot reuse the
-		// same Aliyun certifyId and trigger an unusual-activity block.
-		param, sourceErr := consumer.TakeCaptchaVerifyParam(ctx)
-		if sourceErr == nil {
-			captchaParam = param
-		} else if captchaParam == "" {
-			return nil, sourceErr
-		}
-	} else if source, ok := c.Tokens.(captchaSource); ok {
-		// Prefer the proxy's newest proof. Client applications can retain a
-		// previous header across retries, while the manager knows which proof
-		// was most recently generated for this proxy session.
-		param, sourceErr := source.CaptchaVerifyParam(ctx)
-		if sourceErr == nil {
-			captchaParam = param
-		} else if captchaParam == "" {
-			return nil, sourceErr
-		}
-	}
-	buildRequest := func(param string) (*http.Request, error) {
+	buildRequest := func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(requestBody))
 		if err != nil {
 			return nil, err
@@ -225,15 +175,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("X-Platform", runtime.GOOS+"-"+zcodeArch())
 		httpReq.Header.Set("X-Release-Channel", "production")
 		httpReq.Header.Set("X-Client-Language", zcodeLanguage)
-		httpReq.Header.Set("X-Client-Timezone", "UTC")
-		httpReq.Header.Set("X-Os-Category", runtime.GOOS)
-		// Static analysis of the official runtimes (desktop appfull/ and the
-		// zcode.cjs agent runtime): model requests build headers via the
-		// gin/fin builders, which include X-Os-Version (host os.release())
-		// but NOT X-Device-Mid — that header only exists on the non-model
-		// endpoints that use buildZCodeSourceHeadersFromContext. The OS
-		// version is pinned rather than read from the proxy host so every
-		// replica presents the same stable value.
+		httpReq.Header.Set("X-Client-Timezone", zcodeClientTimezone())
+		httpReq.Header.Set("X-Os-Category", zcodeOSCategory())
+		// The open-source client reports the host OS release and does not send
+		// X-Device-Mid on model requests; that header is reserved for billing
+		// and plan-claim endpoints.
 		httpReq.Header.Set("X-Os-Version", zcodeOSVersion)
 		httpReq.Header.Set("X-Request-Id", randomUUID())
 		httpReq.Header.Set("X-ZCode-Session-Type", "main")
@@ -244,10 +190,6 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		}
 		httpReq.Header.Set("Accept", accept)
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
-		if param != "" {
-			httpReq.Header.Set(aliyunCaptchaHeader, param)
-			httpReq.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
-		}
 		copyRuntimeHeaders(httpReq.Header, req.Header)
 		// Correlation IDs are generated by the official client for each model
 		// request. Reapply them after copying the narrow runtime-header set so
@@ -268,7 +210,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		}
 		return httpReq, nil
 	}
-	httpReq, err := buildRequest(captchaParam)
+	httpReq, err := buildRequest()
 	if err != nil {
 		return nil, err
 	}
@@ -281,35 +223,6 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
 	if inspection.unusualActivity {
 		c.markUnusualActivity()
-	}
-	if inspection.captcha {
-		if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
-			invalidator.InvalidateCaptcha(captchaParam)
-		}
-		if refresher, ok := c.Tokens.(captchaRefresher); ok {
-			freshParam, refreshErr := refresher.RefreshCaptchaVerifyParam(ctx, captchaParam)
-			if refreshErr == nil && freshParam != "" && freshParam != captchaParam {
-				_ = resp.Body.Close()
-				retryReq, buildErr := buildRequest(freshParam)
-				if buildErr != nil {
-					return nil, buildErr
-				}
-				resp, err = c.HTTP.Do(retryReq)
-				if err != nil {
-					return nil, fmt.Errorf("retry request to ZCode after CAPTCHA refresh failed: %w", err)
-				}
-				normalizeZCodeResponse(resp)
-				inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
-				if inspection.unusualActivity {
-					c.markUnusualActivity()
-				}
-				if inspection.captcha {
-					if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
-						invalidator.InvalidateCaptcha(freshParam)
-					}
-				}
-			}
-		}
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		// The gateway answered normally again: any past unusual-activity
@@ -391,10 +304,20 @@ type prefixedBody struct {
 
 func zcodeGatewayErrorStatus(body []byte) (int, bool) {
 	var envelope struct {
-		Code json.RawMessage `json:"code"`
-		Msg  string          `json:"msg"`
+		Code    json.RawMessage `json:"code"`
+		Msg     string          `json:"msg"`
+		Success *bool           `json:"success"`
 	}
-	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Code) == 0 || strings.TrimSpace(envelope.Msg) == "" {
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return 0, false
+	}
+	if len(envelope.Code) == 0 {
+		if envelope.Success == nil || *envelope.Success {
+			return 0, false
+		}
+		return http.StatusBadGateway, true
+	}
+	if strings.TrimSpace(envelope.Msg) == "" && (envelope.Success == nil || *envelope.Success) {
 		return 0, false
 	}
 	var code int
@@ -409,6 +332,9 @@ func zcodeGatewayErrorStatus(body []byte) (int, bool) {
 		}
 	}
 	if code == 0 {
+		if envelope.Success != nil && !*envelope.Success {
+			return http.StatusBadGateway, true
+		}
 		return 0, false
 	}
 	switch code {
@@ -418,8 +344,14 @@ func zcodeGatewayErrorStatus(body []byte) (int, bool) {
 		// of treating a permanent business verdict as a retryable 502 — the
 		// gateway has sent this code behind both HTTP 200 and HTTP 502.
 		return http.StatusTooManyRequests, true
-	case 3007:
+	case 1006:
+		return http.StatusUnauthorized, true
+	case 3001, 3006:
 		return http.StatusBadRequest, true
+	case 3007:
+		return http.StatusForbidden, true
+	case 3002, 3008, 3009, 3010:
+		return http.StatusTooManyRequests, true
 	case 3012:
 		return http.StatusMethodNotAllowed, true
 	default:
@@ -472,7 +404,7 @@ func (c *Client) clearUnusualActivity() {
 // request: a stable identity is required by ZCode's unusual-activity checks.
 func copyRuntimeHeaders(dst, src http.Header) {
 	for name, values := range src {
-		if !isRuntimeHeader(name) || strings.EqualFold(name, aliyunCaptchaHeader) || strings.EqualFold(name, aliyunCaptchaRegionHeader) {
+		if !isRuntimeHeader(name) {
 			continue
 		}
 		copied := false
@@ -491,12 +423,11 @@ func copyRuntimeHeaders(dst, src http.Header) {
 func isRuntimeHeader(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	switch lower {
-	case strings.ToLower(aliyunCaptchaHeader),
-		strings.ToLower(aliyunCaptchaRegionHeader),
-		"x-request-id",
+	case "x-request-id",
 		"x-query-id",
 		"x-session-id",
-		"x-zcode-trace-id":
+		"x-zcode-trace-id",
+		"x-zcode-session-type":
 		return true
 	default:
 		return false
@@ -536,7 +467,10 @@ func requestIdentity(token string, header http.Header) zcodeIdentity {
 	deviceMid := deviceMID(token)
 	rawSession := strings.TrimSpace(header.Get("X-Session-Id"))
 	clientSession := normalizedAttribution(rawSession, zcodeSessionPrefixes, "")
-	sessionType := "main"
+	sessionType := normalizeSessionType(header.Get("X-ZCode-Session-Type"))
+	if sessionType == "" {
+		sessionType = "main"
+	}
 	if strings.HasPrefix(rawSession, "subagent_agent_") && len(rawSession) > len("subagent_agent_") {
 		sessionType = "subagent"
 	}
@@ -552,6 +486,19 @@ func requestIdentity(token string, header http.Header) zcodeIdentity {
 		SessionID:   clientSession,
 		QueryID:     query,
 		SessionType: sessionType,
+	}
+}
+
+func normalizeSessionType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "main":
+		return "main"
+	case "subagent":
+		return "subagent"
+	case "other":
+		return "other"
+	default:
+		return ""
 	}
 }
 
@@ -580,11 +527,9 @@ func derivedUUID(seed string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
-// rejectionInspection classifies a buffered ZCode error response: a bad
-// CAPTCHA proof that a fresh one can replace, and/or an unusual-activity
-// block against the account itself.
+// rejectionInspection classifies a buffered ZCode error response that marks
+// the account as temporarily blocked for unusual activity.
 type rejectionInspection struct {
-	captcha         bool
 	unusualActivity bool
 }
 
@@ -608,30 +553,13 @@ func inspectRejection(status int, body io.ReadCloser) (rejectionInspection, io.R
 	}
 	if err := json.Unmarshal(b, &envelope); err == nil {
 		switch envelope.Code.String() {
-		case "3007":
-			// 3007 is the CAPTCHA challenge: the proof is bad and a fresh
-			// one can recover the request.
-			inspection.captcha = true
 		case "3012":
-			// 3012 marks the session as unusual activity. A fresh proof does
-			// not lift it, so preserve the proof and let the caller back off
-			// instead of retrying.
+			// 3012 marks the session as unusual activity, so let the caller
+			// back off instead of retrying.
 			inspection.unusualActivity = true
 		}
 	}
-	// Aliyun's edge security layer emits an HTML 405 page instead of ZCode's
-	// JSON challenge when it blocks the request. Treat that page the same way
-	// so a fresh solver proof can recover the request.
-	if status == http.StatusMethodNotAllowed && isAliyunBlockPage(b) {
-		inspection.captcha = true
-	}
 	return inspection, replay
-}
-
-func isAliyunBlockPage(body []byte) bool {
-	lower := bytes.ToLower(body)
-	return bytes.Contains(lower, []byte("<title>405</title>")) &&
-		bytes.Contains(lower, []byte("request has been blocked"))
 }
 
 // Models returns the models included in the Start Plan catalog known to this

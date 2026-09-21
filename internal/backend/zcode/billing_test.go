@@ -9,11 +9,11 @@ import (
 	"testing"
 )
 
-func TestPlanUsageSendsCurrentZCodeIdentity(t *testing.T) {
+func TestPlanUsageSendsBalanceZCodeIdentity(t *testing.T) {
 	t.Helper()
 	const token = "test-zcode-jwt"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/zcode-plan/billing/current" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/zcode-plan/billing/balance" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.URL.Query().Get("app_version"); got != zcodeAppVersion {
