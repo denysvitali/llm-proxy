@@ -92,7 +92,10 @@ func TestZCodeLoginPageWarnsOffBrowserVerificationWhenSolverConfigured(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "automatic solver for the optional plan-claim flow") {
+	if !strings.Contains(rec.Body.String(), "automatic CAPTCHA solver is configured") {
 		t.Errorf("login page does not tell solver deployments to skip manual verification: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Verify for plan claim") || strings.Contains(rec.Body.String(), "AliyunCaptcha.js") {
+		t.Error("solver-configured login page still renders the manual browser verification widget")
 	}
 }

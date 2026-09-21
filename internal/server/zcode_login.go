@@ -14,10 +14,12 @@ func (s *Server) zcodeLoginPage(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "ZCode account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	captchaNote := "Model requests do not require browser verification. This optional proof is only used when claiming a plan offer."
 	if !s.zcodeCaptchaAllowed() {
-		captchaNote = "Model requests do not require browser verification. This proxy has an automatic solver for the optional plan-claim flow, so manual proofs are disabled."
+		loginHeaders(w)
+		_, _ = fmt.Fprint(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to ZCode</title><style>body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.wrap{max-width:560px;margin:10vh auto;padding:24px}.card{background:white;border:1px solid #dfe4ec;border-radius:18px;padding:32px;box-shadow:0 12px 32px #18223012}h1{margin:0 0 12px;font-size:28px}p{line-height:1.55;color:#526174}.btn{display:inline-block;border:0;border-radius:10px;background:#1769e0;color:white;padding:12px 18px;font-size:16px;cursor:pointer}.muted{color:#68778b;font-size:14px}</style></head><body><main class="wrap"><section class="card"><h1>Sign in to ZCode</h1><p>Connect your ZCode account to use the Start Plan through this proxy. The automatic CAPTCHA solver is configured, so model requests and optional plan claims do not need a manual browser verification.</p><form method="post"><button class="btn" type="submit">Sign in with ZCode</button></form><p class="muted"><a href="/">Back to dashboard</a></p></section></main></body></html>`)
+		return
 	}
+	captchaNote := "Model requests do not require browser verification. This optional proof is only used when claiming a plan offer."
 	loginHeaders(w)
 	// The CAPTCHA SDK runs in the user's browser and needs to contact Aliyun
 	// directly. This page is still a tightly scoped login surface; the more
@@ -136,7 +138,11 @@ func (s *Server) zcodeLogin(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p><p><a href="/login/zcode">Try again</a> · <a href="/">Dashboard</a></p></section></main></body></html>`, html.EscapeString(err.Error()))
 			} else {
-				_, _ = fmt.Fprint(w, `</div><p class="ok">Sign-in successful. Your ZCode Start Plan is ready.</p><p><a href="/login/zcode">Open browser verification</a> · <a href="/">Dashboard</a></p></section></main></body></html>`)
+				action := `<a href="/login/zcode">Open browser verification</a> · `
+				if !s.zcodeCaptchaAllowed() {
+					action = ""
+				}
+				_, _ = fmt.Fprintf(w, `</div><p class="ok">Sign-in successful. Your ZCode Start Plan is ready.</p><p>%s<a href="/">Dashboard</a></p></section></main></body></html>`, action)
 			}
 			if canFlush {
 				flusher.Flush()
