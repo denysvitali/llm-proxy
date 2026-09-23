@@ -185,6 +185,13 @@ func normalizeCodexModelSelector(model string) (string, string, error) {
 	}
 }
 
+// stripClaudeContextSuffix removes the context-window marker Happy appends to
+// Claude model selections. It is client-side selection metadata, not part of
+// the upstream provider's model ID.
+func stripClaudeContextSuffix(model string) string {
+	return strings.TrimSuffix(model, "[1m]")
+}
+
 // resolveWithFallbacks maps an inbound model name to a backend + upstream
 // model, and reports the fallback entries attached to the route entry that
 // matched (explicit route or default route; qualified IDs and catalog
@@ -262,6 +269,7 @@ func (s *Server) resolveChain(ctx context.Context, model string) ([]route, bool)
 	if err != nil {
 		return nil, false
 	}
+	normalized = stripClaudeContextSuffix(normalized)
 	primary, fallbacks, ok := s.resolveWithFallbacks(ctx, normalized)
 	if !ok {
 		return nil, false
