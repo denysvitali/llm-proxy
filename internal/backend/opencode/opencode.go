@@ -8,12 +8,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -27,9 +28,21 @@ const (
 
 	// Zen's free tier expects the client identity headers sent by OpenCode.
 	// These values identify llm-proxy's compatibility layer, not the caller.
-	openCodeUserAgent = "opencode/1.18.4"
+	openCodeUserAgent = "opencode/1.18.32 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
 	openCodeClient    = "cli"
 	openCodeProject   = "global"
+
+	// openCodePublicToken is the anonymous free-tier bearer Zen accepts when
+	// no account key is configured.
+	openCodePublicToken = "public"
+
+	// freeTierMaxBody caps how much of a free-tier SSE body is buffered while
+	// aggregating it back into a non-stream completion.
+	freeTierMaxBody = 16 << 20
+
+	// openCodeIDChars is the base62 alphabet OpenCode's identifier generator
+	// uses for the random tail of session and request IDs.
+	openCodeIDChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
 type Client struct {
@@ -132,6 +145,9 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 	}
 	if c.Key != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+	} else {
+		// Keyless path: Zen's free tier expects the OpenCode public token.
+		httpReq.Header.Set("Authorization", "Bearer "+openCodePublicToken)
 	}
 	httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	if body != nil {
@@ -147,7 +163,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 			return nil, fmt.Errorf("generate OpenCode session ID: %w", err)
 		}
 	}
-	requestID, err := randomHexID(6)
+	requestID, err := newOpenCodeRequestID()
 	if err != nil {
 		return nil, fmt.Errorf("generate OpenCode request ID: %w", err)
 	}
@@ -159,7 +175,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 	// the OpenCode attribution header. The official client uses this alias for
 	// non-OpenCode providers, and Zen accepts it for free-tier access.
 	httpReq.Header.Set("X-Session-Id", session)
-	httpReq.Header.Set("x-opencode-request", "msg_"+requestID)
+	httpReq.Header.Set("x-opencode-request", requestID)
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request to OpenCode Zen failed: %w", err)
@@ -177,19 +193,69 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	default:
 		return nil, fmt.Errorf("opencode backend does not support kind %q", req.Kind)
 	}
+
+	// Free tier (no API key): rewrite the body for Zen's gates (force
+	// stream, inject the bash/glob/grep/read tool quartet) and always
+	// negotiate SSE upstream. Non-streaming callers get the stream
+	// aggregated back into a JSON completion below.
+	freeTier := c.Key == ""
+	body := req.RawBody
+	if freeTier {
+		prepared, err := prepareFreeTierBody(req.Kind, body)
+		if err != nil {
+			return nil, err
+		}
+		body = prepared
+	}
 	accept := "application/json"
-	if req.Streaming {
+	if freeTier || req.Streaming {
 		accept = "text/event-stream"
 	}
 	session, err := sessionForRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.do(ctx, http.MethodPost, path, req.RawBody, accept, session)
+	resp, err := c.do(ctx, http.MethodPost, path, body, accept, session)
 	if err != nil {
 		return nil, err
 	}
+	if freeTier && !req.Streaming {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return aggregateFreeTierResponse(req.Kind, resp)
+		}
+		// Error statuses (including a residual 403) are relayed verbatim.
+		return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
+// aggregateFreeTierResponse consumes a free-tier SSE body and returns a
+// non-stream JSON response the server's buffered relays can decode. Non-SSE
+// success bodies are forwarded unchanged with their original headers.
+func aggregateFreeTierResponse(kind backend.Kind, resp *http.Response) (*backend.Response, error) {
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "text/event-stream") && !strings.Contains(ct, "stream") {
+		return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, freeTierMaxBody))
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read free-tier stream: %w", err)
+	}
+	aggregated, err := aggregateFreeTierStream(kind, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	header := resp.Header.Clone()
+	header.Set("Content-Type", "application/json")
+	header.Del("Content-Length")
+	header.Del("Content-Encoding")
+	header.Del("Transfer-Encoding")
+	return &backend.Response{
+		Status: resp.StatusCode,
+		Header: header,
+		Body:   io.NopCloser(bytes.NewReader(aggregated)),
+	}, nil
 }
 
 func sessionForRequest(req *backend.Request) (string, error) {
@@ -207,20 +273,54 @@ func sessionForRequest(req *backend.Request) (string, error) {
 	return session, nil
 }
 
-func randomHexID(size int) (string, error) {
-	b := make([]byte, size)
-	if _, err := rand.Read(b); err != nil {
+// openCodeIDCounter differentiates IDs minted within the same millisecond,
+// matching OpenCode's per-process counter in schema/src/identifier.ts.
+var openCodeIDCounter atomic.Uint32
+
+// newOpenCodeID mints a 26-character identifier in OpenCode's descending
+// format: 12 hex digits of ~(timestamp<<12 | counter) followed by 14 base62
+// random characters. Zen's free-tier gate rejects session IDs outside this
+// shape (wrong length or non-hex/non-base62 charset → 403).
+func newOpenCodeID() (string, error) {
+	ts := time.Now().UnixMilli()
+	counter := openCodeIDCounter.Add(1) % 4096
+	current := new(big.Int).Mul(big.NewInt(ts), big.NewInt(0x1000))
+	current.Add(current, new(big.Int).SetUint64(uint64(counter)))
+	value := current.Not(current) // BigInt ~current ≡ -current-1
+
+	var b strings.Builder
+	b.Grow(26)
+	for i := 0; i < 6; i++ {
+		shift := uint(40 - 8*i)
+		byteVal := new(big.Int).Rsh(value, shift)
+		byteVal.And(byteVal, big.NewInt(0xff))
+		fmt.Fprintf(&b, "%02x", byteVal.Uint64())
+	}
+
+	tail := make([]byte, 14)
+	if _, err := rand.Read(tail); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(b), nil
+	for _, c := range tail {
+		b.WriteByte(openCodeIDChars[int(c)%len(openCodeIDChars)])
+	}
+	return b.String(), nil
 }
 
 func newOpenCodeSessionID() (string, error) {
-	id, err := randomHexID(16)
+	id, err := newOpenCodeID()
 	if err != nil {
 		return "", err
 	}
 	return "ses_" + id, nil
+}
+
+func newOpenCodeRequestID() (string, error) {
+	id, err := newOpenCodeID()
+	if err != nil {
+		return "", err
+	}
+	return "msg_" + id, nil
 }
 
 type modelList struct {

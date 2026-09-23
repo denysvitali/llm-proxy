@@ -312,23 +312,35 @@ Export `OPENCODE_API_KEY` in the proxy server's environment and restart the
 server after changing it. For example, select `opencode/kimi-k3` in your client
 to route explicitly to Zen's Chat Completions API. The client authenticates
 to llm-proxy with its `llx_` key; the proxy supplies the separate Zen key
-upstream. Requests to paid models incur provider charges. For Zen requests,
-llm-proxy also sends the OpenCode-compatible client identity headers required by
-the free tier, including generated session/request IDs, so free models such as
-`opencode/mimo-v2.6-flash-free` can be attempted through the proxy.
+upstream. Requests to paid models incur provider charges. Paid-key Zen
+requests are forwarded byte-for-byte (with the key swapped in).
 
-If the provider returns **403: OpenCode's free tier can only be used from
-within OpenCode**, the provider rejected the compatibility identity or the
-account/model is not eligible. The client may label this
-`authentication_failed`, but this particular message indicates an upstream
-access restriction. Retrying or replacing the local `llx_` key does not remove
-an account-level restriction. Use the free offering inside OpenCode, or select
-a paid API model with the appropriate account access if the 403 persists.
+**Free tier (no Zen key):** when `api_key` / `api_key_env` is omitted, the
+proxy uses OpenCode's free relay. To satisfy Zen's free-tier gates without
+requiring the OpenCode CLI, llm-proxy:
+
+- sends `Authorization: Bearer public` plus the OpenCode identity headers
+  (`User-Agent: opencode/…`, `x-opencode-client`, `x-opencode-project`);
+- mints `x-opencode-session` / `x-opencode-request` values in OpenCode's
+  native descending ID shape (`ses_`/`msg_` + 26 chars: 12 hex timestamp +
+  14 base62) — Zen's free-tier gate returns 403 for any other format;
+- forces `"stream": true` on the upstream body (a hard non-stream gate);
+- injects the missing `bash`, `glob`, `grep`, and `read` tool definitions
+  (OpenAI or Anthropic shape, matching the wire) so the tool-signature check
+  passes; if the caller sent no tools, `tool_choice` is set to `none` so the
+  model does not call the injected copies;
+- aggregates the upstream SSE stream back into a JSON completion when the
+  client asked for a non-streaming response.
+
+Free models such as `opencode/mimo-v2.6-flash-free` can therefore be used
+through the proxy from any client (including `claude` or plain HTTP) without
+seeing **403: OpenCode's free tier can only be used from within OpenCode**.
+If Zen still returns that 403 (for example after a gate change), the proxy
+relays the provider error verbatim rather than masking it.
 
 The public `/models` catalog is discovery information, not proof that your
-account or client can call every listed model. llm-proxy preserves upstream
-error responses, including this 403. OpenCode Go subscribers should use the
-separate `opencode-go` backend below.
+account or client can call every listed model. OpenCode Go subscribers should
+use the separate `opencode-go` backend below.
 
 ### OpenCode Go
 

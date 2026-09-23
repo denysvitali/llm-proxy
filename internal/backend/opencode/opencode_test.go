@@ -224,8 +224,8 @@ func TestSendSpoofsOpenCodeIdentityHeaders(t *testing.T) {
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
 	}
-	if got := rec.Header.Get("x-opencode-request"); !strings.HasPrefix(got, "msg_") || len(got) != len("msg_")+12 {
-		t.Errorf("x-opencode-request = %q, want msg_ followed by 12 hex characters", got)
+	if got := rec.Header.Get("x-opencode-request"); !strings.HasPrefix(got, "msg_") || len(got) != len("msg_")+26 {
+		t.Errorf("x-opencode-request = %q, want msg_ + 26-char OpenCode ID", got)
 	}
 	if got := req.Header.Get("x-opencode-session"); got != "caller-session" {
 		t.Errorf("request session = %q, want %q", got, "caller-session")
@@ -248,8 +248,9 @@ func TestSendGeneratesAndReusesOpenCodeSession(t *testing.T) {
 	if firstSession == "" {
 		t.Fatal("first Send did not store a generated session")
 	}
-	if !strings.HasPrefix(firstSession, "ses_") {
-		t.Errorf("generated session = %q, want ses_ prefix", firstSession)
+	// Zen's free-tier gate requires ses_ + 26 chars (12 hex time + 14 base62).
+	if len(firstSession) != 4+26 || !strings.HasPrefix(firstSession, "ses_") {
+		t.Errorf("generated session = %q (len %d), want ses_ + 26-char OpenCode ID", firstSession, len(firstSession))
 	}
 	if got := rec.Header.Get("x-opencode-session"); got != firstSession {
 		t.Errorf("first outbound session = %q, want %q", got, firstSession)
@@ -272,7 +273,7 @@ func TestSendAuthorization(t *testing.T) {
 		wantAuth string // empty means the header must be absent
 	}{
 		{"with key", "test-key", "Bearer test-key"},
-		{"without key", "", ""},
+		{"without key", "", "Bearer public"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -387,8 +388,8 @@ func TestModelsFiltersEmptyIDsAndWorksWithoutKey(t *testing.T) {
 	if rec.Path != "/models" {
 		t.Errorf("path = %q, want /models", rec.Path)
 	}
-	if got := rec.Header.Get("Authorization"); got != "" {
-		t.Errorf("Authorization = %q, want absent", got)
+	if got := rec.Header.Get("Authorization"); got != "Bearer public" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer public")
 	}
 }
 
@@ -408,5 +409,43 @@ func TestModelsHTTPError(t *testing.T) {
 	}
 	if string(httpErr.Body) != "upstream exploded" {
 		t.Errorf("HTTPError.Body = %q, want %q", httpErr.Body, "upstream exploded")
+	}
+}
+
+func TestNewOpenCodeSessionIDFormat(t *testing.T) {
+	for i := 0; i < 32; i++ {
+		id, err := newOpenCodeSessionID()
+		if err != nil {
+			t.Fatalf("newOpenCodeSessionID: %v", err)
+		}
+		if len(id) != 30 || !strings.HasPrefix(id, "ses_") {
+			t.Fatalf("session %q (len %d), want ses_ + 26 chars", id, len(id))
+		}
+		body := id[4:]
+		// First 12 chars: lowercase hex timestamp.
+		for j := 0; j < 12; j++ {
+			c := body[j]
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+				t.Fatalf("session time part %q at %d: %q is not lowercase hex", body, j, c)
+			}
+		}
+		// Last 14 chars: base62.
+		for j := 12; j < 26; j++ {
+			c := body[j]
+			ok := c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
+			if !ok {
+				t.Fatalf("session tail %q at %d: %q is not base62", body, j, c)
+			}
+		}
+	}
+}
+
+func TestNewOpenCodeRequestIDFormat(t *testing.T) {
+	id, err := newOpenCodeRequestID()
+	if err != nil {
+		t.Fatalf("newOpenCodeRequestID: %v", err)
+	}
+	if len(id) != 4+26 || !strings.HasPrefix(id, "msg_") {
+		t.Fatalf("request id %q (len %d), want msg_ + 26 chars", id, len(id))
 	}
 }
