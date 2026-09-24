@@ -32,13 +32,13 @@ export function TimeRangeControl({
       value={value}
       onChange={onChange}
       disabled={disabled}
-      // iOS segmented track: hairline thumb on the shared --segmented-*
-      // materials so the control matches the header pill-nav.
+      // Console segmented control: hairline-ruled thumb on the shared
+      // --segmented-* materials, matching the header nav.
       styles={{
         root: { maxWidth: '100%', flexShrink: 0, ...trackStyle },
         indicator: {
           backgroundColor: 'var(--segmented-thumb)',
-          boxShadow: 'var(--segmented-thumb-shadow)',
+          boxShadow: '0 0 0 1px var(--hairline)',
           transitionDuration: reduceMotion ? '0ms' : undefined,
         },
         label: {

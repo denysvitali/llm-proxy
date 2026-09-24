@@ -1,28 +1,24 @@
-/* App-level chrome that sits under Mantine's tokens. Loaded after
-   @mantine/core styles so these win where they overlap.
+/* App-level chrome for the llm-proxy operator console. Imported AFTER
+   @mantine/core, so these rules win where they overlap.
 
-   Design language: Apple HIG. Dark mode is true black (#000) — surfaces
-   lighten as content stacks (iOS-style), never a gray slab. Light mode is
-   the #F5F5F7 marketing canvas with white cards. Everything else is
-   hairlines, restraint, and SF-type hierarchy. */
+   Design language: dark-first control room. Near-black layered canvas, cards
+   one step lighter with a hairline instead of a shadow, a single saturated
+   accent, and tabular numerics everywhere a number can be scanned vertically.
+   Light mode is a true peer with its own stepped surfaces — not an inverted
+   copy of the dark ramp. */
 
-[data-mantine-color-scheme='light'] {
-  color-scheme: light;
-  /* Header pill-nav: iOS segmented control materials. */
-  --segmented-track: rgba(120, 120, 128, 0.12);
-  --segmented-thumb: #ffffff;
-  --segmented-thumb-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.1),
-    0 0 0 0.5px rgba(0, 0, 0, 0.04);
-}
+:root {
+  /* Geometry shared by chrome. Kept as tokens so no rule re-derives a radius. */
+  --radius-nav: 6px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--mantine-primary-color-filled);
+  --focus-ring-color-strong: var(--mantine-color-text);
 
-[data-mantine-color-scheme='dark'] {
-  color-scheme: dark;
-  --segmented-track: rgba(255, 255, 255, 0.07);
-  --segmented-thumb: rgba(255, 255, 255, 0.14);
-  --segmented-thumb-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.5),
-    0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  /* Elevation is a hairline, not a shadow: on near-black a shadow is invisible
+     and a border is the only honest separator. */
+  --hairline: var(--mantine-color-default-border);
+  --numeric-font: var(--mantine-font-family-monospace);
 }
 
 html,
@@ -32,109 +28,116 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Keep short display headings optically tight without compressing body copy. */
-.mantine-Title-root[data-order='3'] {
-  letter-spacing: -0.02em;
-}
-
-.mantine-Title-root[data-order='4'] {
+/* Display headings track tight; body copy never gets squeezed. */
+.mantine-Title-root {
   letter-spacing: -0.014em;
 }
 
 /* ---------------------------------------------------------------------------
-   Canvases
+   Canvases + surfaces.
 
-   Light: Apple's #F5F5F7 with two barely-there tints so the page doesn't read
-   as dead gray. Dark: TRUE BLACK with a single cool halo at the top — the
-   same trick iOS uses for large-title screens. */
+   The card surface is exported from palette.ts as the exact value the chart
+   validator was run against, so charts and their containers cannot drift. */
+
+[data-mantine-color-scheme='light'] {
+  color-scheme: light;
+  --canvas: #f4f5f7;
+  --card: #ffffff;
+  --sunken: #eceef1;
+  --hairline: rgba(0, 0, 0, 0.1);
+  --chart-grid-color: rgba(0, 0, 0, 0.08);
+  --chart-cursor-fill: rgba(0, 0, 0, 0.04);
+  --segmented-track: rgba(0, 0, 0, 0.06);
+  --segmented-thumb: #ffffff;
+  --interactive-card-hover: #f7f9fb;
+  --data-good: #1a9e5f;
+  --data-warning: #c98a00;
+  --data-serious: #e07b1a;
+  --data-critical: #d63b30;
+}
+
+[data-mantine-color-scheme='dark'] {
+  color-scheme: dark;
+  --canvas: #0b0d10;
+  --card: #14161a;
+  --sunken: #101318;
+  --hairline: rgba(255, 255, 255, 0.1);
+  --chart-grid-color: rgba(255, 255, 255, 0.09);
+  --chart-cursor-fill: rgba(255, 255, 255, 0.06);
+  --segmented-track: rgba(255, 255, 255, 0.07);
+  --segmented-thumb: #272d36;
+  --interactive-card-hover: #1a1e25;
+  /* Status ramp re-stepped for the dark surface rather than reused from light:
+     the light-mode values sit too dark to read as a cue on near-black. */
+  --data-good: #2fbf71;
+  --data-warning: #e3b341;
+  --data-serious: #f0913f;
+  --data-critical: #ff6b5e;
+}
 
 [data-mantine-color-scheme='light'] body {
-  background:
-    radial-gradient(1100px 500px at 85% -10%, rgba(0, 113, 227, 0.055) 0%, rgba(0, 113, 227, 0) 55%),
-    radial-gradient(900px 480px at 0% 0%, rgba(52, 199, 89, 0.04) 0%, rgba(52, 199, 89, 0) 50%),
-    #f5f5f7;
+  background: var(--canvas);
 }
 
 [data-mantine-color-scheme='dark'] body {
   background:
-    radial-gradient(1100px 520px at 88% -12%, rgba(10, 132, 255, 0.09) 0%, rgba(10, 132, 255, 0) 55%),
-    #000;
+    radial-gradient(1200px 520px at 80% -12%, rgba(15, 111, 196, 0.07) 0%, rgba(15, 111, 196, 0) 60%),
+    var(--canvas);
+}
+
+/* Cards sit one step above the canvas. On dark, the border must be LIGHTER
+   than the surface — a darker border is invisible against near-black. */
+[data-mantine-color-scheme='light'] :where(.mantine-Card-root, .mantine-Paper-root) {
+  background-color: var(--card);
+  border-color: var(--hairline);
+}
+
+[data-mantine-color-scheme='dark'] :where(.mantine-Card-root, .mantine-Paper-root) {
+  background-color: var(--card);
+  border-color: var(--hairline);
 }
 
 /* ---------------------------------------------------------------------------
-   Frosted chrome (header, footer, drawer) — backdrop blur over content,
-   saturate for the vividness iOS adds to its material. */
+   Chrome: header/footer are opaque, not frosted.
+
+   A control room is dense; translucency over scrolling rows costs legibility
+   for an effect that fights the hairline language. Opaque + a single hairline. */
 
 .mantine-AppShell-header,
 .mantine-AppShell-footer {
-  backdrop-filter: saturate(1.8) blur(20px);
-  -webkit-backdrop-filter: saturate(1.8) blur(20px);
-  background-color: color-mix(in srgb, var(--mantine-color-body) 72%, transparent);
-}
-
-[data-mantine-color-scheme='dark'] .mantine-AppShell-header,
-[data-mantine-color-scheme='dark'] .mantine-AppShell-footer {
-  background-color: rgba(0, 0, 0, 0.68);
-}
-
-/* Hairline separators, iOS style: faint on light, fainter on black. */
-[data-mantine-color-scheme='light'] .mantine-AppShell-header,
-[data-mantine-color-scheme='light'] .mantine-AppShell-footer {
-  box-shadow: 0 0.5px 0 rgba(0, 0, 0, 0.15);
-}
-
-[data-mantine-color-scheme='dark'] .mantine-AppShell-header,
-[data-mantine-color-scheme='dark'] .mantine-AppShell-footer {
-  box-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.14);
-}
-
-/* Footer: opaque themed surface (unlike the frosted header) so scrolled
-   cards never show through under the nav labels. Hairline on top only. */
-[data-mantine-color-scheme='light'] .mantine-AppShell-footer {
-  background-color: #f5f5f7;
-  box-shadow: none;
-  border-top: 0.5px solid rgba(0, 0, 0, 0.15);
-}
-
-[data-mantine-color-scheme='dark'] .mantine-AppShell-footer {
-  background-color: #000;
-  box-shadow: none;
-  border-top: 0.5px solid rgba(255, 255, 255, 0.14);
+  background-color: var(--card);
+  border-color: var(--hairline);
 }
 
 .mantine-AppShell-footer {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
-/* ---------------------------------------------------------------------------
-   Cards & raised surfaces
-
-   On black, borders must be *lighter* than the surface, never darker. Light
-   cards keep Apple's soft diffuse shadow. */
-
-[data-mantine-color-scheme='light'] .mantine-Card-root,
-[data-mantine-color-scheme='light'] .mantine-Paper-root {
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.025),
-    0 6px 20px -6px rgba(0, 0, 0, 0.065);
-}
-
-[data-mantine-color-scheme='dark'] .mantine-Card-root,
-[data-mantine-color-scheme='dark'] .mantine-Paper-root {
-  background-color: var(--mantine-color-dark-7);
-  border-color: rgba(255, 255, 255, 0.11);
-}
-
-/* Tooltips float above everything — on black they need a real surface, not
-   another black layer. Dark tooltips use Apple's elevated gray. */
-[data-mantine-color-scheme='dark'] .mantine-Tooltip-tooltip {
-  background-color: var(--mantine-color-dark-6);
-  border: 0.5px solid rgba(255, 255, 255, 0.12);
-  color: var(--mantine-color-dark-0);
+[data-mantine-color-scheme='dark'] .mantine-AppShell-header {
+  background-color: #0f1216;
 }
 
 /* ---------------------------------------------------------------------------
-   Interactive cards: Apple's subtle press + hover, no shadow dance. */
+   Numerics: the single most important rule in this file. Any value a human
+   compares vertically — stat tiles, table cells, axis ticks, percentile bars —
+   uses tabular figures in the mono stack, so digits occupy equal width. */
+
+.mantine-Table-root td,
+.mantine-Table-root th,
+.tabular,
+.stat-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.stat-value {
+  font-family: var(--numeric-font);
+  letter-spacing: -0.02em;
+}
+
+/* ---------------------------------------------------------------------------
+   Interaction. Hairline discipline: a hover changes a surface tint, never a
+   shadow, and never a border color. */
 
 a,
 .mantine-UnstyledButton-root {
@@ -143,63 +146,67 @@ a,
 
 @media (hover: hover) {
   .desktop-nav-link:not([data-active]):hover {
-    background: color-mix(in srgb, var(--mantine-color-gray-6) 18%, transparent);
+    background: var(--segmented-track);
   }
 
-  .mantine-Card-root[style*='cursor: pointer'] {
-    transition: transform 160ms cubic-bezier(0.25, 0.1, 0.25, 1),
-      background-color 160ms ease;
+  .interactive-card {
+    transition: background-color 120ms ease, border-color 120ms ease;
   }
-  .mantine-Card-root[style*='cursor: pointer']:hover {
-    transform: scale(1.008);
-    background-color: color-mix(in srgb, var(--mantine-color-brand-8) 4%, var(--mantine-color-dark-7));
+  .interactive-card:hover {
+    background-color: var(--interactive-card-hover);
+    border-color: color-mix(in srgb, var(--mantine-primary-color-filled) 35%, var(--hairline));
   }
-  [data-mantine-color-scheme='light'] .mantine-Card-root[style*='cursor: pointer']:hover {
-    background-color: #fbfbfd;
+  .interactive-card:active {
+    background-color: var(--sunken);
   }
-  .mantine-Card-root[style*='cursor: pointer']:active {
-    transform: scale(0.985);
+}
+
+/* Table rows read as rows, not cards: a tint on hover, nothing else. */
+.activity-row {
+  border-radius: var(--mantine-radius-sm);
+  padding: 8px 10px;
+}
+
+@media (hover: hover) {
+  .activity-row:hover {
+    background-color: var(--mantine-color-default-hover);
   }
 }
 
 /* ---------------------------------------------------------------------------
-   Drawer: iOS sheet. Full-width header, generous title, hairline under it.
-   Right-side sheets get rounded leading corners like iOS detents, plus a soft
-   ambient shadow so the sheet separates from the dimmed page. */
+   Segmented controls: a control-room toggle, not an iOS capsule. */
+
+.mantine-SegmentedControl-root {
+  background: var(--segmented-track);
+  padding: 2px;
+}
+
+.mantine-SegmentedControl-indicator {
+  background-color: var(--segmented-thumb);
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+/* ---------------------------------------------------------------------------
+   Drawer / sheet: a side panel in a console, so it gets a detent radius and a
+   real separation from the dimmed page. */
 
 .mantine-Drawer-content {
   overscroll-behavior: contain;
-  box-shadow: -8px 0 40px rgba(0, 0, 0, 0.16);
+  background-color: var(--card);
+  border-left: 1px solid var(--hairline);
+}
+
+.mantine-Drawer-header {
+  background-color: var(--card);
+  border-bottom: 1px solid var(--hairline);
+  padding-block: var(--mantine-spacing-sm);
+  min-height: 56px;
+  align-items: center;
+  gap: var(--mantine-spacing-sm);
 }
 
 .mantine-Drawer-body {
   padding-bottom: max(var(--mantine-spacing-lg), env(safe-area-inset-bottom, 0px));
-}
-
-@media (min-width: 48em) {
-  .mantine-Drawer-content {
-    border-radius: var(--mantine-radius-lg) 0 0 var(--mantine-radius-lg);
-  }
-}
-
-[data-mantine-color-scheme='dark'] .mantine-Drawer-content {
-  background-color: var(--mantine-color-dark-8);
-  border-left: 0.5px solid rgba(255, 255, 255, 0.1);
-}
-
-[data-mantine-color-scheme='dark'] .mantine-Drawer-header {
-  background-color: color-mix(in srgb, var(--mantine-color-dark-8) 88%, transparent);
-}
-
-.mantine-Drawer-header {
-  padding-block: var(--mantine-spacing-sm);
-  min-height: 64px;
-  align-items: center;
-  gap: var(--mantine-spacing-sm);
-  border-bottom: 0.5px solid var(--mantine-color-default-border);
-  background-color: color-mix(in srgb, var(--mantine-color-body) 88%, transparent);
-  backdrop-filter: saturate(1.8) blur(20px);
-  -webkit-backdrop-filter: saturate(1.8) blur(20px);
 }
 
 .mantine-Drawer-title {
@@ -207,46 +214,31 @@ a,
   overflow-wrap: anywhere;
 }
 
-.mantine-Drawer-close {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--mantine-radius-sm);
+@media (min-width: 48em) {
+  .mantine-Drawer-content {
+    border-radius: 0;
+    box-shadow: -1px 0 0 var(--hairline);
+  }
+}
+
+@media (pointer: coarse) {
+  .mantine-Drawer-close {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 /* ---------------------------------------------------------------------------
-   Segmented controls (time range, color scheme): iOS capsule styling. */
+   Focus: one geometry, two colors. The strong ring uses the text color so it
+   stays legible on the canvas, the card, and the sunken surfaces. */
 
-.mantine-SegmentedControl-root {
-  background: var(--segmented-track);
-  padding: 3px;
-}
-
-[data-mantine-color-scheme='dark'] .mantine-SegmentedControl-root {
-  background: rgba(255, 255, 255, 0.08);
-  border: 0.5px solid rgba(255, 255, 255, 0.07);
-}
-
-.mantine-SegmentedControl-indicator {
-  box-shadow: var(--segmented-thumb-shadow);
+:where(a[href], button, summary, [tabindex], [role='button']):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* ---------------------------------------------------------------------------
-   Mantine charts: grid/axis/tick dressing so charts feel etched into the
-   surface instead of drawn on top of it. */
-
-[data-mantine-color-scheme='light'] {
-  --chart-grid-color: rgba(0, 0, 0, 0.08);
-  --chart-cursor-fill: rgba(0, 0, 0, 0.04);
-}
-
-[data-mantine-color-scheme='dark'] {
-  --chart-grid-color: rgba(255, 255, 255, 0.1);
-  --chart-cursor-fill: rgba(255, 255, 255, 0.06);
-}
-
-/* ---------------------------------------------------------------------------
-   Setup snippet block: dark code surface in both schemes, like Apple's
-   documentation code blocks. */
+   Setup snippet: a terminal block in both modes. */
 
 .snippet-block {
   margin: 0;
@@ -258,75 +250,38 @@ a,
   tab-size: 2;
   font-size: 0.82rem;
   line-height: 1.55;
-  font-family: var(--mantine-font-family-monospace);
-  background: var(--mantine-color-dark-8);
-  color: var(--mantine-color-dark-1);
-  border-top: 0.5px solid var(--mantine-color-dark-6);
-  border-radius: 0 0 var(--mantine-radius-lg) var(--mantine-radius-lg);
+  font-family: var(--numeric-font);
+  background: var(--sunken);
+  color: var(--mantine-color-text);
+  border: 1px solid var(--hairline);
+  border-radius: var(--mantine-radius-md);
 }
 
 .snippet-block code {
   font: inherit;
 }
 
-/* Inset rings stay visible inside the clipping card and on both code schemes. */
 .snippet-block:focus-visible {
-  outline: 2px solid var(--mantine-color-brand-9);
-  outline-offset: -3px;
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: -1px;
 }
 
 /* Inline identifiers may wrap; executable snippets keep their whitespace and
    horizontal scrolling instead of being reformatted at narrow widths. */
 .mantine-Code-root:not([data-block]) {
   overflow-wrap: anywhere;
+  font-family: var(--numeric-font);
 }
 
-/* Page titles sit above KPI rows; keep a hair of breathing room. */
 .page-header {
-  padding-top: 4px;
+  padding-top: 2px;
 }
 
 .page-header > * {
   min-width: 0;
 }
 
-@media (pointer: coarse) {
-  .mantine-Drawer-close {
-    width: 44px;
-    height: 44px;
-  }
-}
-
-.models-page .page-header {
-  margin-bottom: 0;
-}
-
-/* Extend Mantine's keyboard ring to plain links and focusable data marks.
-   Keep input/segmented-control proxy focus styling under Mantine's control. */
-:where(a[href], button, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--mantine-primary-color-filled);
-  outline-offset: 2px;
-}
-
-.models-page button:focus-visible,
-.mantine-AppShell-footer a:focus-visible {
-  outline: 2px solid var(--mantine-color-text);
-  outline-offset: 2px;
-}
-
-/* Tabular activity rows (recent requests, error lists): hover like a table. */
-.activity-row {
-  border-radius: var(--mantine-radius-md);
-  padding: 8px 10px;
-}
-
-@media (hover: hover) {
-  .activity-row:hover {
-    background-color: var(--mantine-color-default-hover);
-  }
-}
-
-/* Include portalled sheets, menus, and tooltips in the motion kill-switch.
+/* A motion kill-switch that also covers portalled sheets, menus, and tooltips.
    Near-zero animations still dispatch completion events for UI state machines. */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -337,13 +292,5 @@ a,
     animation-delay: 0ms !important;
     transition: none !important;
     scroll-behavior: auto !important;
-  }
-
-  .mantine-Card-root[style*='cursor: pointer']:is(:hover, :active) {
-    transform: none;
-  }
-
-  .snippet-block {
-    scroll-behavior: auto;
   }
 }

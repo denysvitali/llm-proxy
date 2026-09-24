@@ -104,7 +104,9 @@ function LineKey({ item }: { item: ColoredSeries }) {
   )
 }
 
-// Frosted surface above the plot; values lead, series names follow.
+// Opaque elevated surface above the plot; values lead, series names follow.
+// Opaque rather than frosted: the tooltip sits over dense rows, and blur there
+// costs number legibility for an effect the hairline language doesn't use.
 function ChartTooltip({ payload, timestamp, series }: {
   payload: ReadonlyArray<{ dataKey?: unknown; value?: unknown }>
   timestamp: string
@@ -118,10 +120,8 @@ function ChartTooltip({ payload, timestamp, series }: {
       radius="md"
       style={{
         maxWidth: 'min(320px, calc(100vw - 32px))',
-        backgroundColor: 'color-mix(in srgb, var(--mantine-color-default) 88%, transparent)',
-        backdropFilter: 'saturate(1.8) blur(16px)',
-        WebkitBackdropFilter: 'saturate(1.8) blur(16px)',
-        borderColor: 'var(--mantine-color-default-border)',
+        backgroundColor: 'var(--card)',
+        borderColor: 'var(--hairline)',
       }}
     >
       <Text size="xs" c="dimmed" mb={6} style={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -200,6 +200,11 @@ export function HistoryLineChart({ title, description, data, series, height = 13
 }) {
   const pal = useChartPalette()
   const id = useId()
+  // Series colors are assigned by the caller's stable series ORDER, which is
+  // the fixed categorical slot order (input, output, cache read, cache write).
+  // Callers must pass their series in that canonical order so a series keeps its
+  // hue when a chart is filtered — color follows the entity, not its rank
+  // (DESIGN.md §5). A caller that reorders its array would repaint the series.
   const coloredSeries = series.map((item, index) => ({
     ...item,
     color: pal.series[index] ?? pal.series[0],
@@ -273,8 +278,8 @@ export function HistoryLineChart({ title, description, data, series, height = 13
               strokeWidth={2}
               strokeDasharray="0"
               areaProps={{ strokeLinecap: 'round', strokeLinejoin: 'round' }}
-              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
-              activeDotProps={{ r: 5, fill: coloredSeries[0].color, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
+              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--card)' }}
+              activeDotProps={{ r: 5, fill: coloredSeries[0].color, strokeWidth: 2, stroke: 'var(--card)' }}
             />
           ) : (
             <LineChart
@@ -282,8 +287,8 @@ export function HistoryLineChart({ title, description, data, series, height = 13
               strokeWidth={2}
               strokeDasharray="0"
               lineProps={{ strokeLinecap: 'round', strokeLinejoin: 'round' }}
-              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
-              activeDotProps={{ r: 5, strokeWidth: 2, stroke: 'var(--mantine-color-body)' }}
+              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--card)' }}
+              activeDotProps={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }}
             />
           )}
           {coloredSeries.length > 1 && (
@@ -313,7 +318,11 @@ export function HistoryBarChart({ title, description, points, formatter = fmtInt
 }) {
   const pal = useChartPalette()
   const id = useId()
-  const barSeries = { name: 'value', label: title, formatter, color: color ?? pal.series[2] }
+  // One measure, one color: the default is the single magnitude hue, not a
+  // categorical slot. A caller may pass `color` to tie the bars to a specific
+  // entity (e.g. a per-model hue), but an unpassed bar chart must never borrow
+  // a series color, which would read as "this is the cache-read series".
+  const barSeries = { name: 'value', label: title, formatter, color: color ?? pal.magnitude }
   const data = points.map((point): HistoryChartData => {
     const value = sampleValue(point.value, formatter)
     return value === undefined ? { time: point.ts } : { time: point.ts, value }

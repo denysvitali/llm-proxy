@@ -1,6 +1,9 @@
-import { Stack, Text, ThemeIcon, Title } from '@mantine/core'
+import { Stack, Text, Title } from '@mantine/core'
 import type { ReactNode } from 'react'
 
+// Empty state. An idle proxy is the common case, not an edge case, so this has
+// to read as informative rather than broken: a quiet outlined glyph (no filled
+// colored disc competing with real data), the fact, and then what to do next.
 export function EmptyState({
   icon,
   title,
@@ -11,16 +14,37 @@ export function EmptyState({
   hint?: string
 }) {
   return (
-    <Stack role="status" aria-atomic="true" align="center" py="xl" px="sm" gap={6} miw={0} style={{ overflowWrap: 'anywhere' }}>
-      <ThemeIcon variant="light" color="gray" size={44} radius="xl" mb="xs" aria-hidden="true">
+    <Stack
+      role="status"
+      aria-atomic="true"
+      align="center"
+      py="xl"
+      px="sm"
+      gap={6}
+      miw={0}
+      style={{ overflowWrap: 'anywhere' }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 40,
+          height: 40,
+          borderRadius: 'var(--mantine-radius-md)',
+          border: '1px solid var(--hairline)',
+          color: 'var(--mantine-color-dimmed)',
+          marginBottom: 4,
+        }}
+      >
         {icon}
-      </ThemeIcon>
-      {/* h5 semantics, md visuals: the hint (size sm) must stay one step down. */}
-      <Title order={5} size="md" ta="center" maw="100%">
+      </span>
+      <Title order={5} fz={13} ta="center" maw="100%">
         {title}
       </Title>
       {hint && (
-        <Text size="sm" c="dimmed" ta="center" lh={1.45} w="100%" maw={360}>
+        <Text size="xs" c="dimmed" ta="center" lh={1.45} w="100%" maw={380}>
           {hint}
         </Text>
       )}

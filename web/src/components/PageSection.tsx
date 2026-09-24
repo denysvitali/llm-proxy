@@ -1,6 +1,11 @@
 import { Box, Group, Stack, Text, Title } from '@mantine/core'
 import { useId, type ReactNode } from 'react'
 
+// A titled band of the page. The heading is small-caps and quiet so the
+// content inside it stays the loudest thing in the section; the `extra` slot
+// (a TimeRangeControl, a refresh action) right-aligns on the same baseline.
+// Sections are `<section>` + `aria-labelledby` so a screen reader can jump
+// between them by landmark.
 export function PageSection({
   title,
   description,
@@ -18,25 +23,28 @@ export function PageSection({
     <Box component="section" aria-labelledby={titleId} mb="xl" miw={0}>
       <Group
         justify="space-between"
-        align={description ? 'flex-end' : 'center'}
+        align="flex-end"
         wrap="wrap"
         gap="sm"
-        mb="md"
+        mb="sm"
+        style={{ borderBottom: '1px solid var(--hairline)', paddingBottom: 8 }}
       >
-        <Stack gap={4} style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
+        <Stack gap={2} style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
           <Title
             order={2}
-            size="h4"
             id={titleId}
-            fw={600}
+            fz={11}
+            tt="uppercase"
+            c="dimmed"
+            fw={700}
             m={0}
             lh={1.3}
-            style={{ letterSpacing: '-0.015em' }}
+            style={{ letterSpacing: '0.07em' }}
           >
             {title}
           </Title>
           {description && (
-            <Text size="sm" c="dimmed" lh={1.45} m={0}>
+            <Text size="xs" c="dimmed" lh={1.4} m={0}>
               {description}
             </Text>
           )}
