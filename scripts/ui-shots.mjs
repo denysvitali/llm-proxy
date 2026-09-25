@@ -13,6 +13,9 @@
 //   --only a,b      capture only the listed shot ids (see --list)
 //   --skip-build    reuse the existing web/dist + webdist instead of rebuilding
 //   --list          print the available shot ids and exit
+//   --base-url URL  read-only capture from an existing server (no build or seed)
+//   --full-page     capture complete page height
+//   --regression    run mocked navigation and empty-data regression checks
 //
 // stdout = the absolute path of every PNG written, one per line (pipeable).
 // stderr = progress + warnings. Non-zero exit means the run failed.
@@ -33,10 +36,10 @@ const WEBDIST = path.join(ROOT, 'internal', 'server', 'web', 'webdist');
 const MOCK_UPSTREAM = path.join(ROOT, 'scripts', 'e2e', 'mock_upstream.py');
 
 // --- fixed, proven-good toolchain locations on this box ---------------------
-// Playwright is installed in the npx cache, not in the repo. Do not run
-// `npm ci`; web/node_modules is already present.
-const PLAYWRIGHT_CJS = '/home/workspace/.npm/_npx/e41f203b7505f1fb/node_modules/playwright/index.js';
-const BROWSER_BIN =
+// Defaults use the installed workspace toolchain; environment variables can
+// select another Playwright module or compatible Chromium binary.
+const PLAYWRIGHT_CJS = process.env.PLAYWRIGHT_MODULE || '/home/workspace/.npm/_npx/e41f203b7505f1fb/node_modules/playwright/index.js';
+const BROWSER_BIN = process.env.CHROMIUM_EXECUTABLE ||
   '/home/workspace/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell';
 const SHIM_DIR = '/tmp/pwchrome-libs';
 const FONTCONFIG = '/tmp/fonts.conf';
@@ -47,13 +50,16 @@ const warn = (m) => process.stderr.write(`WARNING: ${m}\n`);
 
 // ---------------------------------------------------------------- args ------
 function parseArgs(argv) {
-  const opts = { out: '/tmp/ui-shots/current', only: null, skipBuild: false, list: false };
+  const opts = { out: '/tmp/ui-shots/current', only: null, skipBuild: false, list: false, baseURL: null, fullPage: false, regression: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') opts.out = path.resolve(argv[++i]);
     else if (a.startsWith('--out=')) opts.out = path.resolve(a.slice(6));
     else if (a === '--only') opts.only = argv[++i].split(',').map((s) => s.trim()).filter(Boolean);
     else if (a.startsWith('--only=')) opts.only = a.slice(7).split(',').map((s) => s.trim()).filter(Boolean);
+    else if (a === '--base-url') opts.baseURL = new URL(argv[++i]).href.replace(/\/$/, '');
+    else if (a === '--full-page') opts.fullPage = true;
+    else if (a === '--regression') opts.regression = true;
     else if (a === '--skip-build') opts.skipBuild = true;
     else if (a === '--list') opts.list = true;
     else die(`unknown argument: ${a}  (try --help)`);
@@ -72,7 +78,12 @@ const ROUTES = [
 const VIEWS = {
   'desktop-light': { colorScheme: 'light', viewport: { width: 1440, height: 900 } },
   'desktop-dark': { colorScheme: 'dark', viewport: { width: 1440, height: 900 } },
-  // Mobile is captured dark-only: that is the scheme the revamp targets.
+  // Both schemes get a narrow touch viewport.
+  'mobile-light': {
+    colorScheme: 'light',
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2, isMobile: true, hasTouch: true,
+  },
   'mobile-dark': {
     colorScheme: 'dark',
     viewport: { width: 390, height: 844 },
@@ -88,6 +99,7 @@ function buildShots() {
     shots.push({ id: `${r.id}-light`, route: r, view: 'desktop-light' });
     shots.push({ id: `${r.id}-dark`, route: r, view: 'desktop-dark' });
     shots.push({ id: `${r.id}-mobile`, route: r, view: 'mobile-dark' });
+    shots.push({ id: `${r.id}-mobile-light`, route: r, view: 'mobile-light' });
   }
   shots.push({ id: 'home-footer', route: ROUTES[0], view: 'desktop-dark', action: 'scrollBottom' });
   shots.push({
@@ -104,6 +116,9 @@ function buildShots() {
     action: 'drawer',
     trigger: '[aria-label^="Inspect "]',
   });
+  for (const shot of shots.filter((item) => item.action === 'drawer')) {
+    shots.push({ ...shot, id: `${shot.id}-mobile`, view: 'mobile-dark' });
+  }
   return shots;
 }
 
@@ -295,12 +310,7 @@ function buildSpa() {
   const vite = path.join(WEB, 'node_modules', '.bin', 'vite');
   if (!fs.existsSync(vite)) die(`vite not installed at ${vite} -- web/node_modules is missing`);
 
-  // NOTE: we deliberately do NOT run scripts/build-web.sh (it does `npm ci`,
-  // which is forbidden here) and NOT `npm run build` (that is `tsc -b &&
-  // vite build`, and tsc -b currently fails on in-flight theme.ts edits that we
-  // do not own). So types are NOT checked by this harness.
-  warn('building with `vite build` only -- `tsc -b` is skipped, so TypeScript errors will NOT fail this run');
-  const r = spawnSync(vite, ['build'], { cwd: WEB, encoding: 'utf8' });
+  const r = spawnSync('npm', ['run', 'build'], { cwd: WEB, encoding: 'utf8' });
   if (r.status !== 0) {
     die('vite build failed:\n' + ((r.stdout || '') + (r.stderr || '')).trimEnd().split('\n').slice(-40).join('\n'));
   }
@@ -388,7 +398,7 @@ async function seedTraffic(base, total = 8) {
 }
 
 // ---------------------------------------------------------------- capture ---
-async function capture(outDir, base, shots) {
+async function capture(outDir, base, shots, opts) {
   const pw = (await import(PLAYWRIGHT_CJS)).default;
   const { chromium } = pw;
 
@@ -425,7 +435,8 @@ async function capture(outDir, base, shots) {
         if (m.type() === 'error') consoleErrors.push(`${shot.id}: ${m.text()}`);
       };
       page.on('console', onConsole);
-      page.on('pageerror', (e) => consoleErrors.push(`${shot.id}: pageerror: ${e.message}`));
+      const pageErrors = [];
+      page.on('pageerror', (e) => { pageErrors.push(e.message); consoleErrors.push(`${shot.id}: pageerror: ${e.message}`); });
 
       const url = base + shot.route.route;
       try {
@@ -435,7 +446,9 @@ async function capture(outDir, base, shots) {
       }
       // networkidle alone races the react-query fetches; give the SPA a beat
       // to paint real data instead of the loading skeletons.
-      await page.waitForTimeout(2000);
+      await page.getByRole('heading', { level: 1 }).waitFor({ timeout: 15000 });
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForTimeout(700);
 
       if (shot.action === 'scrollBottom') {
         await page.evaluate(() => {
@@ -452,27 +465,34 @@ async function capture(outDir, base, shots) {
         const trigger = page.locator(shot.trigger).first();
         const n = await page.locator(shot.trigger).count();
         if (n === 0) {
-          warn(`no element matches ${shot.trigger} -- ${shot.id} will show the closed page`);
+          throw new Error(`no element matches ${shot.trigger} for ${shot.id}`);
         } else {
           await trigger.click();
           // Mantine Drawer mounts with role=dialog; wait for it, but do not
-          // fail the run if the transition is slow.
+          // allow a short transition before capturing.
           await page
             .locator('[role="dialog"]')
             .first()
-            .waitFor({ state: 'visible', timeout: 5000 })
-            .catch(() => warn(`drawer for ${shot.id} did not open within 5s; shooting anyway`));
+            .waitFor({ state: 'visible', timeout: 5000 });
           await page.waitForTimeout(800);
         }
       }
 
       const file = path.join(outDir, shotFile(shot));
-      await page.screenshot({ path: file });
+      await page.screenshot({ path: file, fullPage: opts.fullPage, animations: 'disabled' });
+      if (pageErrors.length) throw new Error(`${shot.id}: ${pageErrors.join('; ')}`);
+      if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)) {
+        throw new Error(`${shot.id}: page overflows horizontally`);
+      }
       written.push(file);
       log(`  shot ${shot.id} -> ${file}`);
 
       page.off('console', onConsole);
       await page.close();
+    }
+    if (opts.regression) {
+      const { checkRegressions } = await import('./ui-shots/regressions.mjs');
+      await checkRegressions(browser, base);
     }
   } finally {
     for (const c of Object.values(contexts)) await c.close().catch(() => {});
@@ -502,6 +522,15 @@ async function main() {
 
   ensureFontConfig();
   ensureBrowserLibs();
+
+  // Existing servers are reference-only: never build, start mocks, or seed traffic.
+  if (opts.baseURL) {
+    const { written, consoleErrors } = await capture(opts.out, opts.baseURL, shots, opts);
+    for (const file of written) process.stdout.write(file + '\n');
+    for (const error of consoleErrors) warn(error);
+    log(`[ui-shots] captured ${written.length} reference(s) from ${opts.baseURL}`);
+    return;
+  }
 
   if (opts.skipBuild) {
     warn('--skip-build: reusing the existing webdist/; the SPA may be stale');
@@ -549,7 +578,7 @@ async function main() {
   await seedTraffic(base);
   log('[ui-shots] seeded mock traffic; capturing ...');
 
-  const { written, consoleErrors } = await capture(opts.out, base, shots);
+  const { written, consoleErrors } = await capture(opts.out, base, shots, opts);
 
   for (const p of written) process.stdout.write(p + '\n');
   log(`[ui-shots] wrote ${written.length} file(s) to ${opts.out}`);

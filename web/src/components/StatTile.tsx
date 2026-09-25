@@ -11,38 +11,24 @@ interface StatTileProps {
   accent?: Accent
 }
 
-// Dense control-room KPI tile.
-//
-// The number is the hero and everything else recedes: a small mono icon, a
-// micro-caps label, then a large tabular figure that bottom-aligns so a row of
-// six tiles shares one baseline. The hint sits under a hairline rather than in
-// a card of its own, so a KPI band reads as one dense strip instead of six
-// competing boxes (DESIGN.md §1, §4).
-//
-// The value uses the `stat-value` class (mono + tabular-nums from index.css):
-// operators scan these vertically, and proportional figures make a column
-// shimmer. A missing value renders an em dash with an accessible label rather
-// than a blank, because "no data" and "zero" are different facts.
 export default function StatTile({ label, value, hint, icon, accent = 'brand' }: StatTileProps) {
   const labelId = useId()
   const hasValue = value !== null && value !== undefined && value !== '' && typeof value !== 'boolean'
     && !(typeof value === 'number' && !Number.isFinite(value))
   const hasHint = hint !== null && hint !== undefined && hint !== false && hint !== ''
 
-  // The icon is a quiet monochrome cue, not a colored badge: in a row of six,
-  // six saturated chips compete with the figures they annotate. The accent is
-  // kept as a prop for callers and applied only to the icon's stroke color.
   const accentColor: Record<Accent, string> = {
     brand: 'var(--mantine-primary-color-filled)',
     teal: 'var(--data-good)',
     orange: 'var(--data-serious)',
-    grape: 'var(--data-critical)',
+    grape: 'var(--mantine-color-grape-text)',
     gray: 'var(--mantine-color-dimmed)',
     red: 'var(--data-critical)',
   }
 
   return (
     <Paper
+      className="stat-tile"
       withBorder
       p="md"
       radius="lg"
@@ -55,7 +41,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
       <Group justify="space-between" align="center" wrap="nowrap" mb={6} gap="xs">
         <Text
           id={labelId}
-          fz={10.5}
+          fz={11}
           tt="uppercase"
           c="dimmed"
           fw={600}
@@ -82,7 +68,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
         <Text
           component="div"
           className="stat-value"
-          fz={26}
+          fz={28}
           fw={600}
           lh={1.15}
           style={{ overflowWrap: 'anywhere' }}

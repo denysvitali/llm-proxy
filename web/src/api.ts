@@ -194,8 +194,11 @@ export function fetchGrokUsage(): Promise<GrokUsage> {
   return getJSON<GrokUsage>('/api/grok/usage')
 }
 
-export function fetchZcodeUsage(): Promise<ZcodeUsage> {
-  return getJSON<ZcodeUsage>('/api/zcode/usage')
+export async function fetchZcodeUsage(): Promise<ZcodeUsage> {
+  // Go encodes an uninitialized slice as null. Normalize at the API boundary
+  // so every consumer sees a collection, including during background refresh.
+  const usage = await getJSON<Omit<ZcodeUsage, 'plans'> & { plans?: ZcodePlanUsage[] | null }>('/api/zcode/usage')
+  return { ...usage, plans: usage.plans ?? [] }
 }
 
 export function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {

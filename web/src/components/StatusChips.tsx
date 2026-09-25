@@ -86,7 +86,7 @@ export default function StatusChips({
               aria-label={description}
               leftSection={<Dot color={token[sev]} />}
               styles={{
-                root: { flex: 'none', cursor: 'default', fontVariantNumeric: 'tabular-nums' },
+                root: { flex: 'none', cursor: 'default', fontVariantNumeric: 'tabular-nums', color: token[sev], background: `color-mix(in srgb, ${token[sev]} 10%, var(--card))` },
                 label: { overflow: 'visible' },
               }}
             >
@@ -103,7 +103,7 @@ export default function StatusChips({
             tabIndex={0}
             aria-label={`${rest.length} more statuses: ${restLabel}`}
             styles={{
-              root: { flex: 'none', cursor: 'default', color: 'var(--mantine-color-dimmed)' },
+              root: { flex: 'none', cursor: 'default', background: 'var(--sunken)', color: 'var(--mantine-color-dimmed)' },
               label: { overflow: 'visible' },
             }}
           >

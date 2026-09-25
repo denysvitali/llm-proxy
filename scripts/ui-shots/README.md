@@ -13,14 +13,14 @@ That's the whole recipe: it builds the SPA, boots mock upstream + proxy on free
 ports, waits for `/healthz`, seeds traffic, shoots, prints one absolute path per
 line to stdout, and tears down its own processes.
 
-- default output `/tmp/ui-shots/current`; `--only home,models-drawer` for a
+- default output `/tmp/ui-shots/current`; `--only home-light,models-drawer` for a
   subset; `--list` prints ids; `--skip-build` reuses the existing `web/dist`.
 - **After a real `web/` change the lead must still commit the rebuilt
   `internal/server/web/webdist/`** — the harness only overwrites it locally.
 
-15 shots: `/`, `/models`, `/providers`, `/setup` x (desktop light, desktop dark,
-mobile dark) + home scrolled to the footer + the open drawer on models and
-providers.
+21 shots: `/`, `/models`, `/providers`, `/setup` x (desktop light, desktop dark,
+mobile light, mobile dark) + home scrolled to the footer + the open drawer on models and
+providers, on desktop and mobile.
 
 ## Two segfault traps — do not "clean these up"
 
@@ -45,11 +45,23 @@ Known-good browser binary (`chrome-headless-shell-linux64`, **not** `chrome-linu
 
 Playwright: `/home/workspace/.npm/_npx/e41f203b7505f1fb/node_modules/playwright`.
 
-## Deliberate, don't "fix"
+## Existing pages and regressions
 
-- The build is `vite build` only — **`tsc -b` is skipped** (it currently fails on
-  unused imports in `web/src/theme.ts`), so type errors won't fail the run. The
-  harness prints a WARNING.
-- The generated config sets `stats.persist_file: ""`; otherwise the proxy loads
-  the shared `~/.local/state/llm-proxy/stats.json` and the dashboard shows other
-  agents' leftover traffic instead of this run's.
+`--base-url URL` uses an existing server in read-only mode: no build, local
+processes, or seed traffic. This works with the internal cluster service or
+Vite configured with `LLM_PROXY_API_TARGET`. See the root `AGENTS.md` for the
+complete live-reference and local-preview commands.
+
+`--full-page` captures the complete page height. `--regression` also runs mocked
+browser checks for home-page navigation with nullable ZCode plans, null activity
+feeds, provider search, failed APIs, and render-error recovery.
+
+Captures fail for uncaught page errors, missing headings, horizontal overflow,
+or drawers that fail to open. Inspect the actual PNGs after a successful run.
+The default build now runs `npm run build`, including TypeScript checking.
+
+Override `PLAYWRIGHT_MODULE` or `CHROMIUM_EXECUTABLE` to use another installed
+toolchain. The library shim is scoped to Chromium only.
+
+The generated mock config sets `stats.persist_file: ""` so it cannot load the
+shared `~/.local/state/llm-proxy/stats.json` from unrelated local runs.

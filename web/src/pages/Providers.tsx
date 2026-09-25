@@ -11,16 +11,15 @@ import {
   Group,
   Indicator,
   Loader,
-  Paper,
-  RingProgress,
+  Select,
+  TextInput,
   SimpleGrid,
   Stack,
   Table,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core'
-import { IconLogin, IconServerOff } from '@tabler/icons-react'
+import { IconLogin, IconServerOff, IconSearch, IconSearchOff, IconChevronRight } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchBackendStatsSeries, fetchGrokUsage, fetchOverview, fetchStats } from '../api'
 import type { GrokUsage, ModelStat, OverviewBackend, StatsSeries } from '../api'
@@ -28,6 +27,7 @@ import { GrokUsageCompact } from '../components/GrokUsageCard'
 import { useMediaQuery } from '@mantine/hooks'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
+import StatTile from '../components/StatTile'
 import UptimeBadge from '../components/UptimeBadge'
 import TokenMixBar, { TokenLegend } from '../components/TokenMixBar'
 import {
@@ -42,8 +42,8 @@ import { TimeRangeControl } from '../components/TimeRangeControl'
 import { providerSegments } from './Overview'
 import { Fade } from '../App'
 
-const CATALOG_PREVIEW = 6
-const ROUTES_PREVIEW = 8
+const CATALOG_PREVIEW = 3
+const ROUTES_PREVIEW = 3
 
 // fmtPct renders an exact zero as an em dash, which would hide a genuine
 // 0% success rate (every request failed) or a 0% tool error rate. Render a
@@ -111,6 +111,8 @@ export default function ProvidersPage() {
   const models = statsQ.data?.models ?? []
   const segByBackend = new Map(providerSegments(models, pal.series))
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
+  const [search, setSearch] = useState('')
+  const [healthFilter, setHealthFilter] = useState('all')
   const [selectedName, setSelectedName] = useState<string | null>(null)
   // Resolve the drawer selection from current overview data, so a backend
   // removed from config while the drawer is open doesn't render a stale object.
@@ -132,15 +134,26 @@ export default function ProvidersPage() {
   }).length
   const missingAuthCount = backends.filter((b) => !b.hasKey && !b.authConfigured).length
 
+  const visibleBackends = backends.filter((backend) => {
+    const query = search.trim().toLowerCase()
+    const matchesSearch = !query || [backend.name, backend.host, ...(backend.models ?? [])]
+      .some((value) => value.toLowerCase().includes(query))
+    const agg = backendAgg(models, backend.name)
+    const health = healthState(agg.requests, agg.uptime)
+    const attention = !backend.catalogOK || (!backend.hasKey && !backend.authConfigured)
+      || health === 'degraded' || health === 'unhealthy'
+    return matchesSearch && (healthFilter === 'all' || (healthFilter === 'attention' ? attention : health === healthFilter))
+  })
+
   const selectedModels = selected ? models.filter((m) => m.backend === selected.name) : []
   const selectedAgg = backendAgg(models, selected?.name ?? '')
 
   return (
     <Fade pending={ovQ.isPending || statsQ.isPending}>
-      <Stack gap="md">
+      <Stack gap="lg">
         <PageHeader
           title="Providers"
-          subtitle={`${backends.length} configured · health, token mix, and catalog`}
+          subtitle="Manage connections and keep an eye on provider health."
         />
         {ovQ.isPending ? (
           <Group justify="center" py="xl">
@@ -182,8 +195,18 @@ export default function ProvidersPage() {
               <CompactStat label="Healthy" value={statsState === 'ready' ? fmtInt(healthyCount) : '—'} />
               <CompactStat label="Missing auth" value={fmtInt(missingAuthCount)} />
             </SimpleGrid>
-            <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-              {backends.map((b) => (
+            <Box className="provider-toolbar">
+              <TextInput aria-label="Search providers" placeholder="Search providers or models…" leftSection={<IconSearch size={17} />}
+                size="md" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
+              <Select aria-label="Filter provider health" size="md" value={healthFilter} allowDeselect={false}
+                disabled={statsState !== 'ready'} onChange={(value) => setHealthFilter(value ?? 'all')}
+                data={[{ value: 'all', label: 'All providers' }, { value: 'attention', label: 'Needs attention' },
+                  { value: 'healthy', label: 'Healthy' }, { value: 'no-traffic', label: 'No traffic' }]} />
+            </Box>
+            <Text size="xs" c="dimmed" aria-live="polite">Showing {visibleBackends.length} of {backends.length} providers · health reflects all recorded requests</Text>
+            {visibleBackends.length === 0 && <EmptyState icon={<IconSearchOff size={24} />} title="No matching providers" hint="Try another name or choose a different health filter." />}
+            <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="md">
+              {visibleBackends.map((b) => (
                 <ProviderCard
                   key={b.name}
                   backend={b}
@@ -240,17 +263,7 @@ export default function ProvidersPage() {
 }
 
 function CompactStat({ label, value }: { label: string; value: string }) {
-  const labelId = useId()
-  return (
-    <Paper withBorder radius="lg" p="md" miw={0} role="group" aria-labelledby={labelId}>
-      <Text id={labelId} size="xs" tt="uppercase" c="dimmed" fw={600} style={{ letterSpacing: '0.03em', overflowWrap: 'anywhere' }}>
-        {label}
-      </Text>
-      <Text fz={22} fw={700} style={{ fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' }}>
-        {value}
-      </Text>
-    </Paper>
-  )
+  return <StatTile label={label} value={value} />
 }
 
 // A native indicator plus explicit text keeps configuration state readable
@@ -300,8 +313,8 @@ function AuthStatus({ backend }: { backend: OverviewBackend }) {
           href={account.login}
           size="xs"
           mih={44}
-          color="violet"
-          variant="light"
+          color="brand"
+          variant={backend.authConfigured ? 'subtle' : 'light'}
           onClick={(event) => event.stopPropagation()}
           leftSection={<IconLogin size={12} stroke={1.8} aria-hidden="true" />}
         >
@@ -347,99 +360,46 @@ function ProviderCard({
   onInspect: () => void
 }) {
   const [catalogExpanded, setCatalogExpanded] = useState(false)
+  const [routesExpanded, setRoutesExpanded] = useState(false)
   const agg = backendAgg(models, b.name)
   const requests = agg.requests
   const uptime = agg.uptime
   const segTotal = segments.reduce((s, x) => s + x.value, 0)
   const shownModels = catalogExpanded ? (b.models ?? []) : (b.models?.slice(0, CATALOG_PREVIEW) ?? [])
   const extra = (b.models?.length ?? 0) - shownModels.length
-  const shownRoutes = routes.slice(0, ROUTES_PREVIEW)
-  const extraRoutes = routes.length - shownRoutes.length
+  const shownRoutes = routesExpanded ? routes : routes.slice(0, ROUTES_PREVIEW)
   const statsReady = statsState === 'ready'
-
-  // Ring color mirrors UptimeBadge thresholds; the badge under the ring
-  // carries the icon+label so state is never color-alone. While stats are
-  // unavailable the ring is a gray "—" and the badge reads "no data" instead
-  // of the misleading "no traffic".
-  const ringColor =
-    !statsReady || !requests ? 'gray' : uptime >= 0.99 ? 'teal' : uptime >= 0.9 ? 'yellow' : 'red'
-  const ringTooltip = !statsReady
-    ? 'Request stats unavailable'
-    : requests
-      ? `${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`
-      : 'No requests recorded yet'
 
   return (
     <Card
       withBorder
       radius="lg"
       p="md"
-      onClick={onInspect}
+      className="provider-card"
       miw={0}
       h="100%"
-      style={{ cursor: 'pointer' }}
     >
-      <Group justify="space-between" wrap="nowrap" align="flex-start" gap="md">
-        {/* Left: identity + config health. */}
-        <Box miw={0}>
-          <Group gap="xs" mb={4} wrap="wrap">
-            <Title order={4} mb={0} style={{ overflowWrap: 'anywhere' }}>
-              {b.name}
-            </Title>
-            <Badge size="sm" variant="light" color={b.enabled ? 'teal' : 'gray'}>
-              {b.enabled ? 'enabled' : 'disabled'}
-            </Badge>
-            {/* Keyboard/AT path to the drawer; the card's own click affordance
-                is pointer-only. */}
-            <Button
-              size="xs"
-              mih={44}
-              variant="subtle"
-              aria-label={`Inspect ${b.name}`}
-              onClick={(event) => {
-                event.stopPropagation()
-                onInspect()
-              }}
-            >
-              Details
-            </Button>
-          </Group>
-          <Code style={{ overflowWrap: 'anywhere' }}>{b.host}</Code>
-          <Group gap="sm" wrap="wrap" mt={8}>
-            <AuthStatus backend={b} />
-            <StatusDot
-              ok={b.catalogOK}
-              okLabel="catalog ok"
-              badLabel="catalog unavailable"
-            />
-          </Group>
-        </Box>
-        {/* Right: uptime ring with its state badge stacked under it so the
-              pair reads as one unit. */}
-        <Stack align="center" gap={4} style={{ flexShrink: 0 }}>
-          <Tooltip label={ringTooltip} withArrow events={{ hover: true, focus: true, touch: true }}>
-            <RingProgress
-              size={84}
-              thickness={7}
-              roundCaps
-              sections={[{ value: statsReady && requests ? uptime * 100 : 0, color: ringColor }]}
-              label={
-                <Text ta="center" size="xs" fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {statsReady && requests ? pct(uptime, 0) : '—'}
-                </Text>
-              }
-              role="img"
-              tabIndex={0}
-              aria-label={ringTooltip}
-            />
-          </Tooltip>
-          {statsReady ? (
-            <UptimeBadge uptime={uptime} requests={requests} />
-          ) : (
-            <UptimeBadge uptime={Number.NaN} requests={Number.NaN} />
-          )}
-        </Stack>
+      <Box className="provider-card-heading">
+        <Group gap="sm" wrap="nowrap" miw={0}>
+          <span className="provider-avatar" aria-hidden>{b.name.slice(0, 2).toUpperCase()}</span>
+          <Box miw={0}>
+            <Title order={3} size="h4" style={{ overflowWrap: 'anywhere' }}>{b.name}</Title>
+            <Text size="xs" c="dimmed">{b.enabled ? 'Enabled' : 'Disabled'}</Text>
+          </Box>
+        </Group>
+        <Button size="xs" variant="subtle" mih={44} px={8} rightSection={<IconChevronRight size={15} />}
+          aria-label={`Inspect ${b.name}`} onClick={onInspect}>Details</Button>
+      </Box>
+      <Group justify="space-between" gap="xs" mt="md">
+        <UptimeBadge uptime={statsReady ? uptime : NaN} requests={statsReady ? requests : NaN} />
+        <StatusDot ok={b.catalogOK} okLabel="Catalog ready" badLabel="Catalog unavailable" />
       </Group>
+      <Box className="provider-metrics">
+        <Box><Text size="xs" c="dimmed">Requests</Text><Text fw={650} className="stat-value">{statsReady ? fmtInt(requests) : '—'}</Text></Box>
+        <Box><Text size="xs" c="dimmed">Success</Text><Text fw={650} className="stat-value">{statsReady && requests ? pct(uptime) : '—'}</Text></Box>
+        <Box><Text size="xs" c="dimmed">Models</Text><Text fw={650} className="stat-value">{b.catalogOK ? (b.models?.length ?? 0) : '—'}</Text></Box>
+      </Box>
+      <AuthStatus backend={b} />
 
       {b.name === 'grok' && (grokUsage || grokUsageLoading || grokUsageError) && (
         <>
@@ -461,13 +421,12 @@ function ProviderCard({
           <Divider my="sm" />
           {segTotal > 0 && (
             <>
-              <TokenMixBar segments={segments} height={14} />
-              <TokenLegend segments={segments} showPercent />
+              <TokenMixBar segments={segments} height={10} />
+              <TokenLegend segments={segments} compact />
             </>
           )}
           <Text size="xs" c="dimmed" mt={segTotal > 0 ? 6 : 0}>
-            {fmtInt(requests)} requests · uptime {pct(uptime)} · tools{' '}
-            {fmtInt(agg.toolCalls)} ({pct(agg.toolCalls ? agg.toolErrors / agg.toolCalls : 0)} err)
+            {fmtInt(segTotal)} tokens · {fmtInt(agg.toolCalls)} tool calls
           </Text>
         </>
       )}
@@ -481,8 +440,10 @@ function ProviderCard({
                 {r.model} → {r.upstream || '(as requested)'}
               </Code>
             ))}
-            {extraRoutes > 0 && (
-              <Text size="xs" c="dimmed">+{extraRoutes} more</Text>
+            {routes.length > ROUTES_PREVIEW && (
+              <Button size="xs" variant="subtle" mih={44} aria-expanded={routesExpanded} onClick={() => setRoutesExpanded((value) => !value)}>
+                {routesExpanded ? 'Show fewer routes' : `Show all ${routes.length} routes`}
+              </Button>
             )}
           </CardSection>
         </>
@@ -494,7 +455,7 @@ function ProviderCard({
           <CardSection title={`Catalog · ${(b.models?.length ?? 0)}`}>
             {shownModels.map((m) => (
               <Group key={m} gap={4} wrap="nowrap" miw={0} maw="100%">
-                <Code fz="xs" miw={0} style={{ overflowWrap: 'anywhere' }}>{m}</Code>
+                <Text className="provider-model" title={m}>{m.startsWith(`${b.name}/`) ? m.slice(b.name.length + 1) : m}</Text>
                 {b.modelCredits?.[m] && (
                   <Badge size="xs" variant="light" color="violet" style={{ flexShrink: 0 }}>
                     {b.modelCredits[m]}

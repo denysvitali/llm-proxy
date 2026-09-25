@@ -10,6 +10,7 @@ import {
   Divider,
   Group,
   Loader,
+  SimpleGrid,
   Stack,
   Switch,
   Tabs,
@@ -35,8 +36,8 @@ export default function SetupPage() {
 
   return (
     <Fade pending={q.isPending}>
-      <Stack gap="md" maw={820} miw={0}>
-        <PageHeader title="Setup" subtitle="Connect your coding agent in two steps. Already have the CLI installed? Start here." />
+      <Stack gap="lg" maw={960} miw={0}>
+        <PageHeader title="Setup" subtitle="One connection for all your models. Get your coding agent up and running." />
 
         {q.isError && (
           <Alert
@@ -91,45 +92,51 @@ export default function SetupPage() {
                   )}
                 </Card>
 
-                <AccountSignInAlert
-                  show={ov.backends.some((b) => b.name === 'grok')}
-                  color="violet"
-                  title="Grok uses your xAI account"
-                  signInHref="/login"
-                  signInLabel="Sign in with xAI"
-                  body="Grok does not use an upstream API key."
-                  tail=" to use your coding subscription."
-                />
+                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                  <AccountConnectionCard
+                    show={ov.backends.some((b) => b.name === 'grok')}
+                    signedIn={ov.backends.find((b) => b.name === 'grok')?.authConfigured ?? false}
+                    color="violet"
+                    title="Grok uses your xAI account"
+                    signInHref="/login"
+                    signInLabel="Sign in with xAI"
+                    body="Grok does not use an upstream API key."
+                    tail=" to use your coding subscription."
+                  />
 
-                <AccountSignInAlert
-                  show={ov.backends.some((b) => b.name === 'workbuddy')}
-                  color="blue"
-                  title="WorkBuddy uses your account"
-                  signInHref="/login/workbuddy"
-                  signInLabel="Sign in with WorkBuddy"
-                  body="WorkBuddy does not use an upstream API key."
-                  tail=" to connect your subscription."
-                />
+                  <AccountConnectionCard
+                    show={ov.backends.some((b) => b.name === 'workbuddy')}
+                    signedIn={ov.backends.find((b) => b.name === 'workbuddy')?.authConfigured ?? false}
+                    color="blue"
+                    title="WorkBuddy uses your account"
+                    signInHref="/login/workbuddy"
+                    signInLabel="Sign in with WorkBuddy"
+                    body="WorkBuddy does not use an upstream API key."
+                    tail=" to connect your subscription."
+                  />
 
-                <AccountSignInAlert
-                  show={ov.backends.some((b) => b.name === 'codex')}
-                  color="gray"
-                  title="Codex uses your ChatGPT account"
-                  signInHref="/login/codex"
-                  signInLabel="Sign in with ChatGPT"
-                  body="Codex does not use an upstream API key."
-                  tail=" using a one-time device code."
-                />
+                  <AccountConnectionCard
+                    show={ov.backends.some((b) => b.name === 'codex')}
+                    signedIn={ov.backends.find((b) => b.name === 'codex')?.authConfigured ?? false}
+                    color="gray"
+                    title="Codex uses your ChatGPT account"
+                    signInHref="/login/codex"
+                    signInLabel="Sign in with ChatGPT"
+                    body="Codex does not use an upstream API key."
+                    tail=" using a one-time device code."
+                  />
 
-                <AccountSignInAlert
-                  show={ov.backends.some((b) => b.name === 'zcode')}
-                  color="violet"
-                  title="ZCode uses your account"
-                  signInHref="/login/zcode"
-                  signInLabel="Sign in with ZCode"
-                  body="ZCode does not use an upstream API key."
-                  tail=" to connect your Start Plan."
-                />
+                  <AccountConnectionCard
+                    show={ov.backends.some((b) => b.name === 'zcode')}
+                    signedIn={ov.backends.find((b) => b.name === 'zcode')?.authConfigured ?? false}
+                    color="violet"
+                    title="ZCode uses your account"
+                    signInHref="/login/zcode"
+                    signInLabel="Sign in with ZCode"
+                    body="ZCode does not use an upstream API key."
+                    tail=" to connect your Start Plan."
+                  />
+                </SimpleGrid>
               </Stack>
             </PageSection>
 
@@ -174,11 +181,10 @@ export default function SetupPage() {
   )
 }
 
-/* The four account-backed backends share one alert shape; only the copy and
-   the accent differ. Color follows the contract's backend mapping (violet for
-   subscription-account backends, blue for WorkBuddy, gray for device-code). */
-function AccountSignInAlert({
+// Account connections share a compact card with an explicit sign-in state.
+function AccountConnectionCard({
   show,
+  signedIn,
   color,
   title,
   body,
@@ -187,6 +193,7 @@ function AccountSignInAlert({
   tail,
 }: {
   show: boolean
+  signedIn: boolean
   color: 'violet' | 'blue' | 'gray'
   title: string
   body: string
@@ -196,10 +203,14 @@ function AccountSignInAlert({
 }) {
   if (!show) return null
   return (
-    <Alert color={color} variant="light" title={title}>
-      {body} <Anchor href={signInHref}>{signInLabel}</Anchor>
-      {tail}
-    </Alert>
+    <Card withBorder radius="lg" p="md">
+      <Group justify="space-between" align="flex-start" gap="sm" mb="xs">
+        <Text size="sm" fw={600}>{title}</Text>
+        <Badge variant="dot" color={signedIn ? 'teal' : color} tt="none" size="sm">{signedIn ? 'Connected' : 'Sign-in needed'}</Badge>
+      </Group>
+      <Text size="xs" c="dimmed">{body}</Text>
+      <Text size="sm" mt="sm"><Anchor href={signInHref}>{signInLabel}</Anchor>{tail}</Text>
+    </Card>
   )
 }
 

@@ -13,23 +13,7 @@ import {
   rem,
 } from '@mantine/core'
 
-// Design system for the llm-proxy operator console.
-//
-// Direction: a dark-first, dense control room. Near-black layered surfaces,
-// hairline dividers instead of shadows, one saturated accent used sparingly,
-// and monospace-leaning tabular numerics so a column of numbers can be scanned
-// vertically without re-reading. This replaces the previous Apple-inspired
-// skin; light mode is a first-class peer rather than an afterthought, and dark
-// mode is NOT an automatic flip of it — both ramps are stepped separately.
-//
-// Chart series colors live in src/palette.ts and are validator-checked. This
-// file dresses the Mantine chrome only and must never hard-code a series hue.
-//
-// The `components` block is the real leverage point: most call sites pass no
-// sizing props, so a default declared here lands everywhere for free. Keep a
-// default only when the app actually renders that component and only while
-// every call site would otherwise repeat the same value — an inline style at a
-// call site still wins.
+// Shared typography and controls; chart colors live in palette.ts.
 
 const dark: [string, string, string, string, string, string, string, string, string, string] = [
   '#f4f6f8', // 0 — primary text on dark
@@ -73,20 +57,20 @@ export const theme = createTheme({
   headings: {
     fontWeight: '650',
     sizes: {
-      h1: { fontSize: rem(22), lineHeight: '1.25', fontWeight: '650' },
-      h2: { fontSize: rem(19), lineHeight: '1.3', fontWeight: '650' },
+      h1: { fontSize: rem(30), lineHeight: '1.25', fontWeight: '650' },
+      h2: { fontSize: rem(20), lineHeight: '1.3', fontWeight: '650' },
       h3: { fontSize: rem(16), lineHeight: '1.35', fontWeight: '650' },
       h4: { fontSize: rem(14), lineHeight: '1.4', fontWeight: '600' },
       h5: { fontSize: rem(13), lineHeight: '1.45', fontWeight: '600' },
     },
   },
-  fontSizes: { xs: rem(11.5), sm: rem(13), md: rem(14), lg: rem(16) },
+  fontSizes: { xs: rem(12), sm: rem(14), md: rem(15), lg: rem(17) },
   spacing: { xs: rem(6), sm: rem(10), md: rem(16), lg: rem(24), xl: rem(32) },
   radius: {
     xs: rem(2),
     sm: rem(4),
     md: rem(6),
-    lg: rem(10),
+    lg: rem(12),
     xl: rem(14),
   },
   components: {

@@ -38,11 +38,12 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
       <Tooltip label={description} withArrow events={{ hover: true, focus: true, touch: true }}>
         <Badge
           variant="light"
+          tt="none"
           tabIndex={0}
           aria-label={description}
           leftSection={<states.neutral.Icon size={12} stroke={2} aria-hidden="true" style={{ color: states.neutral.color }} />}
           styles={{
-            root: { flex: 'none', cursor: 'default', color: 'var(--mantine-color-dimmed)' },
+            root: { flex: 'none', cursor: 'default', color: 'var(--mantine-color-dimmed)', background: 'var(--sunken)' },
             label: { overflow: 'visible' },
           }}
         >
@@ -58,11 +59,12 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
     <Tooltip label={detail} withArrow events={{ hover: true, focus: true, touch: true }}>
       <Badge
         variant="light"
+        tt="none"
         tabIndex={0}
         aria-label={`${state.label}: ${detail}`}
         leftSection={<state.Icon size={12} stroke={2} aria-hidden="true" style={{ color: state.color }} />}
         styles={{
-          root: { flex: 'none', cursor: 'default', fontWeight: 600, letterSpacing: '-0.01em' },
+          root: { flex: 'none', cursor: 'default', fontWeight: 600, letterSpacing: 0, color: state.color, background: `color-mix(in srgb, ${state.color} 12%, var(--card))` },
           label: { overflow: 'visible' },
         }}
       >

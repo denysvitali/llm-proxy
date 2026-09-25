@@ -131,7 +131,8 @@ export default function OverviewPage() {
       <Stack gap="lg">
         <PageHeader
           title="Overview"
-          subtitle={ov ? `${ov.name} v${ov.version} · ${ov.listen} · auth ${ov.authEnabled ? 'on' : 'off'}` : undefined}
+          subtitle="Your gateway at a glance. Follow traffic, performance, and reliability."
+          extra={ov ? <Badge variant="default" tt="none" size="lg" visibleFrom="sm">Providers: {ov.backends.length}</Badge> : undefined}
         />
 
         {ovQ.isError && (
@@ -213,19 +214,6 @@ export default function OverviewPage() {
           ) : null}
         </PageSection>
 
-        {(grokUsageEnabled || zcodeUsageEnabled) && (
-          bothUsage ? (
-            <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-              <GrokUsageCard query={grokUsageQ} />
-              <ZcodeUsageCard query={zcodeUsageQ} />
-            </SimpleGrid>
-          ) : grokUsageEnabled ? (
-            <GrokUsageCard query={grokUsageQ} />
-          ) : (
-            <ZcodeUsageCard query={zcodeUsageQ} />
-          )
-        )}
-
         <PageSection
           title="Performance over time"
           description={seriesQ.isError
@@ -244,7 +232,7 @@ export default function OverviewPage() {
                 retrying={seriesQ.isFetching}
               />
             ) : (
-              <SimpleGrid cols={{ base: 1, lg: 3 }} spacing="lg">
+              <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="lg">
                 <HistoryLineChart
                   title="Latency"
                   description="Median first byte and full response"
@@ -253,14 +241,14 @@ export default function OverviewPage() {
                     { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
                     { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
                   ]}
-                  height={180}
+                  height={200}
                 />
                 <HistoryLineChart
                   title="Throughput"
                   description="Median output rate"
                   data={historyData([seriesQ.data?.series.throughput_p50])}
                   series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
-                  height={180}
+                  height={200}
                 />
                 <HistoryLineChart
                   title="Token volume"
@@ -270,12 +258,32 @@ export default function OverviewPage() {
                     { name: 'series0', label: 'Input', formatter: historyFormatters.count },
                     { name: 'series1', label: 'Output', formatter: historyFormatters.count },
                   ]}
-                  height={180}
+                  height={200}
                 />
               </SimpleGrid>
             )}
           </Card>
         </PageSection>
+
+        {(grokUsageEnabled || zcodeUsageEnabled) && (
+          <Accordion variant="separated" radius="lg">
+            <Accordion.Item value="subscriptions">
+              <Accordion.Control>Subscription usage <Text component="span" size="xs" c="dimmed" ml="sm">{[grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode'].filter(Boolean).join(' / ')} account quotas</Text></Accordion.Control>
+              <Accordion.Panel>
+                {bothUsage ? (
+                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
+                    <GrokUsageCard query={grokUsageQ} />
+                    <ZcodeUsageCard query={zcodeUsageQ} />
+                  </SimpleGrid>
+                ) : grokUsageEnabled ? (
+                  <GrokUsageCard query={grokUsageQ} />
+                ) : (
+                  <ZcodeUsageCard query={zcodeUsageQ} />
+                )}
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        )}
 
         <PageSection title="Traffic breakdown">
           <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
@@ -450,7 +458,7 @@ export default function OverviewPage() {
                 message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
                 onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />
             )}
-            {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors} /> : errorsQ.isPending ? (
+            {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? (
               <Group justify="center" py="md" role="status"><Loader size="sm" /><Text size="sm" c="dimmed">Loading upstream errors…</Text></Group>
             ) : null}
           </Stack>

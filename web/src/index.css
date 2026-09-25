@@ -1,296 +1,142 @@
-/* App-level chrome for the llm-proxy operator console. Imported AFTER
-   @mantine/core, so these rules win where they overlap.
-
-   Design language: dark-first control room. Near-black layered canvas, cards
-   one step lighter with a hairline instead of a shadow, a single saturated
-   accent, and tabular numerics everywhere a number can be scanned vertically.
-   Light mode is a true peer with its own stepped surfaces — not an inverted
-   copy of the dark ramp. */
-
 :root {
-  /* Geometry shared by chrome. Kept as tokens so no rule re-derives a radius. */
-  --radius-nav: 6px;
-  --focus-ring-width: 2px;
-  --focus-ring-offset: 2px;
-  --focus-ring-color: var(--mantine-primary-color-filled);
-  --focus-ring-color-strong: var(--mantine-color-text);
-
-  /* Elevation is a hairline, not a shadow: on near-black a shadow is invisible
-     and a border is the only honest separator. */
-  --hairline: var(--mantine-color-default-border);
+  --radius-nav: 8px;
   --numeric-font: var(--mantine-font-family-monospace);
 }
 
-html,
-body {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-/* Display headings track tight; body copy never gets squeezed. */
-.mantine-Title-root {
-  letter-spacing: -0.014em;
-}
-
-/* ---------------------------------------------------------------------------
-   Canvases + surfaces.
-
-   The card surface is exported from palette.ts as the exact value the chart
-   validator was run against, so charts and their containers cannot drift. */
-
-[data-mantine-color-scheme='light'] {
+html:root[data-mantine-color-scheme='light'] {
   color-scheme: light;
   --canvas: #f4f5f7;
-  --card: #ffffff;
-  --sunken: #eceef1;
-  --hairline: rgba(0, 0, 0, 0.1);
+  --card: #fff;
+  --sunken: #eef1f5;
+  --hairline: #e1e5ec;
+  --mantine-color-text: #1b2638;
+  --mantine-color-dimmed: #657187;
   --chart-grid-color: rgba(0, 0, 0, 0.08);
   --chart-cursor-fill: rgba(0, 0, 0, 0.04);
-  --segmented-track: rgba(0, 0, 0, 0.06);
-  --segmented-thumb: #ffffff;
-  --interactive-card-hover: #f7f9fb;
-  --data-good: #1a9e5f;
-  --data-warning: #c98a00;
-  --data-serious: #e07b1a;
-  --data-critical: #d63b30;
+  --segmented-track: #eef1f5;
+  --segmented-thumb: #fff;
+  --interactive-card-hover: #fafcff;
+  --nav-active: #e8f1fb;
+  --data-good: #157748;
+  --data-warning: #946200;
+  --data-serious: #ab5712;
+  --data-critical: #c33030;
 }
 
-[data-mantine-color-scheme='dark'] {
+html:root[data-mantine-color-scheme='dark'] {
   color-scheme: dark;
   --canvas: #0b0d10;
   --card: #14161a;
-  --sunken: #101318;
-  --hairline: rgba(255, 255, 255, 0.1);
+  --sunken: #1b2028;
+  --hairline: #2a3039;
+  --mantine-color-text: #e7ecf3;
+  --mantine-color-dimmed: #9aa7ba;
   --chart-grid-color: rgba(255, 255, 255, 0.09);
   --chart-cursor-fill: rgba(255, 255, 255, 0.06);
-  --segmented-track: rgba(255, 255, 255, 0.07);
-  --segmented-thumb: #272d36;
+  --segmented-track: #1b2028;
+  --segmented-thumb: #303947;
   --interactive-card-hover: #1a1e25;
-  /* Status ramp re-stepped for the dark surface rather than reused from light:
-     the light-mode values sit too dark to read as a cue on near-black. */
-  --data-good: #2fbf71;
-  --data-warning: #e3b341;
+  --nav-active: #172b40;
+  --data-good: #59d99a;
+  --data-warning: #e7bc58;
   --data-serious: #f0913f;
-  --data-critical: #ff6b5e;
+  --data-critical: #ff8780;
 }
 
-[data-mantine-color-scheme='light'] body {
+html, body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   background: var(--canvas);
 }
 
-[data-mantine-color-scheme='dark'] body {
-  background:
-    radial-gradient(1200px 520px at 80% -12%, rgba(15, 111, 196, 0.07) 0%, rgba(15, 111, 196, 0) 60%),
-    var(--canvas);
-}
-
-/* Cards sit one step above the canvas. On dark, the border must be LIGHTER
-   than the surface — a darker border is invisible against near-black. */
-[data-mantine-color-scheme='light'] :where(.mantine-Card-root, .mantine-Paper-root) {
+.mantine-Title-root { letter-spacing: -0.025em; }
+.mantine-Card-root, .mantine-Paper-root {
   background-color: var(--card);
   border-color: var(--hairline);
 }
-
-[data-mantine-color-scheme='dark'] :where(.mantine-Card-root, .mantine-Paper-root) {
+.mantine-AppShell-header, .mantine-AppShell-footer, .mantine-AppShell-navbar {
   background-color: var(--card);
   border-color: var(--hairline);
 }
+.mantine-AppShell-footer { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.page-container { padding: 32px; }
+.page-header > * { min-width: 0; }
+.page-section { min-width: 0; }
+.app-footer { border-top: 1px solid var(--hairline); padding-top: 20px; }
 
-/* ---------------------------------------------------------------------------
-   Chrome: header/footer are opaque, not frosted.
-
-   A control room is dense; translucency over scrolling rows costs legibility
-   for an effect that fights the hairline language. Opaque + a single hairline. */
-
-.mantine-AppShell-header,
-.mantine-AppShell-footer {
-  background-color: var(--card);
-  border-color: var(--hairline);
+.brand-link { display: flex; align-items: center; gap: 10px; min-height: 44px; border-radius: 8px; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 36px;
+  background: var(--mantine-primary-color-filled);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 23px;
+  font-weight: 650;
 }
+.nav-caption { text-transform: uppercase; font-size: 10px; font-weight: 650; letter-spacing: 0.1em; color: var(--mantine-color-dimmed); padding-left: 12px; }
+.side-navigation { display: flex; flex-direction: column; gap: 6px; }
+.side-nav-link { display: flex; align-items: center; gap: 12px; padding: 13px 12px; border-radius: 8px; color: var(--mantine-color-dimmed); font-size: 14px; font-weight: 550; }
+.side-nav-link[data-active], .bottom-nav-link[data-active] { background: var(--nav-active); color: var(--mantine-primary-color-filled); font-weight: 650; }
+.sidebar-note { border-top: 1px solid var(--hairline); padding: 20px 8px 8px; }
+.setup-link { display: flex; align-items: center; gap: 6px; }
+.live-status { min-width: 66px; background: var(--card); border-color: var(--hairline); }
+.bottom-navigation { height: 64px; display: flex; align-items: stretch; gap: 4px; padding: 4px 8px; }
+.bottom-nav-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 8px; color: var(--mantine-color-dimmed); font-size: 11px; }
+.app-skip-link { position: fixed; top: 10px; left: 10px; z-index: 300; padding: 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--card); transform: translateY(-200%); }
+.app-skip-link:focus { transform: translateY(0); }
 
-.mantine-AppShell-footer {
-  padding-bottom: env(safe-area-inset-bottom, 0);
-}
+.mantine-Table-root td, .mantine-Table-root th, .tabular, .stat-value { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+.stat-value { letter-spacing: -0.035em; }
+.mantine-Table-th { color: var(--mantine-color-dimmed); font-size: 12px; font-weight: 600; }
+.mantine-Table-thead { background: var(--sunken); }
+.stat-tile { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02); }
+.activity-row { border-radius: 6px; padding: 8px 10px; }
+.provider-toolbar { display: flex; align-items: center; gap: 12px; }
+.provider-toolbar > :first-child { flex: 1; }
+.provider-toolbar > :last-child { width: 200px; }
+.provider-card { transition: background-color 120ms ease, border-color 120ms ease; }
+.provider-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.provider-avatar { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--sunken); font-family: var(--numeric-font); font-weight: 650; font-size: 15px; }
+.provider-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 14px 0; gap: 12px; }
+.provider-metrics > div + div { border-left: 1px solid var(--hairline); padding-left: 12px; }
+.provider-model { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--numeric-font); font-size: 11px; }
 
-[data-mantine-color-scheme='dark'] .mantine-AppShell-header {
-  background-color: #0f1216;
-}
+.mantine-SegmentedControl-root { background: var(--segmented-track); padding: 3px; }
+.mantine-SegmentedControl-indicator { background-color: var(--segmented-thumb); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07); }
+.mantine-SegmentedControl-label { display: flex; align-items: center; justify-content: center; min-height: 28px; }
+.mantine-Drawer-content { overscroll-behavior: contain; background-color: var(--card); border-left: 1px solid var(--hairline); }
+.mantine-Drawer-header { background-color: var(--card); border-bottom: 1px solid var(--hairline); min-height: 64px; gap: 10px; }
+.mantine-Drawer-body { padding-top: 20px; padding-bottom: max(24px, env(safe-area-inset-bottom, 0px)); }
+.mantine-Drawer-title { min-width: 0; overflow-wrap: anywhere; }
 
-/* ---------------------------------------------------------------------------
-   Numerics: the single most important rule in this file. Any value a human
-   compares vertically — stat tiles, table cells, axis ticks, percentile bars —
-   uses tabular figures in the mono stack, so digits occupy equal width. */
-
-.mantine-Table-root td,
-.mantine-Table-root th,
-.tabular,
-.stat-value {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
-}
-
-.stat-value {
-  font-family: var(--numeric-font);
-  letter-spacing: -0.02em;
-}
-
-/* ---------------------------------------------------------------------------
-   Interaction. Hairline discipline: a hover changes a surface tint, never a
-   shadow, and never a border color. */
-
-a,
-.mantine-UnstyledButton-root {
-  -webkit-tap-highlight-color: transparent;
-}
+.snippet-block { margin: 0; padding: 20px; max-width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; tab-size: 2; font-size: 0.82rem; line-height: 1.7; font-family: var(--numeric-font); background: var(--sunken); color: var(--mantine-color-text); border: 1px solid var(--hairline); border-radius: 8px; }
+.snippet-block code { font: inherit; }
+.mantine-Code-root:not([data-block]) { overflow-wrap: anywhere; font-family: var(--numeric-font); }
+a, .mantine-UnstyledButton-root { -webkit-tap-highlight-color: transparent; }
+:where(a[href], button, summary, input, [tabindex], [role='button']):focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 3px; }
 
 @media (hover: hover) {
-  .desktop-nav-link:not([data-active]):hover {
-    background: var(--segmented-track);
-  }
-
-  .interactive-card {
-    transition: background-color 120ms ease, border-color 120ms ease;
-  }
-  .interactive-card:hover {
-    background-color: var(--interactive-card-hover);
-    border-color: color-mix(in srgb, var(--mantine-primary-color-filled) 35%, var(--hairline));
-  }
-  .interactive-card:active {
-    background-color: var(--sunken);
-  }
+  .side-nav-link:not([data-active]):hover, .activity-row:hover { background: var(--sunken); }
+  .interactive-card:hover, .provider-card:hover { background-color: var(--interactive-card-hover); border-color: var(--mantine-primary-color-filled); }
 }
-
-/* Table rows read as rows, not cards: a tint on hover, nothing else. */
-.activity-row {
-  border-radius: var(--mantine-radius-sm);
-  padding: 8px 10px;
+@media (max-width: 48em) {
+  .page-container { padding: 24px 16px; }
+  .page-header .mantine-Title-root { font-size: 26px; }
+  .provider-toolbar { flex-direction: column; align-items: stretch; }
+  .provider-toolbar > :last-child { width: 100%; }
+  .stat-tile { padding: 14px; }
+  .stat-tile .stat-value { font-size: 25px; }
+  .live-status { display: none; }
+  .mantine-SegmentedControl-label { min-height: 34px; min-width: 28px; }
 }
-
-@media (hover: hover) {
-  .activity-row:hover {
-    background-color: var(--mantine-color-default-hover);
-  }
-}
-
-/* ---------------------------------------------------------------------------
-   Segmented controls: a control-room toggle, not an iOS capsule. */
-
-.mantine-SegmentedControl-root {
-  background: var(--segmented-track);
-  padding: 2px;
-}
-
-.mantine-SegmentedControl-indicator {
-  background-color: var(--segmented-thumb);
-  box-shadow: 0 0 0 1px var(--hairline);
-}
-
-/* ---------------------------------------------------------------------------
-   Drawer / sheet: a side panel in a console, so it gets a detent radius and a
-   real separation from the dimmed page. */
-
-.mantine-Drawer-content {
-  overscroll-behavior: contain;
-  background-color: var(--card);
-  border-left: 1px solid var(--hairline);
-}
-
-.mantine-Drawer-header {
-  background-color: var(--card);
-  border-bottom: 1px solid var(--hairline);
-  padding-block: var(--mantine-spacing-sm);
-  min-height: 56px;
-  align-items: center;
-  gap: var(--mantine-spacing-sm);
-}
-
-.mantine-Drawer-body {
-  padding-bottom: max(var(--mantine-spacing-lg), env(safe-area-inset-bottom, 0px));
-}
-
-.mantine-Drawer-title {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-@media (min-width: 48em) {
-  .mantine-Drawer-content {
-    border-radius: 0;
-    box-shadow: -1px 0 0 var(--hairline);
-  }
-}
-
 @media (pointer: coarse) {
-  .mantine-Drawer-close {
-    width: 44px;
-    height: 44px;
-  }
+  .mantine-Drawer-close { width: 44px; height: 44px; }
+  .mantine-SegmentedControl-label { min-height: 38px; min-width: 36px; }
 }
-
-/* ---------------------------------------------------------------------------
-   Focus: one geometry, two colors. The strong ring uses the text color so it
-   stays legible on the canvas, the card, and the sunken surfaces. */
-
-:where(a[href], button, summary, [tabindex], [role='button']):focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring-color);
-  outline-offset: var(--focus-ring-offset);
-}
-
-/* ---------------------------------------------------------------------------
-   Setup snippet: a terminal block in both modes. */
-
-.snippet-block {
-  margin: 0;
-  padding: var(--mantine-spacing-md);
-  max-width: 100%;
-  min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  tab-size: 2;
-  font-size: 0.82rem;
-  line-height: 1.55;
-  font-family: var(--numeric-font);
-  background: var(--sunken);
-  color: var(--mantine-color-text);
-  border: 1px solid var(--hairline);
-  border-radius: var(--mantine-radius-md);
-}
-
-.snippet-block code {
-  font: inherit;
-}
-
-.snippet-block:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring-color);
-  outline-offset: -1px;
-}
-
-/* Inline identifiers may wrap; executable snippets keep their whitespace and
-   horizontal scrolling instead of being reformatted at narrow widths. */
-.mantine-Code-root:not([data-block]) {
-  overflow-wrap: anywhere;
-  font-family: var(--numeric-font);
-}
-
-.page-header {
-  padding-top: 2px;
-}
-
-.page-header > * {
-  min-width: 0;
-}
-
-/* A motion kill-switch that also covers portalled sheets, menus, and tooltips.
-   Near-zero animations still dispatch completion events for UI state machines. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    animation-delay: 0ms !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; animation-delay: 0ms !important; transition: none !important; scroll-behavior: auto !important; }
 }

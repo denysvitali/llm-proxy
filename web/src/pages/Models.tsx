@@ -73,8 +73,8 @@ const columns: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'model', label: 'Backend / model' },
   { key: 'requests', label: 'Requests', numeric: true },
   { key: 'uptime', label: 'Uptime' },
-  { key: 'ttft', label: 'TTFT p50/p90/p99', numeric: true },
-  { key: 'e2e', label: 'E2E p50/p90/p99', numeric: true },
+  { key: 'ttft', label: 'TTFT p50', numeric: true },
+  { key: 'e2e', label: 'E2E p50', numeric: true },
   { key: 'tps', label: 'tok/s p50', numeric: true },
   { key: 'cache', label: 'Cache hit', numeric: true },
   { key: 'tools', label: 'Tool calls', numeric: true },
@@ -193,10 +193,10 @@ export default function ModelsPage() {
 
   return (
     <Fade pending={q.isPending}>
-      <Stack gap="sm" className="models-page">
+      <Stack gap="lg" className="models-page">
         <PageHeader
           title="Models"
-          subtitle="Recorded model traffic, not the full provider catalog. Open a model for history and percentiles."
+          subtitle="Explore recorded model traffic, latency, and reliability."
         />
 
         {models.length > 0 && (
@@ -337,12 +337,12 @@ export default function ModelsPage() {
           <ScrollArea>
             {/* Striped + highlight-on-hover keeps wide rows scannable; the
                   cursor signals the row opens the detail drawer. */}
-            <Table verticalSpacing="xs" horizontalSpacing="md" highlightOnHover striped>
+            <Table miw={940} verticalSpacing="sm" horizontalSpacing="md" highlightOnHover striped className="models-table">
               <Table.Thead
                 style={{
                   position: 'sticky',
                   top: 0,
-                  background: 'var(--mantine-color-body)',
+                  background: 'var(--card)',
                   zIndex: 1,
                 }}
               >
@@ -393,12 +393,12 @@ export default function ModelsPage() {
                     </Table.Td>
                     <Num td={fmtInt(m.requests)} />
                     <Table.Td>
-                      <Group gap="xs" wrap="nowrap">
+                      <Box>
                         <UptimeBadge uptime={m.uptime} requests={m.requests} />
                         {Object.keys(m.status_codes ?? {}).length > 0 && (
-                          <StatusChips codes={m.status_codes} limit={3} />
+                          <Box mt={4} w="fit-content"><StatusChips codes={m.status_codes} limit={1} /></Box>
                         )}
-                      </Group>
+                      </Box>
                     </Table.Td>
                     <Num td={fmtSec(m.ttft_seconds.p50)} title={percentileTitle(m.ttft_seconds, fmtSec)} />
                     <Num td={fmtSec(m.e2e_seconds.p50)} title={percentileTitle(m.e2e_seconds, fmtSec)} />
