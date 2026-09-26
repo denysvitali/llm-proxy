@@ -37,42 +37,37 @@ export default function TokenMixBar({
   const visible = segments.filter((s) => s.value > 0)
   const description = `Token mix: ${visible.map((s) => describeSegment(s, total)).join('; ')}`
   return (
-    <Tooltip
-      label={visible.map((s) => <div key={s.name}>{describeSegment(s, total)}</div>)}
-      events={{ hover: false, focus: true, touch: true }}
-      multiline
-      withArrow
+    <Box
+      role="figure"
+      aria-labelledby={`token-mix-desc-${visible.map((s) => s.name).join('-')}`}
+      style={{
+        display: 'flex',
+        gap: 2,
+        height: Number.isFinite(height) && height > 0 ? height : 16,
+        borderRadius: 4,
+        minWidth: 0,
+      }}
     >
-      <Box
-        role="img"
-        tabIndex={0}
-        aria-label={description}
-        style={{
-          display: 'flex',
-          gap: 2,
-          height: Number.isFinite(height) && height > 0 ? height : 16,
-          borderRadius: 4,
-          minWidth: 0,
-        }}
-      >
-        {visible.map((s, index) => (
-          <Tooltip key={s.name} label={describeSegment(s, total)} withArrow>
-            <div
-              style={{
-                flexGrow: s.value / total,
-                flexBasis: 0,
-                background: s.color,
-                minWidth: 0,
-                borderTopLeftRadius: index === 0 ? 4 : 0,
-                borderBottomLeftRadius: index === 0 ? 4 : 0,
-                borderTopRightRadius: index === visible.length - 1 ? 4 : 0,
-                borderBottomRightRadius: index === visible.length - 1 ? 4 : 0,
-              }}
-            />
-          </Tooltip>
-        ))}
-      </Box>
-    </Tooltip>
+      <span id={`token-mix-desc-${visible.map((s) => s.name).join('-')}`} style={{ display: 'none' }}>
+        {description}
+      </span>
+      {visible.map((s, index) => (
+        <Tooltip key={s.name} label={describeSegment(s, total)} withArrow>
+          <div
+            style={{
+              flexGrow: s.value / total,
+              flexBasis: 0,
+              background: s.color,
+              minWidth: 0,
+              borderTopLeftRadius: index === 0 ? 4 : 0,
+              borderBottomLeftRadius: index === 0 ? 4 : 0,
+              borderTopRightRadius: index === visible.length - 1 ? 4 : 0,
+              borderBottomRightRadius: index === visible.length - 1 ? 4 : 0,
+            }}
+          />
+        </Tooltip>
+      ))}
+    </Box>
   )
 }
 

@@ -32,5 +32,6 @@ export function fmtTps(v: number): string {
 }
 
 export function fmtTime(d: Date): string {
+  if (!Number.isFinite(d.getTime())) return '—'
   return d.toLocaleTimeString('en-US', { hour12: false })
 }

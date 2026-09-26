@@ -10,7 +10,7 @@ html:root[data-mantine-color-scheme='light'] {
   --sunken: #eef1f5;
   --hairline: #e1e5ec;
   --mantine-color-text: #1b2638;
-  --mantine-color-dimmed: #657187;
+  --mantine-color-dimmed: #5c6779;
   --chart-grid-color: rgba(0, 0, 0, 0.08);
   --chart-cursor-fill: rgba(0, 0, 0, 0.04);
   --segmented-track: #eef1f5;
@@ -50,7 +50,7 @@ html, body {
   background: var(--canvas);
 }
 
-.mantine-Title-root { letter-spacing: -0.025em; }
+.mantine-Title-root { letter-spacing: -0.014em; }
 .mantine-Card-root, .mantine-Paper-root {
   background-color: var(--card);
   border-color: var(--hairline);
@@ -65,7 +65,7 @@ html, body {
 .page-section { min-width: 0; }
 .app-footer { border-top: 1px solid var(--hairline); padding-top: 20px; }
 
-.brand-link { display: flex; align-items: center; gap: 10px; min-height: 44px; border-radius: 8px; }
+.brand-link { display: flex; align-items: center; gap: 10px; min-height: 44px; border-radius: 6px; }
 .brand-mark {
   display: grid;
   place-items: center;
@@ -73,34 +73,34 @@ html, body {
   height: 36px;
   background: var(--mantine-primary-color-filled);
   color: #fff;
-  border-radius: 10px;
+  border-radius: 6px;
   font-size: 23px;
   font-weight: 650;
 }
-.nav-caption { text-transform: uppercase; font-size: 10px; font-weight: 650; letter-spacing: 0.1em; color: var(--mantine-color-dimmed); padding-left: 12px; }
+.nav-caption { text-transform: uppercase; font-size: 11.5px; font-weight: 650; letter-spacing: 0.1em; color: var(--mantine-color-dimmed); padding-left: 12px; }
 .side-navigation { display: flex; flex-direction: column; gap: 6px; }
-.side-nav-link { display: flex; align-items: center; gap: 12px; padding: 13px 12px; border-radius: 8px; color: var(--mantine-color-dimmed); font-size: 14px; font-weight: 550; }
+.side-nav-link { display: flex; align-items: center; gap: 12px; padding: 13px 12px; border-radius: 6px; color: var(--mantine-color-dimmed); font-size: 14px; font-weight: 550; }
 .side-nav-link[data-active], .bottom-nav-link[data-active] { background: var(--nav-active); color: var(--mantine-primary-color-filled); font-weight: 650; }
 .sidebar-note { border-top: 1px solid var(--hairline); padding: 20px 8px 8px; }
 .setup-link { display: flex; align-items: center; gap: 6px; }
 .live-status { min-width: 66px; background: var(--card); border-color: var(--hairline); }
 .bottom-navigation { height: 64px; display: flex; align-items: stretch; gap: 4px; padding: 4px 8px; }
-.bottom-nav-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 8px; color: var(--mantine-color-dimmed); font-size: 11px; }
-.app-skip-link { position: fixed; top: 10px; left: 10px; z-index: 300; padding: 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--card); transform: translateY(-200%); }
+.bottom-nav-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 6px; color: var(--mantine-color-dimmed); font-size: 13px; }
+.app-skip-link { position: fixed; top: 10px; left: 10px; z-index: 300; padding: 12px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--card); transform: translateY(-200%); }
 .app-skip-link:focus { transform: translateY(0); }
 
 .mantine-Table-root td, .mantine-Table-root th, .tabular, .stat-value { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
-.stat-value { letter-spacing: -0.035em; }
+.stat-value { letter-spacing: -0.02em; }
 .mantine-Table-th { color: var(--mantine-color-dimmed); font-size: 12px; font-weight: 600; }
 .mantine-Table-thead { background: var(--sunken); }
-.stat-tile { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02); }
-.activity-row { border-radius: 6px; padding: 8px 10px; }
+.stat-tile { }
+.activity-row { border-radius: var(--mantine-radius-sm); padding: 8px 10px; }
 .provider-toolbar { display: flex; align-items: center; gap: 12px; }
 .provider-toolbar > :first-child { flex: 1; }
 .provider-toolbar > :last-child { width: 200px; }
 .provider-card { transition: background-color 120ms ease, border-color 120ms ease; }
 .provider-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.provider-avatar { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--sunken); font-family: var(--numeric-font); font-weight: 650; font-size: 15px; }
+.provider-avatar { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--sunken); font-family: var(--numeric-font); font-weight: 650; font-size: 15px; }
 .provider-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 14px 0; gap: 12px; }
 .provider-metrics > div + div { border-left: 1px solid var(--hairline); padding-left: 12px; }
 .provider-model { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--numeric-font); font-size: 11px; }
@@ -113,7 +113,7 @@ html, body {
 .mantine-Drawer-body { padding-top: 20px; padding-bottom: max(24px, env(safe-area-inset-bottom, 0px)); }
 .mantine-Drawer-title { min-width: 0; overflow-wrap: anywhere; }
 
-.snippet-block { margin: 0; padding: 20px; max-width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; tab-size: 2; font-size: 0.82rem; line-height: 1.7; font-family: var(--numeric-font); background: var(--sunken); color: var(--mantine-color-text); border: 1px solid var(--hairline); border-radius: 8px; }
+.snippet-block { margin: 0; padding: 20px; max-width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; tab-size: 2; font-size: 0.82rem; line-height: 1.7; font-family: var(--numeric-font); background: var(--sunken); color: var(--mantine-color-text); border: 1px solid var(--hairline); border-radius: var(--mantine-radius-md); }
 .snippet-block code { font: inherit; }
 .mantine-Code-root:not([data-block]) { overflow-wrap: anywhere; font-family: var(--numeric-font); }
 a, .mantine-UnstyledButton-root { -webkit-tap-highlight-color: transparent; }

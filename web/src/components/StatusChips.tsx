@@ -82,7 +82,6 @@ export default function StatusChips({
             <Badge
               variant="light"
               size="xs"
-              tabIndex={0}
               aria-label={description}
               leftSection={<Dot color={token[sev]} />}
               styles={{
@@ -100,7 +99,6 @@ export default function StatusChips({
           <Badge
             variant="light"
             size="xs"
-            tabIndex={0}
             aria-label={`${rest.length} more statuses: ${restLabel}`}
             styles={{
               root: { flex: 'none', cursor: 'default', background: 'var(--sunken)', color: 'var(--mantine-color-dimmed)' },

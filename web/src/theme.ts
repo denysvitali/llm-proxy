@@ -57,20 +57,20 @@ export const theme = createTheme({
   headings: {
     fontWeight: '650',
     sizes: {
-      h1: { fontSize: rem(30), lineHeight: '1.25', fontWeight: '650' },
-      h2: { fontSize: rem(20), lineHeight: '1.3', fontWeight: '650' },
-      h3: { fontSize: rem(16), lineHeight: '1.35', fontWeight: '650' },
-      h4: { fontSize: rem(14), lineHeight: '1.4', fontWeight: '600' },
-      h5: { fontSize: rem(13), lineHeight: '1.45', fontWeight: '600' },
+      h1: { fontSize: rem(22), lineHeight: '1.25', fontWeight: '650' },
+      h2: { fontSize: rem(18), lineHeight: '1.3', fontWeight: '650' },
+      h3: { fontSize: rem(15), lineHeight: '1.35', fontWeight: '650' },
+      h4: { fontSize: rem(13), lineHeight: '1.4', fontWeight: '600' },
+      h5: { fontSize: rem(12), lineHeight: '1.45', fontWeight: '600' },
     },
   },
-  fontSizes: { xs: rem(12), sm: rem(14), md: rem(15), lg: rem(17) },
+  fontSizes: { xs: rem(11.5), sm: rem(13), md: rem(14), lg: rem(16) },
   spacing: { xs: rem(6), sm: rem(10), md: rem(16), lg: rem(24), xl: rem(32) },
   radius: {
     xs: rem(2),
     sm: rem(4),
     md: rem(6),
-    lg: rem(12),
+    lg: rem(10),
     xl: rem(14),
   },
   components: {

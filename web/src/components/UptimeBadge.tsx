@@ -5,6 +5,7 @@ import {
   IconCircleX,
   IconMinus,
 } from '@tabler/icons-react'
+import { uptimeState } from '../lib/stats'
 
 interface UptimeBadgeProps {
   uptime: number // fraction 0..1
@@ -52,7 +53,7 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
       </Tooltip>
     )
   }
-  const key: StateKey = uptime >= 0.99 ? 'good' : uptime >= 0.9 ? 'warning' : 'critical'
+  const key: StateKey = uptimeState(uptime)
   const state = states[key]
   const detail = `${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`
   return (

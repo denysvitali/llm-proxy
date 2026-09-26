@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Card,
+  Chip,
   Code,
   Drawer,
   Group,
@@ -22,7 +23,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core'
-import { useMediaQuery } from '@mantine/hooks'
+import { useClipboard, useMediaQuery } from '@mantine/hooks'
 import {
   IconActivity,
   IconAlertTriangle,
@@ -30,6 +31,7 @@ import {
   IconArrowUp,
   IconArrowsSort,
   IconClock,
+  IconCopy,
   IconCube,
   IconChevronRight,
   IconInboxOff,
@@ -42,6 +44,8 @@ import { fetchBackendStatsSeries, fetchStats } from '../api'
 import type { ModelStat, StatsSeries } from '../api'
 import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
+import { tpsSeries, tokenMixSeries } from '../lib/chartSeries'
+import { mixSegments } from '../lib/stats'
 import StatTile from '../components/StatTile'
 import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/EmptyState'
@@ -49,7 +53,7 @@ import { TimeRangeControl } from '../components/TimeRangeControl'
 import UptimeBadge from '../components/UptimeBadge'
 import StatusChips from '../components/StatusChips'
 import PercentileBars from '../components/PercentileBars'
-import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
+import TokenMixBar, { TokenLegend } from '../components/TokenMixBar'
 import {
   HistoryBarChart,
   HistoryLineChart,
@@ -68,6 +72,7 @@ type SortKey =
   | 'cache'
   | 'tools'
   | 'toolErr'
+  | 'success'
 
 const columns: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'model', label: 'Backend / model' },
@@ -79,6 +84,7 @@ const columns: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'cache', label: 'Cache hit', numeric: true },
   { key: 'tools', label: 'Tool calls', numeric: true },
   { key: 'toolErr', label: 'Tool err', numeric: true },
+  { key: 'success', label: 'Success', numeric: true },
 ]
 
 const sortOptions = [
@@ -90,19 +96,9 @@ const sortOptions = [
   { value: 'cache', label: 'Cache hit' },
   { value: 'tools', label: 'Tool calls' },
   { value: 'toolErr', label: 'Tool error rate' },
+  { value: 'success', label: 'Success rate' },
   { value: 'model', label: 'Name' },
 ]
-
-// Token-kind segments in fixed categorical slot order; every chart on this
-// page (cards, drawer) draws the same kind in the same color.
-function mixSegments(m: ModelStat, colors: string[]): MixSegment[] {
-  return [
-    { name: 'input', color: colors[0], value: m.input_tokens },
-    { name: 'output', color: colors[1], value: m.output_tokens },
-    { name: 'cache read', color: colors[2], value: m.cache_read_tokens },
-    { name: 'cache write', color: colors[3], value: m.cache_write_tokens },
-  ]
-}
 
 // A recorded zero rate is different from a rate with no observations.
 function observedRate(rate: number, observations: number): string {
@@ -135,6 +131,8 @@ function sortValue(m: ModelStat, key: SortKey): string | number {
       return m.tool_calls
     case 'toolErr':
       return m.tool_error_rate
+    case 'success':
+      return m.requests > 0 ? m.successes / m.requests : 0
   }
 }
 
@@ -146,6 +144,7 @@ export default function ModelsPage() {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
 
   const [filter, setFilter] = useState('')
+  const [errorsOnly, setErrorsOnly] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   function clearFilter() {
     setFilter('')
@@ -165,6 +164,7 @@ export default function ModelsPage() {
     const f = filter.trim().toLowerCase()
     return models
       .filter((m) => !f || `${m.backend}/${m.model}`.toLowerCase().includes(f))
+      .filter((m) => !errorsOnly || m.requests - m.successes > 0 || m.tool_errors > 0)
       .sort((a, b) => {
         const va = sortValue(a, sort.key)
         const vb = sortValue(b, sort.key)
@@ -172,7 +172,7 @@ export default function ModelsPage() {
           return String(va).localeCompare(String(vb)) * sort.dir
         return (va - vb) * sort.dir
       })
-  }, [models, filter, sort])
+  }, [models, filter, sort, errorsOnly])
 
   const summary = useMemo(() => {
     const requests = models.reduce((s, m) => s + m.requests, 0)
@@ -193,6 +193,21 @@ export default function ModelsPage() {
 
   return (
     <Fade pending={q.isPending}>
+      <style>{`
+        .models-table th button:hover {
+          background: var(--segmented-track);
+          border-radius: 4px;
+        }
+        .models-table th button[aria-sort="ascending"],
+        .models-table th button[aria-sort="descending"] {
+          text-decoration: underline;
+          text-decoration-color: var(--mantine-color-brand-filled, var(--mantine-color-blue-filled));
+          text-underline-offset: 3px;
+        }
+        .models-table tr:hover .models-table-copy {
+          opacity: 1 !important;
+        }
+      `}</style>
       <Stack gap="lg" className="models-page">
         <PageHeader
           title="Models"
@@ -251,6 +266,14 @@ export default function ModelsPage() {
             value={filter}
             onChange={(e) => setFilter(e.currentTarget.value)}
           />
+          <Chip
+            checked={errorsOnly}
+            onChange={(v) => setErrorsOnly(v)}
+            variant="outline"
+            size="sm"
+          >
+            Errors only
+          </Chip>
           {isMobile && models.length > 0 && (
             <Group gap="xs" wrap="nowrap">
               <Select
@@ -337,7 +360,7 @@ export default function ModelsPage() {
           <ScrollArea>
             {/* Striped + highlight-on-hover keeps wide rows scannable; the
                   cursor signals the row opens the detail drawer. */}
-            <Table miw={940} verticalSpacing="sm" horizontalSpacing="md" highlightOnHover striped className="models-table">
+            <Table miw={940} verticalSpacing="sm" horizontalSpacing="md" highlightOnHover striped className="models-table" aria-label="Model traffic and latency">
               <Table.Thead
                 style={{
                   position: 'sticky',
@@ -375,21 +398,15 @@ export default function ModelsPage() {
                   >
                     <Table.Td>
                       {/* Backend as a muted eyebrow above the model name —
-                            the model is what you scan for. */}
-                      <UnstyledButton
-                        mih={44}
-                        aria-label={`Open details for ${m.backend} ${m.model}`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setSelected(m)
-                        }}
-                        style={{ minWidth: 0 }}
-                      >
-                        <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>
+                            the model is what you scan for. Row click opens
+                            the drawer; no nested button. */}
+                      <Group gap={4} wrap="nowrap">
+                        <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2} style={{ cursor: 'pointer' }}>
                           {m.backend}
                         </Text>
-                        <Code style={{ overflowWrap: 'anywhere' }}>{m.model}</Code>
-                      </UnstyledButton>
+                        <CopyModelName backend={m.backend} model={m.model} />
+                      </Group>
+                      <Code style={{ overflowWrap: 'anywhere', cursor: 'pointer' }}>{m.model}</Code>
                     </Table.Td>
                     <Num td={fmtInt(m.requests)} />
                     <Table.Td>
@@ -561,6 +578,28 @@ function Num({ td, title }: { td: string | number; title?: string }) {
   )
 }
 
+function CopyModelName({ backend, model }: { backend: string; model: string }) {
+  const clipboard = useClipboard({ timeout: 2000 })
+  return (
+    <ActionIcon
+      variant="subtle"
+      color={clipboard.copied ? 'teal' : 'gray'}
+      size="sm"
+      h={20}
+      w={20}
+      aria-label={`Copy ${backend}/${model}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        clipboard.copy(`${backend}/${model}`)
+      }}
+      style={{ opacity: 0 }}
+      className="models-table-copy"
+    >
+      <IconCopy size={12} />
+    </ActionIcon>
+  )
+}
+
 function ModelDetail({
   stat,
   colors,
@@ -586,7 +625,7 @@ function ModelDetail({
   const totalTok = segs.reduce((s, x) => s + x.value, 0)
   // TTFT and E2E share one time scale so their bar lengths are directly
   // comparable; throughput keeps its own scale (different unit).
-  const latMax = Math.max(stat.ttft_seconds.p99, stat.e2e_seconds.p99)
+  const latMax = Math.max(0, ...[stat.ttft_seconds.p99, stat.e2e_seconds.p99].filter(Number.isFinite))
   const successRate = stat.requests > 0 && Number.isFinite(stat.successes) ? clampRate(stat.successes / stat.requests) : NaN
 
   return (
@@ -632,19 +671,22 @@ function ModelDetail({
         <>
           <DetailSection title="Performance history">
             <HistoryLineChart
-              title="Latency"
-              description="Median first byte and full response"
-              data={historyData([series?.ttft_p50, series?.e2e_p50])}
-              series={[
-                { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
-                { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
-              ]}
+              title="First byte"
+              description="Median time to first token"
+              data={historyData([series?.ttft_p50])}
+              series={[{ name: 'series0', label: 'First byte', formatter: historyFormatters.seconds }]}
+            />
+            <HistoryLineChart
+              title="Full response"
+              description="Median end-to-end latency"
+              data={historyData([series?.e2e_p50])}
+              series={[{ name: 'series0', label: 'Full response', formatter: historyFormatters.seconds }]}
             />
             <HistoryLineChart
               title="Throughput"
               description="Median output rate"
               data={historyData([series?.throughput_p50])}
-              series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
+              series={tpsSeries(historyFormatters)}
             />
           </DetailSection>
 
@@ -655,22 +697,28 @@ function ModelDetail({
               points={series?.requests ?? []}
             />
             <HistoryLineChart
-              title="Tool calls vs errors"
-              description="Calls issued and errored results, per interval"
-              data={historyData([series?.tool_calls, series?.tool_errors])}
-              series={[
-                { name: 'series0', label: 'Calls', formatter: historyFormatters.count },
-                { name: 'series1', label: 'Errors', formatter: historyFormatters.count },
-              ]}
+              title="Success rate"
+              description="Share of requests that succeeded"
+              data={historyData([series?.success_rate])}
+              series={[{ name: 'series0', label: 'Success rate', formatter: historyFormatters.percent }]}
+            />
+            <HistoryLineChart
+              title="Tool calls"
+              description="Tool calls issued per interval"
+              data={historyData([series?.tool_calls])}
+              series={[{ name: 'series0', label: 'Calls', formatter: historyFormatters.count }]}
+            />
+            <HistoryLineChart
+              title="Tool error rate"
+              description="Share of tool calls that errored"
+              data={historyData([series?.tool_errors])}
+              series={[{ name: 'series0', label: 'Errors', formatter: historyFormatters.percent }]}
             />
             <HistoryLineChart
               title="Token volume"
               description="Input and output tokens per interval"
               data={historyData([series?.tokens_in, series?.tokens_out])}
-              series={[
-                { name: 'series0', label: 'Input', formatter: historyFormatters.count },
-                { name: 'series1', label: 'Output', formatter: historyFormatters.count },
-              ]}
+              series={tokenMixSeries(historyFormatters)}
             />
           </DetailSection>
         </>

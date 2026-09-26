@@ -1,6 +1,5 @@
 import { Progress, Table, Text, Tooltip } from '@mantine/core'
 import { useReducedMotion } from '@mantine/hooks'
-import { useChartPalette } from '../palette'
 import { fmtSec, fmtTps } from '../format'
 
 interface PercentileBarsProps {
@@ -13,7 +12,6 @@ interface PercentileBarsProps {
 const labels = ['p50', 'p90', 'p99'] as const
 
 export default function PercentileBars({ values, unit, max }: PercentileBarsProps) {
-  const pal = useChartPalette()
   const reduceMotion = useReducedMotion()
   const observedValues = labels.map((label) => values[label]).filter(isObserved)
   // Keep the caller's shared scale; missing observations must not poison it.
@@ -51,7 +49,7 @@ export default function PercentileBars({ values, unit, max }: PercentileBarsProp
         </Table.Tr>
       </Table.Thead>
       <Table.Tbody>
-        {labels.map((label, i) => {
+        {labels.map((label) => {
           const val = values[label]
           const observed = isObserved(val)
           const detail = observed
@@ -76,7 +74,7 @@ export default function PercentileBars({ values, unit, max }: PercentileBarsProp
                   <Progress
                     aria-hidden="true"
                     value={width}
-                    color={pal.ramp[i]}
+                    color="var(--mantine-color-text)"
                     size={10}
                     radius={0}
                     transitionDuration={reduceMotion ? 0 : 250}

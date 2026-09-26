@@ -16,7 +16,7 @@ export function PageSection({
   const titleId = useId()
 
   return (
-    <Box component="section" aria-labelledby={titleId} className="page-section" miw={0}>
+    <Box component="section" aria-labelledby={titleId} miw={0}>
       <Group
         justify="space-between"
         align="flex-end"

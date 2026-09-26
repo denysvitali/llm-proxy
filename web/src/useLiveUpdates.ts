@@ -25,19 +25,32 @@ export function useLiveStatsUpdates() {
     // busy proxy those arrive several times a second; refetching on each one
     // makes the dashboard visibly pulse. Coalesce bursts into one refetch.
     let invalidateTimer: number | undefined
+    const invalidateAll = () => {
+      void queryClient.invalidateQueries({ queryKey: ['stats'], exact: true })
+      void queryClient.invalidateQueries({ queryKey: ['stats-series'] })
+      void queryClient.invalidateQueries({ queryKey: ['upstream-errors'] })
+      void queryClient.invalidateQueries({ queryKey: ['recent-requests'] })
+      void queryClient.invalidateQueries({ queryKey: ['grok-usage'] })
+      void queryClient.invalidateQueries({ queryKey: ['zcode-usage'] })
+    }
+
     const scheduleInvalidate = () => {
       window.clearTimeout(invalidateTimer)
       invalidateTimer = window.setTimeout(() => {
         invalidateTimer = undefined
-        void queryClient.invalidateQueries({ queryKey: ['stats'] })
-        void queryClient.invalidateQueries({ queryKey: ['stats-series'] })
-        void queryClient.invalidateQueries({ queryKey: ['overview'] })
+        invalidateAll()
       }, 500)
     }
 
     const onEvent = (data: unknown) => {
-      if ((data as string).startsWith('{"type":"stats-updated"}')) {
-        scheduleInvalidate()
+      if (typeof data !== 'string') return
+      try {
+        const parsed = JSON.parse(data)
+        if (parsed?.type === 'stats-updated') {
+          scheduleInvalidate()
+        }
+      } catch {
+        // not JSON, ignore
       }
     }
 
@@ -80,12 +93,21 @@ export function useLiveStatsUpdates() {
       })
     }
 
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        invalidateAll()
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
     connect()
 
     return () => {
       stopped = true
       window.clearTimeout(reconnectTimer)
       window.clearTimeout(invalidateTimer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       socket?.close()
       eventSource?.close()
     }

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Box,
   Accordion,
@@ -30,7 +30,6 @@ import {
   IconShieldCheck,
   IconTool,
   IconServerOff,
-  IconRefresh,
   IconInboxOff,
   IconChartBar,
   IconClock,
@@ -41,7 +40,7 @@ import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { fetchGrokUsage, fetchOverview, fetchRequest, fetchRequests, fetchStats, fetchStatsSeries, fetchUpstreamErrors, fetchZcodeUsage } from '../api'
 import { useLiveStatsUpdates } from '../useLiveUpdates'
-import type { InspectedRequest, ModelStat, SeriesPoint, UpstreamErrorEvent } from '../api'
+import type { InspectedRequest, SeriesPoint, UpstreamErrorEvent } from '../api'
 import GrokUsageCard from '../components/GrokUsageCard'
 import ZcodeUsageCard from '../components/ZcodeUsageCard'
 import { PageHeader } from '../components/PageHeader'
@@ -52,10 +51,13 @@ import { useChartPalette } from '../palette'
 import StatTile from '../components/StatTile'
 import StatusChips from '../components/StatusChips'
 import UptimeBadge from '../components/UptimeBadge'
-import TokenMixBar, { TokenLegend, type MixSegment } from '../components/TokenMixBar'
+import TokenMixBar, { TokenLegend } from '../components/TokenMixBar'
 import { HistoryLineChart, historyData, historyFormatters } from '../components/HistoryCharts'
 import { EmptyState } from '../components/EmptyState'
-import { Fade } from '../App'
+import Fade from '../components/Fade'
+import ErrorRetryCard from '../components/ErrorRetryCard'
+import { providerSegments, providerAggregates } from '../lib/stats'
+import { statusSeverity, severityColor, statusDescription } from '../lib/httpStatus'
 
 export default function OverviewPage() {
   useLiveStatsUpdates()
@@ -95,31 +97,40 @@ export default function OverviewPage() {
   const pal = useChartPalette()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
 
-  const totalRequests = models.reduce((s, m) => s + m.requests, 0)
-  const totalSuccess = models.reduce((s, m) => s + m.successes, 0)
-  const tokensIn = models.reduce((s, m) => s + m.input_tokens, 0)
-  const tokensOut = models.reduce((s, m) => s + m.output_tokens, 0)
-  const toolErrors = models.reduce((s, m) => s + m.tool_errors, 0)
-  const toolCalls = models.reduce((s, m) => s + m.tool_calls, 0)
+  const derived = useMemo(() => {
+    const totalRequests = models.reduce((s, m) => s + m.requests, 0)
+    const totalSuccess = models.reduce((s, m) => s + m.successes, 0)
+    const tokensIn = models.reduce((s, m) => s + m.input_tokens, 0)
+    const tokensOut = models.reduce((s, m) => s + m.output_tokens, 0)
+    const toolErrors = models.reduce((s, m) => s + m.tool_errors, 0)
+    const toolCalls = models.reduce((s, m) => s + m.tool_calls, 0)
+    const busy = models.filter((m) => m.throughput_tps.p50 > 0)
+    let medianTps = 0
+    if (busy.length > 0) {
+      const sorted = [...busy].sort(
+        (a, b) => a.throughput_tps.p50 - b.throughput_tps.p50,
+      )
+      medianTps = sorted[Math.floor(sorted.length / 2)].throughput_tps.p50
+    }
+    return { totalRequests, totalSuccess, tokensIn, tokensOut, toolErrors, toolCalls, medianTps }
+    // models is a new ?? [] array every render; memo still avoids recomputes on other state changes
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [models])
 
-  // Median of active per-model p50s, not a request-weighted fleet percentile.
-  const busy = models.filter((m) => m.throughput_tps.p50 > 0)
-  let medianTps = 0
-  if (busy.length > 0) {
-    const sorted = [...busy].sort(
-      (a, b) => a.throughput_tps.p50 - b.throughput_tps.p50,
-    )
-    medianTps = sorted[Math.floor(sorted.length / 2)].throughput_tps.p50
-  }
+  const topModels = useMemo(() =>
+    [...models]
+      .sort((a, b) => b.requests - a.requests)
+      .slice(0, 8)
+      .map((m) => ({
+        model: `${m.backend}/${m.model}`,
+        requests: m.requests,
+      })), [models, isMobile])
 
-  const labelMax = isMobile ? 15 : 22
-  const topModels = [...models]
-    .sort((a, b) => b.requests - a.requests)
-    .slice(0, 8)
-    .map((m) => ({
-      model: `${m.backend}/${m.model}`,
-      requests: m.requests,
-    }))
+  const history = useMemo(() => ({
+    latency: historyData([seriesQ.data?.series.ttft_p50, seriesQ.data?.series.e2e_p50]),
+    throughput: historyData([seriesQ.data?.series.throughput_p50]),
+    tokens: historyData([seriesQ.data?.series.tokens_in, seriesQ.data?.series.tokens_out]),
+  }), [seriesQ.data])
 
   const requestCount = sumPoints(seriesQ.data?.series.requests)
   const mix = providerSegments(models, pal.series)
@@ -149,45 +160,40 @@ export default function OverviewPage() {
             <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md">
               <StatTile
                 label="Requests"
-                value={fmtInt(totalRequests)}
-                hint={`${fmtInt(totalSuccess)} succeeded`}
+                value={fmtInt(derived.totalRequests)}
+                hint={`${fmtInt(derived.totalSuccess)} succeeded`}
                 icon={<IconActivity size={16} />}
-                accent="brand"
               />
               <StatTile
                 label="Success rate"
-                value={totalRequests ? `${(100 * totalSuccess / totalRequests).toFixed(1)}%` : '—'}
+                value={derived.totalRequests ? `${(100 * derived.totalSuccess / derived.totalRequests).toFixed(1)}%` : '—'}
                 hint="succeeded / total"
                 icon={<IconShieldCheck size={16} />}
-                accent="teal"
               />
               <StatTile
                 label="Tokens served"
-                value={fmtInt(tokensIn + tokensOut)}
-                hint={`${fmtInt(tokensIn)} in · ${fmtInt(tokensOut)} out`}
+                value={fmtInt(derived.tokensIn + derived.tokensOut)}
+                hint={`${fmtInt(derived.tokensIn)} in · ${fmtInt(derived.tokensOut)} out`}
                 icon={<IconCoins size={16} />}
-                accent="grape"
               />
               <StatTile
                 label="Median tok/s"
-                value={fmtTps(medianTps)}
+                value={fmtTps(derived.medianTps)}
                 hint="p50 across models"
                 icon={<IconBolt size={16} />}
-                accent="orange"
               />
               <StatTile
                 label="Tool calls"
-                value={fmtInt(toolCalls)}
-                hint={`${fmtInt(toolErrors)} errored`}
+                value={fmtInt(derived.toolCalls)}
+                hint={`${fmtInt(derived.toolErrors)} errored`}
                 icon={<IconTool size={16} />}
-                accent="brand"
               />
               <StatTile
                 label="Tool error rate"
-                value={toolCalls ? `${(100 * clampRate(toolErrors / toolCalls)).toFixed(1)}%` : '—'}
-                hint={`${fmtInt(toolErrors)} errored · ${fmtInt(toolCalls)} calls`}
+                value={derived.toolCalls ? `${(100 * clampRate(derived.toolErrors / derived.toolCalls)).toFixed(1)}%` : '—'}
+                hint={`${fmtInt(derived.toolErrors)} errored · ${fmtInt(derived.toolCalls)} calls`}
                 icon={<IconAlertTriangle size={16} />}
-                accent={toolErrors > 0 ? 'red' : 'gray'}
+                accent={derived.toolErrors > 0 ? 'red' : undefined}
               />
             </SimpleGrid>
           ) : statsQ.isPending ? (
@@ -236,7 +242,7 @@ export default function OverviewPage() {
                 <HistoryLineChart
                   title="Latency"
                   description="Median first byte and full response"
-                  data={historyData([seriesQ.data?.series.ttft_p50, seriesQ.data?.series.e2e_p50])}
+                  data={history.latency}
                   series={[
                     { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
                     { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
@@ -246,14 +252,14 @@ export default function OverviewPage() {
                 <HistoryLineChart
                   title="Throughput"
                   description="Median output rate"
-                  data={historyData([seriesQ.data?.series.throughput_p50])}
+                  data={history.throughput}
                   series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
                   height={200}
                 />
                 <HistoryLineChart
                   title="Token volume"
                   description="Input and output tokens"
-                  data={historyData([seriesQ.data?.series.tokens_in, seriesQ.data?.series.tokens_out])}
+                  data={history.tokens}
                   series={[
                     { name: 'series0', label: 'Input', formatter: historyFormatters.count },
                     { name: 'series1', label: 'Output', formatter: historyFormatters.count },
@@ -305,7 +311,7 @@ export default function OverviewPage() {
               ) : (
                 <Stack gap="sm">
                   <BarChart
-                    h={Math.max(topModels.length * 40 + 16, 120)}
+                    h={300}
                     data={topModels}
                     dataKey="model"
                     orientation="vertical"
@@ -318,7 +324,6 @@ export default function OverviewPage() {
                     yAxisProps={{
                       width: isMobile ? 122 : 176,
                       tickLine: false,
-                      tickFormatter: (value: string) => value.length > labelMax ? `${value.slice(0, labelMax - 1)}…` : value,
                     }}
                     tooltipAnimationDuration={150}
                   />
@@ -388,7 +393,7 @@ export default function OverviewPage() {
                 hint="Backend health appears here after the first request is routed."
               />
             ) : (
-              <ScrollArea>
+              <Table.ScrollContainer minWidth={640}>
                 <Table verticalSpacing="xs" horizontalSpacing="sm">
                   <Table.Thead>
                     <Table.Tr>
@@ -435,7 +440,7 @@ export default function OverviewPage() {
                     ))}
                   </Table.Tbody>
                 </Table>
-              </ScrollArea>
+              </Table.ScrollContainer>
             )}
           </Card>
         </PageSection>
@@ -465,25 +470,6 @@ export default function OverviewPage() {
         </PageSection>
       </Stack>
     </Fade>
-  )
-}
-
-function ErrorRetryCard({ title, message, onRetry, retrying }: {
-  title: string
-  message: ReactNode
-  onRetry: () => unknown
-  retrying: boolean
-}) {
-  return (
-    <Alert color="red" variant="light" title={title} icon={<IconAlertTriangle size={16} />}>
-      <Stack gap="sm" align="flex-start">
-        <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{message}</Text>
-        <Button size="xs" variant="light" color="red" loading={retrying} disabled={retrying}
-          leftSection={<IconRefresh size={14} />} onClick={() => { if (!retrying) void onRetry() }}>
-          Retry loading
-        </Button>
-      </Stack>
-    </Alert>
   )
 }
 
@@ -519,70 +505,6 @@ function sumPoints(points?: SeriesPoint[]) {
   return Math.round((points ?? []).reduce((sum, point) => sum + point.value, 0))
 }
 
-export function providerSegments(
-  models: ModelStat[],
-  colors: string[],
-): [string, MixSegment[]][] {
-  const kinds = [
-    (m: ModelStat) => m.input_tokens,
-    (m: ModelStat) => m.output_tokens,
-    (m: ModelStat) => m.cache_read_tokens,
-    (m: ModelStat) => m.cache_write_tokens,
-  ]
-  const names = ['input', 'output', 'cache read', 'cache write']
-  const byBackend = new Map<string, ModelStat[]>()
-  for (const m of models) {
-    byBackend.set(m.backend, [...(byBackend.get(m.backend) ?? []), m])
-  }
-  return [...byBackend.entries()].map(([backend, ms]) => [
-    backend,
-    kinds.map((get, i) => ({
-      name: names[i],
-      color: colors[i],
-      value: ms.reduce((s, m) => s + get(m), 0),
-    })),
-  ])
-}
-
-function providerAggregates(models: ModelStat[]) {
-  const byBackend = new Map<
-    string,
-    {
-      requests: number
-      successes: number
-      toolCalls: number
-      toolErrors: number
-      statusCodes: Record<string, number>
-    }
-  >()
-  for (const m of models) {
-    const cur =
-      byBackend.get(m.backend) ?? {
-        requests: 0,
-        successes: 0,
-        toolCalls: 0,
-        toolErrors: 0,
-        statusCodes: {},
-      }
-    cur.requests += m.requests
-    cur.successes += m.successes
-    cur.toolCalls += m.tool_calls
-    cur.toolErrors += m.tool_errors
-    for (const [code, n] of Object.entries(m.status_codes ?? {})) {
-      cur.statusCodes[code] = (cur.statusCodes[code] ?? 0) + n
-    }
-    byBackend.set(m.backend, cur)
-  }
-  return [...byBackend.entries()].map(([backend, v]) => ({
-    backend,
-    requests: v.requests,
-    uptime: v.requests ? v.successes / v.requests : 0,
-    toolCalls: v.toolCalls,
-    toolErrors: v.toolErrors,
-    statusCodes: v.statusCodes,
-  }))
-}
-
 // UpstreamErrorsCard lists the most recent upstream failures newest-first:
 // when it happened, which backend/model, the HTTP status (or "no response"),
 // and what the upstream said about it.
@@ -592,7 +514,7 @@ function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
     <Card withBorder radius="lg" p="md">
       <Group justify="space-between" align="center" wrap="wrap" gap="sm" mb={10}>
         <Group gap={8}>
-          <ThemeIcon variant="light" color="red" size="sm" radius="xl" aria-hidden="true">
+          <ThemeIcon variant="light" color="red" size="sm" radius="md" aria-hidden="true">
             <IconServerOff size={13} />
           </ThemeIcon>
           <Title order={5}>Recent upstream errors</Title>
@@ -606,7 +528,7 @@ function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
           hint="No failures are present in this instance's retained error history. This is separate from the chart time range." />
       ) : <Stack gap={6}>
         {shown.map((e, i) => (
-          <Paper key={`${e.at}-${i}`} withBorder radius="md" p="xs" bg="var(--mantine-color-default-hover)">
+          <Paper key={`${e.at}-${i}`} withBorder radius="md" p="xs" bg="var(--sunken)">
             <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
               <Box style={{ minWidth: 0 }}>
                 <Group gap={6} wrap="nowrap">
@@ -649,7 +571,7 @@ function RecentRequestsCard({
     <Card withBorder radius="lg" p="md">
       <Group justify="space-between" align="center" wrap="wrap" gap="sm" mb={10}>
         <Group gap={8}>
-          <ThemeIcon variant="light" color="brand" size="sm" radius="xl" aria-hidden="true">
+          <ThemeIcon variant="light" color="brand" size="sm" radius="md" aria-hidden="true">
             <IconClock size={13} />
           </ThemeIcon>
           <Title order={5}>Recent requests</Title>
@@ -676,7 +598,7 @@ function RecentRequestsCard({
                 <Box style={{ minWidth: 0 }}>
                   <Group gap={6} wrap="nowrap">
                     <EventTime at={request.at} />
-                    <Text size="xs" c="dimmed" truncate>
+                    <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
                       {request.backend} / {request.model}
                     </Text>
                   </Group>
@@ -697,7 +619,7 @@ function RecentRequestsCard({
                 <Table.Th scope="col">Time</Table.Th>
                 <Table.Th scope="col">Backend / model</Table.Th>
                 <Table.Th scope="col">Status</Table.Th>
-                <Table.Th scope="col" />
+                <Table.Th aria-hidden="true" />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -758,15 +680,12 @@ function RequestDetail({ request }: { request: InspectedRequest }) {
 // HTTP state as icon + label so the status is never color-alone. 'error' means
 // the upstream never answered — kept distinct from a real 4xx/5xx code.
 function StatusBadge({ status }: { status: string }) {
-  const isErr = status === 'error'
-  const isClientError = status.startsWith('4')
-  const isServerError = status.startsWith('5')
-  const isSuccess = status.startsWith('2')
-  const color = isErr || isServerError ? 'red' : isClientError ? 'yellow' : isSuccess ? 'teal' : 'gray'
-  const icon = isErr ? <IconServerOff size={11} aria-hidden="true" />
-    : isClientError || isServerError ? <IconAlertTriangle size={11} aria-hidden="true" />
-      : isSuccess ? <IconCheck size={11} aria-hidden="true" /> : <IconPointFilled size={11} aria-hidden="true" />
-  const description = isErr ? 'No HTTP response from upstream' : `HTTP ${status}`
+  const severity = statusSeverity(status)
+  const color = severityColor(severity)
+  const description = statusDescription(status)
+  const icon = severity === 'critical' ? <IconServerOff size={11} aria-hidden="true" />
+    : severity === 'warning' ? <IconAlertTriangle size={11} aria-hidden="true" />
+      : severity === 'good' ? <IconCheck size={11} aria-hidden="true" /> : <IconPointFilled size={11} aria-hidden="true" />
   return (
     <Tooltip label={description} withArrow events={{ hover: true, focus: true, touch: true }}>
       <Badge
@@ -777,7 +696,7 @@ function StatusBadge({ status }: { status: string }) {
         leftSection={icon}
         styles={{ root: { fontWeight: 700, cursor: 'default' }, label: { overflow: 'visible' } }}
       >
-        {isErr ? 'no response' : status}
+        {status === 'error' ? 'no response' : status}
       </Badge>
     </Tooltip>
   )

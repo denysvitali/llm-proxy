@@ -1,25 +1,87 @@
 import {
-  Anchor, AppShell, Badge, Box, Container, Group, type MantineColorScheme,
-  SegmentedControl, type SegmentedControlItem, Stack, Text, Tooltip,
-  UnstyledButton, useMantineColorScheme,
+  Anchor, AppShell, Badge, Box, Container, Group, Loader, Modal,
+  type MantineColorScheme, SegmentedControl, type SegmentedControlItem,
+  Stack, Text, Tooltip, UnstyledButton, useMantineColorScheme,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { IconArrowUpRight, IconDeviceDesktop, IconMoonStars, IconSun } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { fetchOverview } from './api'
 import { useLiveStatsUpdates } from './useLiveUpdates'
 import { NAV, isActiveNavPath } from './nav'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
-import OverviewPage from './pages/Overview'
-import ModelsPage from './pages/Models'
-import ProvidersPage from './pages/Providers'
-import SetupPage from './pages/Setup'
+import Fade from './components/Fade'
+
+export { Fade }
+
+const OverviewPage = lazy(() => import('./pages/Overview'))
+const ModelsPage = lazy(() => import('./pages/Models'))
+const ProvidersPage = lazy(() => import('./pages/Providers'))
+const SetupPage = lazy(() => import('./pages/Setup'))
+
+const colorSchemeData: SegmentedControlItem<MantineColorScheme>[] = [
+  { value: 'light', label: <IconSun size={16} aria-label="Light" /> },
+  { value: 'auto', label: <IconDeviceDesktop size={16} aria-label="Auto" /> },
+  { value: 'dark', label: <IconMoonStars size={16} aria-label="Dark" /> },
+]
+
+const SHORTCUTS = [
+  { keys: 'g then o', action: 'Go to Overview' },
+  { keys: 'g then m', action: 'Go to Models' },
+  { keys: 'g then p', action: 'Go to Providers' },
+  { keys: 'g then s', action: 'Go to Setup' },
+  { keys: '?', action: 'Show this help' },
+]
 
 export default function App() {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const pageName = NAV.find((item) => isActiveNavPath(pathname, item.path))?.label ?? 'Overview'
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const lastGPress = useRef(0)
+  const gTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  // Focus main content on route change
+  useEffect(() => {
+    document.getElementById('main')?.focus()
+  }, [pathname])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      if (e.key === 'g') {
+        lastGPress.current = Date.now()
+        if (gTimeout.current) clearTimeout(gTimeout.current)
+        gTimeout.current = setTimeout(() => { lastGPress.current = 0 }, 1000)
+        return
+      }
+
+      if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+        setShortcutsOpen(true)
+        return
+      }
+
+      if (Date.now() - lastGPress.current > 1000) return
+
+      switch (e.key) {
+        case 'o': navigate('/'); break
+        case 'm': navigate('/models'); break
+        case 'p': navigate('/providers'); break
+        case 's': navigate('/setup'); break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      if (gTimeout.current) clearTimeout(gTimeout.current)
+    }
+  }, [navigate])
 
   return (
     <AppShell
@@ -61,15 +123,17 @@ export default function App() {
       </AppShell.Header>
       <AppShell.Main id="main" tabIndex={-1}>
         <Container size={1600} className="page-container">
-          <PageErrorBoundary key={pathname}>
-            <Routes>
-              <Route path="/" element={<OverviewPage />} />
-              <Route path="/models" element={<ModelsPage />} />
-              <Route path="/providers" element={<ProvidersPage />} />
-              <Route path="/setup" element={<SetupPage />} />
-              <Route path="*" element={<OverviewPage />} />
-            </Routes>
-          </PageErrorBoundary>
+          <Suspense fallback={<Group justify="center" py="xl"><Loader size="sm" /></Group>}>
+            <PageErrorBoundary>
+              <Routes>
+                <Route path="/" element={<OverviewPage />} />
+                <Route path="/models" element={<ModelsPage />} />
+                <Route path="/providers" element={<ProvidersPage />} />
+                <Route path="/setup" element={<SetupPage />} />
+                <Route path="*" element={<OverviewPage />} />
+              </Routes>
+            </PageErrorBoundary>
+          </Suspense>
           <Group className="app-footer" justify="space-between" gap="sm" mt={40}>
             <Text size="xs" c="dimmed">llm-proxy · Your model gateway</Text>
             <Group gap="md">
@@ -80,6 +144,16 @@ export default function App() {
         </Container>
       </AppShell.Main>
       {isMobile && <AppShell.Footer><Navigation mobile /></AppShell.Footer>}
+      <Modal opened={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts">
+        <Stack gap="sm">
+          {SHORTCUTS.map(({ keys, action }) => (
+            <Group key={keys} justify="space-between" gap="md">
+              <Text size="sm" fw={500} ff="monospace">{keys}</Text>
+              <Text size="sm" c="dimmed">{action}</Text>
+            </Group>
+          ))}
+        </Stack>
+      </Modal>
     </AppShell>
   )
 }
@@ -102,7 +176,7 @@ function LiveStatusBadge() {
   return (
     <Tooltip label={connected ? 'Receiving live traffic updates' : 'Live updates disconnected; stats refresh on page load'}>
       <Badge variant="dot" color={connected ? 'teal' : 'gray'} tt="none" className="live-status" aria-live="polite">
-        {connected ? 'Live' : 'Offline'}
+        <span className="live-status-text">{connected ? 'Live' : 'Offline'}</span>
       </Badge>
     </Tooltip>
   )
@@ -115,7 +189,8 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
       {NAV.map(({ path, label, icon: Icon }) => (
         <UnstyledButton key={path} component={NavLink} to={path}
           className={mobile ? 'bottom-nav-link' : 'side-nav-link'}
-          data-active={isActiveNavPath(pathname, path) || undefined}>
+          data-active={isActiveNavPath(pathname, path) || undefined}
+          aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
           <Icon size={20} stroke={1.7} aria-hidden />
           <span>{label}</span>
         </UnstyledButton>
@@ -126,14 +201,5 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
 
 function ColorSchemeToggle() {
   const { colorScheme, setColorScheme } = useMantineColorScheme()
-  const data: SegmentedControlItem<MantineColorScheme>[] = [
-    { value: 'light', label: <IconSun size={16} aria-label="Light" /> },
-    { value: 'auto', label: <IconDeviceDesktop size={16} aria-label="Auto" /> },
-    { value: 'dark', label: <IconMoonStars size={16} aria-label="Dark" /> },
-  ]
-  return <SegmentedControl size="xs" aria-label="Color scheme" data={data} value={colorScheme} onChange={setColorScheme} />
-}
-
-export function Fade({ pending, children }: { pending: boolean; children: React.ReactNode }) {
-  return <Box style={{ opacity: pending ? 0.65 : 1, transition: 'opacity 200ms' }}>{children}</Box>
+  return <SegmentedControl size="xs" aria-label="Color scheme" data={colorSchemeData} value={colorScheme} onChange={setColorScheme} />
 }

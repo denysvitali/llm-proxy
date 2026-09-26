@@ -16,7 +16,6 @@ export function PageHeader({
 }) {
   return (
     <Group
-      className="page-header"
       justify="space-between"
       align="flex-end"
       wrap="wrap"

@@ -81,7 +81,7 @@ export interface StatsSeriesResponse {
 
 export type ScopedStatsSeriesResponse = StatsSeriesResponse
 
-export function fetchBackendStatsSeries(
+export async function fetchBackendStatsSeries(
   backend: string,
   range: string,
   model?: string,
@@ -89,7 +89,22 @@ export function fetchBackendStatsSeries(
   const path = model
     ? `/api/stats/backends/${encodeURIComponent(backend)}/${encodeURIComponent(model)}`
     : `/api/stats/backends/${encodeURIComponent(backend)}`
-  return getJSON<ScopedStatsSeriesResponse>(`${path}?range=${encodeURIComponent(range)}`)
+  const data = await getJSON<ScopedStatsSeriesResponse>(`${path}?range=${encodeURIComponent(range)}`)
+  return {
+    ...data,
+    models: data.models ?? [],
+    series: {
+      requests: data.series?.requests ?? [],
+      success_rate: data.series?.success_rate ?? [],
+      ttft_p50: data.series?.ttft_p50 ?? [],
+      e2e_p50: data.series?.e2e_p50 ?? [],
+      throughput_p50: data.series?.throughput_p50 ?? [],
+      tokens_in: data.series?.tokens_in ?? [],
+      tokens_out: data.series?.tokens_out ?? [],
+      tool_calls: data.series?.tool_calls ?? [],
+      tool_errors: data.series?.tool_errors ?? [],
+    },
+  }
 }
 
 export interface OverviewBackend {
@@ -172,26 +187,90 @@ export interface GrokUsage {
   fetchedAt: string
 }
 
-async function getJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
-  return (await res.json()) as T
+export class ApiError extends Error {
+  status: number
+  kind: 'network' | 'http' | 'timeout' | 'parse'
+
+  constructor(
+    message: string,
+    status: number,
+    kind: 'network' | 'http' | 'timeout' | 'parse',
+  ) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.kind = kind
+  }
 }
 
-export function fetchStats(): Promise<StatsResponse> {
-  return getJSON<StatsResponse>('/stats')
+async function getJSON<T>(url: string): Promise<T> {
+  const doFetch = async (): Promise<T> => {
+    let res: Response
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'TimeoutError') {
+        throw new ApiError(`${url}: request timed out`, 0, 'timeout')
+      }
+      throw new ApiError(`${url}: ${e instanceof Error ? e.message : 'network error'}`, 0, 'network')
+    }
+
+    if (!res.ok) {
+      let message = `${url}: HTTP ${res.status}`
+      try {
+        const text = await res.text()
+        if (text) message = text
+      } catch {
+        // ignore body read errors
+      }
+      throw new ApiError(message, res.status, 'http')
+    }
+
+    const contentType = res.headers.get('content-type') ?? ''
+    if (!contentType.includes('application/json')) {
+      throw new ApiError(`${url}: expected JSON, got ${contentType || 'unknown content-type'}`, res.status, 'parse')
+    }
+
+    try {
+      return (await res.json()) as T
+    } catch (e) {
+      throw new ApiError(`${url}: ${e instanceof Error ? e.message : 'parse error'}`, res.status, 'parse')
+    }
+  }
+
+  let lastError: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await doFetch()
+    } catch (e) {
+      lastError = e
+      if (e instanceof ApiError && (e.kind === 'network' || e.status >= 500) && attempt < 1) {
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
+        continue
+      }
+      throw e
+    }
+  }
+  throw lastError
+}
+
+export async function fetchStats(): Promise<StatsResponse> {
+  const data = await getJSON<StatsResponse>('/stats')
+  return { ...data, models: data.models ?? [] }
 }
 
 export function fetchStatsSeries(range: string): Promise<StatsSeriesResponse> {
   return getJSON<StatsSeriesResponse>(`/api/stats?range=${encodeURIComponent(range)}`)
 }
 
-export function fetchOverview(): Promise<Overview> {
-  return getJSON<Overview>('/api/overview')
+export async function fetchOverview(): Promise<Overview> {
+  const data = await getJSON<Overview>('/api/overview')
+  return { ...data, backends: data.backends ?? [], routes: data.routes ?? [] }
 }
 
-export function fetchGrokUsage(): Promise<GrokUsage> {
-  return getJSON<GrokUsage>('/api/grok/usage')
+export async function fetchGrokUsage(): Promise<GrokUsage> {
+  const data = await getJSON<GrokUsage>('/api/grok/usage')
+  return { ...data }
 }
 
 export async function fetchZcodeUsage(): Promise<ZcodeUsage> {
@@ -201,12 +280,14 @@ export async function fetchZcodeUsage(): Promise<ZcodeUsage> {
   return { ...usage, plans: usage.plans ?? [] }
 }
 
-export function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {
-  return getJSON<UpstreamErrorsResponse>('/api/stats/errors')
+export async function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {
+  const data = await getJSON<UpstreamErrorsResponse>('/api/stats/errors')
+  return { ...data, errors: data.errors ?? [] }
 }
 
-export function fetchRequests(): Promise<RequestsResponse> {
-  return getJSON<RequestsResponse>('/api/requests')
+export async function fetchRequests(): Promise<RequestsResponse> {
+  const data = await getJSON<RequestsResponse>('/api/requests')
+  return { ...data, requests: data.requests ?? [] }
 }
 
 export function fetchRequest(id: string): Promise<InspectedRequest> {

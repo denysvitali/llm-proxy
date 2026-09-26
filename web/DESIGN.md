@@ -75,6 +75,22 @@ node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode dark  --surface #1
 node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode light --surface #ffffff --ordinal
 ```
 
+### Status color duality
+
+There are two sets of status colors, intentionally divergent:
+
+- **`palette.ts` status colors** — saturated, for chart data points. These are
+  machine-validated for contrast against the card surface.
+- **`index.css` `--data-*` colors** — muted, for UI badges and indicators.
+  These are designed for small text and icons on card surfaces.
+
+Never use a chart status color for a UI badge, or vice versa.
+
+### Dark mode toggle
+
+- `"auto"` follows `prefers-color-scheme`.
+- Transition is a 150ms crossfade on `background-color` only.
+
 ## 3. Type
 
 - UI/body: `-apple-system, "Segoe UI", Roboto, Inter, system-ui, sans-serif`
@@ -88,6 +104,9 @@ node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode light --surface #f
   600–650. Headings get `letter-spacing: -0.014em` automatically.
 - Line lengths: cap prose at ~70ch. Denseness comes from structure, not from
   shrinking type below 13px.
+
+**This is the canonical type scale.** `theme.ts` has been updated to match
+exactly: `xs: 11.5, sm: 13, md: 14, lg: 16, h1: 22`. Do not deviate.
 
 ## 4. Spacing / radius / elevation
 
@@ -177,7 +196,56 @@ all four pages. Leave that export alone.
   equivalent or a complete `aria-label`.
 - Never convey state by color alone.
 
-## 11. Verify before you finish
+## 11. Z-index scale
+
+| Layer | z-index |
+|---|---|
+| base | 0 |
+| sticky | 10 |
+| dropdown | 100 |
+| drawer | 200 |
+| modal | 300 |
+| toast | 400 |
+| skip-link | 500 |
+
+## 12. Skeleton pattern
+
+- Use `var(--sunken)` background with a subtle pulse animation.
+- Match the dimensions of the content being loaded.
+- No spinner for initial load — use skeleton placeholders.
+
+## 13. Toast / notification pattern
+
+- Placement: bottom-right.
+- Duration: 4s for success, 6s for error.
+- Variant colors: success → `--data-good`, error → `--data-critical`.
+
+## 14. Form input styling
+
+- Radius: `md`.
+- Border: `1px solid var(--hairline)`.
+- Focus ring: `2px solid var(--mantine-primary-color-filled)`.
+- Error state: `border-color: var(--data-critical)`.
+
+## 15. Error state pattern
+
+- Icon + message + retry action.
+- Use `--data-critical` for critical failures.
+- Use `--data-warning` for recoverable errors.
+- Never show a wall of identical error cards — consolidate into a single
+  banner when all queries fail.
+
+## 16. Icon size scale
+
+| Size | Value | Use |
+|---|---|---|
+| xs | 12px | inline text |
+| sm | 14px | buttons |
+| md | 16px | nav |
+| lg | 20px | standalone |
+| xl | 24px | hero |
+
+## 17. Verify before you finish
 
 ```bash
 cd web && npx tsc -b          # must pass

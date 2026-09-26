@@ -18,7 +18,7 @@ export function EmptyState({
       role="status"
       aria-atomic="true"
       align="center"
-      py="xl"
+      py="md"
       px="sm"
       gap={6}
       miw={0}

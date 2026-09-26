@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useMemo, useState, type ReactNode } from 'react'
 import {
   Alert,
   Box,
@@ -23,7 +23,7 @@ import { IconLogin, IconServerOff, IconSearch, IconSearchOff, IconChevronRight }
 import { useQuery } from '@tanstack/react-query'
 import { fetchBackendStatsSeries, fetchGrokUsage, fetchOverview, fetchStats } from '../api'
 import type { GrokUsage, ModelStat, OverviewBackend, StatsSeries } from '../api'
-import { GrokUsageCompact } from '../components/GrokUsageCard'
+import GrokUsageCompact from '../components/GrokUsageCompact'
 import { useMediaQuery } from '@mantine/hooks'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
@@ -39,7 +39,7 @@ import {
 import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/EmptyState'
 import { TimeRangeControl } from '../components/TimeRangeControl'
-import { providerSegments } from './Overview'
+import { providerSegments, healthState } from '../lib/stats'
 import { Fade } from '../App'
 
 const CATALOG_PREVIEW = 3
@@ -54,15 +54,6 @@ function pct(ratio: number, digits = 1): string {
 }
 
 type StatsState = 'ready' | 'loading' | 'unavailable'
-type HealthState = 'healthy' | 'degraded' | 'unhealthy' | 'no-traffic'
-
-// Health is the observed request-success ratio over recorded traffic (same
-// thresholds as UptimeBadge). Zero requests is "no traffic" — nothing wrong —
-// never a verdict.
-function healthState(requests: number, uptime: number): HealthState {
-  if (requests <= 0) return 'no-traffic'
-  return uptime >= 0.99 ? 'healthy' : uptime >= 0.9 ? 'degraded' : 'unhealthy'
-}
 
 // Aggregate one backend's ModelStat rows into the numbers its card, the
 // drawer, and the page summary all share.
@@ -72,12 +63,19 @@ function backendAgg(models: ModelStat[], backendName: string) {
   const successes = ms.reduce((s, m) => s + m.successes, 0)
   const toolCalls = ms.reduce((s, m) => s + m.tool_calls, 0)
   const toolErrors = ms.reduce((s, m) => s + m.tool_errors, 0)
+  const statusCodes: Record<string, number> = {}
+  for (const m of ms) {
+    for (const [code, n] of Object.entries(m.status_codes ?? {})) {
+      statusCodes[code] = (statusCodes[code] ?? 0) + n
+    }
+  }
   return {
     requests,
     successes,
     uptime: requests ? successes / requests : 0,
     toolCalls,
     toolErrors,
+    statusCodes,
   }
 }
 
@@ -109,7 +107,8 @@ export default function ProvidersPage() {
   // say "no data", never a green-looking "no traffic".
   const statsState: StatsState = statsQ.data ? 'ready' : statsQ.isPending ? 'loading' : 'unavailable'
   const models = statsQ.data?.models ?? []
-  const segByBackend = new Map(providerSegments(models, pal.series))
+  const palSeries = pal.series
+  const segByBackend = useMemo(() => new Map(providerSegments(models, palSeries)), [models, palSeries])
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const [search, setSearch] = useState('')
   const [healthFilter, setHealthFilter] = useState('all')
@@ -127,26 +126,41 @@ export default function ProvidersPage() {
     // history under the current selection while it loads.
   })
 
-  const enabledCount = backends.filter((b) => b.enabled).length
-  const healthyCount = backends.filter((b) => {
-    const agg = backendAgg(models, b.name)
-    return healthState(agg.requests, agg.uptime) === 'healthy'
-  }).length
-  const missingAuthCount = backends.filter((b) => !b.hasKey && !b.authConfigured).length
+  const { enabledCount, healthyCount, missingAuthCount, needsAttentionCount } = useMemo(() => {
+    let enabled = 0
+    let healthy = 0
+    let missingAuth = 0
+    let attention = 0
+    for (const b of backends) {
+      if (b.enabled) enabled++
+      const agg = backendAgg(models, b.name)
+      const health = healthState(agg.requests, agg.uptime)
+      if (health === 'healthy') healthy++
+      if (!b.hasKey && !b.authConfigured) missingAuth++
+      if (!b.catalogOK || (!b.hasKey && !b.authConfigured) || health === 'degraded' || health === 'unhealthy') attention++
+    }
+    return { enabledCount: enabled, healthyCount: healthy, missingAuthCount: missingAuth, needsAttentionCount: attention }
+    // backends/models are new ?? [] arrays every render
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [backends, models])
 
-  const visibleBackends = backends.filter((backend) => {
+  const visibleBackends = useMemo(() => {
     const query = search.trim().toLowerCase()
-    const matchesSearch = !query || [backend.name, backend.host, ...(backend.models ?? [])]
-      .some((value) => value.toLowerCase().includes(query))
-    const agg = backendAgg(models, backend.name)
-    const health = healthState(agg.requests, agg.uptime)
-    const attention = !backend.catalogOK || (!backend.hasKey && !backend.authConfigured)
-      || health === 'degraded' || health === 'unhealthy'
-    return matchesSearch && (healthFilter === 'all' || (healthFilter === 'attention' ? attention : health === healthFilter))
-  })
+    return backends.filter((backend) => {
+      const matchesSearch = !query || [backend.name, backend.host, ...(backend.models ?? [])]
+        .some((value) => value.toLowerCase().includes(query))
+      const agg = backendAgg(models, backend.name)
+      const health = healthState(agg.requests, agg.uptime)
+      const attention = !backend.catalogOK || (!backend.hasKey && !backend.authConfigured)
+        || health === 'degraded' || health === 'unhealthy'
+      return matchesSearch && (healthFilter === 'all' || (healthFilter === 'attention' ? attention : health === healthFilter))
+    })
+    // backends/models are new ?? [] arrays every render
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [backends, models, search, healthFilter])
 
-  const selectedModels = selected ? models.filter((m) => m.backend === selected.name) : []
-  const selectedAgg = backendAgg(models, selected?.name ?? '')
+  const selectedModels = useMemo(() => selected ? models.filter((m) => m.backend === selected.name) : [], [models, selected])
+  const selectedAgg = useMemo(() => backendAgg(models, selected?.name ?? ''), [models, selected])
 
   return (
     <Fade pending={ovQ.isPending || statsQ.isPending}>
@@ -189,11 +203,12 @@ export default function ProvidersPage() {
                   : `Health and token mix are unavailable right now${statsQ.error?.message ? ` (${statsQ.error.message})` : ''}; provider configuration below is still current.`}
               </Alert>
             )}
-            <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+            <SimpleGrid cols={{ base: 2, sm: 3, lg: 5 }} spacing="sm">
               <CompactStat label="Configured" value={fmtInt(backends.length)} />
               <CompactStat label="Enabled" value={fmtInt(enabledCount)} />
               <CompactStat label="Healthy" value={statsState === 'ready' ? fmtInt(healthyCount) : '—'} />
               <CompactStat label="Missing auth" value={fmtInt(missingAuthCount)} />
+              <CompactStat label="Needs attention" value={statsState === 'ready' ? fmtInt(needsAttentionCount) : '—'} />
             </SimpleGrid>
             <Box className="provider-toolbar">
               <TextInput aria-label="Search providers" placeholder="Search providers or models…" leftSection={<IconSearch size={17} />}
@@ -232,8 +247,8 @@ export default function ProvidersPage() {
           title={selected && (
             <Box miw={0}>
               <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>Provider</Text>
-              <Group gap="xs" wrap="nowrap">
-                <Text fw={700} truncate>{selected.name}</Text>
+              <Group gap="xs" wrap="wrap">
+                <Text fw={700} style={{ overflowWrap: 'anywhere' }}>{selected.name}</Text>
                 {statsState === 'ready' ? (
                   <UptimeBadge uptime={selectedAgg.uptime} requests={selectedAgg.requests} />
                 ) : (
@@ -284,10 +299,9 @@ function StatusDot({
         w={7}
         h={7}
         position="middle-center"
-        color={ok ? 'teal' : 'yellow'}
         zIndex={0}
         aria-hidden="true"
-        style={{ flexShrink: 0 }}
+        style={{ flexShrink: 0, backgroundColor: ok ? 'var(--data-good)' : 'var(--data-warning)' }}
       />
       <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
         {ok ? okLabel : badLabel}
@@ -361,6 +375,8 @@ function ProviderCard({
 }) {
   const [catalogExpanded, setCatalogExpanded] = useState(false)
   const [routesExpanded, setRoutesExpanded] = useState(false)
+  const catalogListId = useId()
+  const routesListId = useId()
   const agg = backendAgg(models, b.name)
   const requests = agg.requests
   const uptime = agg.uptime
@@ -415,7 +431,7 @@ function ProviderCard({
       )}
 
       {/* Stats show whenever traffic exists — even if every request carried
-            zero tokens (segments all empty), the counts still matter. */}
+          zero tokens (segments all empty), the counts still matter. */}
       {statsReady && requests > 0 && (
         <>
           <Divider my="sm" />
@@ -441,7 +457,7 @@ function ProviderCard({
               </Code>
             ))}
             {routes.length > ROUTES_PREVIEW && (
-              <Button size="xs" variant="subtle" mih={44} aria-expanded={routesExpanded} onClick={() => setRoutesExpanded((value) => !value)}>
+              <Button size="xs" variant="subtle" mih={44} aria-expanded={routesExpanded} aria-controls={routesListId} onClick={() => setRoutesExpanded((value) => !value)}>
                 {routesExpanded ? 'Show fewer routes' : `Show all ${routes.length} routes`}
               </Button>
             )}
@@ -455,7 +471,7 @@ function ProviderCard({
           <CardSection title={`Catalog · ${(b.models?.length ?? 0)}`}>
             {shownModels.map((m) => (
               <Group key={m} gap={4} wrap="nowrap" miw={0} maw="100%">
-                <Text className="provider-model" title={m}>{m.startsWith(`${b.name}/`) ? m.slice(b.name.length + 1) : m}</Text>
+                <Text className="provider-model">{m.startsWith(`${b.name}/`) ? m.slice(b.name.length + 1) : m}</Text>
                 {b.modelCredits?.[m] && (
                   <Badge size="xs" variant="light" color="violet" style={{ flexShrink: 0 }}>
                     {b.modelCredits[m]}
@@ -468,6 +484,7 @@ function ProviderCard({
                 size="xs" mih={44}
                 variant="subtle"
                 aria-expanded={catalogExpanded}
+                aria-controls={catalogListId}
                 onClick={(event) => {
                   event.stopPropagation()
                   setCatalogExpanded(true)
@@ -481,6 +498,7 @@ function ProviderCard({
                 size="xs" mih={44}
                 variant="subtle"
                 aria-expanded={catalogExpanded}
+                aria-controls={catalogListId}
                 onClick={(event) => {
                   event.stopPropagation()
                   setCatalogExpanded(false)

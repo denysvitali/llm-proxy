@@ -12,26 +12,18 @@ interface StatTileProps {
 }
 
 export default function StatTile({ label, value, hint, icon, accent = 'brand' }: StatTileProps) {
+  void accent // accepted for backward compatibility; all accents resolve to neutral
   const labelId = useId()
   const hasValue = value !== null && value !== undefined && value !== '' && typeof value !== 'boolean'
     && !(typeof value === 'number' && !Number.isFinite(value))
   const hasHint = hint !== null && hint !== undefined && hint !== false && hint !== ''
-
-  const accentColor: Record<Accent, string> = {
-    brand: 'var(--mantine-primary-color-filled)',
-    teal: 'var(--data-good)',
-    orange: 'var(--data-serious)',
-    grape: 'var(--mantine-color-grape-text)',
-    gray: 'var(--mantine-color-dimmed)',
-    red: 'var(--data-critical)',
-  }
 
   return (
     <Paper
       className="stat-tile"
       withBorder
       p="md"
-      radius="lg"
+      radius="md"
       role="group"
       aria-labelledby={labelId}
       h="100%"
@@ -41,7 +33,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
       <Group justify="space-between" align="center" wrap="nowrap" mb={6} gap="xs">
         <Text
           id={labelId}
-          fz={11}
+          fz={13}
           tt="uppercase"
           c="dimmed"
           fw={600}
@@ -56,7 +48,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
             style={{
               display: 'inline-flex',
               flexShrink: 0,
-              color: accentColor[accent],
+              color: 'var(--mantine-color-text)',
               opacity: 0.85,
             }}
           >

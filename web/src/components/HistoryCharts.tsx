@@ -211,11 +211,12 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
   // pal is NOT in the dep arrays: useChartPalette() returns a fresh object on
   // every render, so including it would defeat the memo. Colors depend on the
   // series array (index → slot) and the scheme, which is stable per session.
+  const palSeries = pal.series
   const coloredSeries = useMemo(() => series.map((item, index) => ({
     ...item,
-    color: pal.series[index] ?? pal.series[0],
+    color: palSeries[index] ?? palSeries[0],
     strokeDasharray: linePatterns[index % linePatterns.length],
-  })), [series])
+  })), [series, palSeries])
   const plotData = useMemo(() => data.map((point) => {
     const row: HistoryChartData = { time: point.time }
     series.forEach((item) => {
