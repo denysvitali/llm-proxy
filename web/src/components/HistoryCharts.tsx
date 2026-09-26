@@ -1,6 +1,6 @@
 import { AreaChart, BarChart, LineChart } from '@mantine/charts'
 import { Box, Group, Paper, Stack, Table, Text } from '@mantine/core'
-import { useId, type CSSProperties } from 'react'
+import { memo, useMemo, useId, useState, type CSSProperties } from 'react'
 import type { SeriesPoint } from '../api'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
@@ -28,7 +28,7 @@ const chartStyle = {
 } as CSSProperties
 const gridStyle = { stroke: 'var(--chart-grid-color)', strokeDasharray: '0', strokeWidth: 1 }
 type ChartTooltipPayload = { dataKey?: unknown; value?: unknown }
-const axisTick = { fontSize: 11, fill: 'var(--mantine-color-dimmed)' }
+const axisTick = { fontSize: 13, fill: 'var(--mantine-color-dimmed)' }
 
 function mergeSeries(...groups: Array<SeriesPoint[] | undefined>): HistoryChartData[] {
   const timestamps = [
@@ -154,44 +154,47 @@ function ChartDataTable({ title, data, series }: {
   data: HistoryChartData[]
   series: HistorySeries[]
 }) {
+  const [open, setOpen] = useState(false)
   return (
     <Box component="details" mt="xs" style={{ fontSize: 'var(--mantine-font-size-xs)' }}>
-      <Box component="summary" py="sm" mih={44} c="dimmed" style={{ cursor: 'pointer' }}>
+      <Box component="summary" py="sm" mih={44} c="dimmed" style={{ cursor: 'pointer' }} onClick={() => setOpen((v) => !v)}>
         View data <Text component="span" inherit style={{ fontVariantNumeric: 'tabular-nums' }}>({data.length} intervals)</Text>
       </Box>
-      <Box mt={4} mah={260} style={{ overflow: 'auto' }} tabIndex={0} role="region" aria-label={`${title} data table`}>
-        <Table fz="xs" striped withRowBorders>
-          <Table.Caption>{title} · timestamps include timezone; — means no sample. Values are not compacted.</Table.Caption>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th scope="col">Time</Table.Th>
-              {series.map((item) => <Table.Th scope="col" key={item.name} ta="right">{item.label}</Table.Th>)}
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {data.map((point, index) => (
-              <Table.Tr key={`${point.time}-${index}`}>
-                <Table.Th scope="row" fw={400} style={{ whiteSpace: 'nowrap' }}>{formatTooltipTime(String(point.time))}</Table.Th>
-                {series.map((item) => {
-                  const value = sampleValue(point[item.name], item.formatter)
-                  return (
-                    <Table.Td key={item.name} ta="right" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                      {value === undefined ? <span aria-label="No sample">—</span> : (
-                        <span title={item.formatter(value)}>{value.toLocaleString('en-US', { maximumFractionDigits: 20 })}</span>
-                      )}
-                    </Table.Td>
-                  )
-                })}
+      {open && (
+        <Box mt={4} mah={260} style={{ overflow: 'auto' }} tabIndex={0} role="region" aria-label={`${title} data table`}>
+          <Table fz="xs" striped withRowBorders>
+            <Table.Caption>{title} · timestamps include timezone; — means no sample. Values are not compacted.</Table.Caption>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th scope="col">Time</Table.Th>
+                {series.map((item) => <Table.Th scope="col" key={item.name} ta="right">{item.label}</Table.Th>)}
               </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Box>
+            </Table.Thead>
+            <Table.Tbody>
+              {data.map((point, index) => (
+                <Table.Tr key={`${point.time}-${index}`}>
+                  <Table.Th scope="row" fw={400} style={{ whiteSpace: 'nowrap' }}>{formatTooltipTime(String(point.time))}</Table.Th>
+                  {series.map((item) => {
+                    const value = sampleValue(point[item.name], item.formatter)
+                    return (
+                      <Table.Td key={item.name} ta="right" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        {value === undefined ? <span aria-label="No sample">—</span> : (
+                          <span title={item.formatter(value)}>{value.toLocaleString('en-US', { maximumFractionDigits: 20 })}</span>
+                        )}
+                      </Table.Td>
+                    )
+                  })}
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Box>
+      )}
     </Box>
   )
 }
 
-export function HistoryLineChart({ title, description, data, series, height = 132 }: {
+export const HistoryLineChart = memo(function HistoryLineChart({ title, description, data, series, height = 132 }: {
   title: string
   description: string
   data: HistoryChartData[]
@@ -205,19 +208,40 @@ export function HistoryLineChart({ title, description, data, series, height = 13
   // Callers must pass their series in that canonical order so a series keeps its
   // hue when a chart is filtered — color follows the entity, not its rank
   // (DESIGN.md §5). A caller that reorders its array would repaint the series.
-  const coloredSeries = series.map((item, index) => ({
+  // pal is NOT in the dep arrays: useChartPalette() returns a fresh object on
+  // every render, so including it would defeat the memo. Colors depend on the
+  // series array (index → slot) and the scheme, which is stable per session.
+  const coloredSeries = useMemo(() => series.map((item, index) => ({
     ...item,
     color: pal.series[index] ?? pal.series[0],
     strokeDasharray: linePatterns[index % linePatterns.length],
-  }))
-  const plotData = data.map((point) => {
+  })), [series])
+  const plotData = useMemo(() => data.map((point) => {
     const row: HistoryChartData = { time: point.time }
     series.forEach((item) => {
       const value = sampleValue(point[item.name], item.formatter)
       if (value !== undefined) row[item.name] = value
     })
     return row
-  })
+  }), [data, series])
+  // Direct-label the right end of each line when there are 2-4 series and every
+  // series has at least one real sample (DESIGN.md §5). Recharts' label content
+  // fn receives an `index` that aligns 1:1 with the plotData rows (label entries
+  // are built for every point, nulls coerced not filtered), so match on the
+  // plotData index of each series' last non-null sample. Fallback: the legend.
+  const lastIndexBySeries = useMemo(() => {
+    const map = new Map<string, number>()
+    series.forEach((item) => {
+      for (let i = data.length - 1; i >= 0; i--) {
+        if (sampleValue(data[i][item.name], item.formatter) !== undefined) {
+          map.set(item.name, i)
+          break
+        }
+      }
+    })
+    return map
+  }, [data, series])
+  const canDirectLabel = series.length >= 2 && series.length <= 4 && series.every((item) => lastIndexBySeries.has(item.name))
   const hasData = plotData.some((point) => series.some((item) => typeof point[item.name] === 'number'))
   const formatter = axisFormatter(series[0]?.formatter ?? fmtInt)
   // Single series reads as an area with a gradient wash; multi-series keeps
@@ -286,12 +310,38 @@ export function HistoryLineChart({ title, description, data, series, height = 13
               {...chartProps}
               strokeWidth={2}
               strokeDasharray="0"
-              lineProps={{ strokeLinecap: 'round', strokeLinejoin: 'round' }}
+              lineProps={(item) => ({
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round',
+                ...(canDirectLabel
+                  ? { label: { content: (props: {
+                        x?: string | number
+                        y?: string | number
+                        value?: string | number | boolean | null
+                        index?: number
+                      }) =>
+                      props.index === lastIndexBySeries.get(item.name)
+                        ? (
+                          <text
+                            x={Number(props.x) + 10}
+                            y={Number(props.y) + 4}
+                            textAnchor="start"
+                            fontSize={13}
+                            fill={item.color}
+                            style={{ fontVariantNumeric: 'tabular-nums' }}
+                          >
+                            {`${item.label ?? item.name} · ${(item as ColoredSeries).formatter(Number(props.value))}`}
+                          </text>
+                        )
+                        : null } }
+                  : {}),
+              })}
               dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--card)' }}
               activeDotProps={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }}
+              lineChartProps={{ margin: { right: 120 } }}
             />
           )}
-          {coloredSeries.length > 1 && (
+          {!canDirectLabel && coloredSeries.length > 1 && (
             <Group gap="xs" justify="center" mt={4} aria-label="Chart legend">
               {coloredSeries.map((item) => (
                 <Group key={item.name} gap={6} wrap="nowrap" miw={0}>
@@ -306,9 +356,9 @@ export function HistoryLineChart({ title, description, data, series, height = 13
       )}
     </Box>
   )
-}
+})
 
-export function HistoryBarChart({ title, description, points, formatter = fmtInt, color, height = 112 }: {
+export const HistoryBarChart = memo(function HistoryBarChart({ title, description, points, formatter = fmtInt, color, height = 112 }: {
   title: string
   description: string
   points: SeriesPoint[]
@@ -364,7 +414,7 @@ export function HistoryBarChart({ title, description, points, formatter = fmtInt
       )}
     </Box>
   )
-}
+})
 
 export function historyData(groups: Array<SeriesPoint[] | undefined>): HistoryChartData[] {
   return mergeSeries(...groups)
