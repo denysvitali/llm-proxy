@@ -140,9 +140,13 @@ refreshes its OAuth session at `~/.config/llm-proxy/minimax-code-auth.json`
 (override with `minimax_code_auth_file`). The global gateway defaults to
 `https://agent.minimax.io/mavis/api/v1/llm/v1`; `base_url` can override it.
 The backend forwards Anthropic Messages to `/messages`, and translates Chat
-Completions and Responses requests through Messages. Its built-in catalog is
-`MiniMax-M3`, `MiniMax-M2.7-highspeed`, and `MiniMax-M2.7`; pin a model with
-an ID such as `minimax-code/MiniMax-M3`.
+Completions and Responses requests through Messages. Its model list comes from
+MiniMax's official snapshot at `<gateway origin>/mavis/api/v1/models` (the same
+endpoint MiniMax Code refreshes before opening its picker), so newly released
+models such as `MiniMax-M3.1-Flash-Preview` appear without a proxy upgrade. Pin
+a model with an ID such as `minimax-code/MiniMax-M3.1-Flash-Preview`. If the
+snapshot cannot be fetched, the catalog falls back to `MiniMax-M3`,
+`MiniMax-M2.7-highspeed`, and `MiniMax-M2.7`.
 
 The dashboard shows MiniMax credit balances, Token Plan remaining quota and reset
 times, and the seven-day check-in schedule. Open **Overview → Subscription usage**
@@ -162,10 +166,10 @@ platform hosts; `base_url` only overrides the inference gateway.
 These account integrations follow the MIT-licensed
 [MiniMax Code source](https://github.com/MiniMax-AI/minimax-code/tree/0f6ad5229ff1f144c72dd15a4b2d520feb26cd3d),
 with its license retained in `internal/backend/minimaxcode/MINIMAX-LICENSE`.
-The September 2026 announcement names M3.1-Flash-Preview, but the published source
-does not yet identify its gateway model ID; the built-in catalog retains the
-verified IDs above. Qualified model routes can address additional models once
-their upstream IDs are known.
+`MiniMax-M3.1-Flash-Preview` is served by the MiniMax Code gateway and, per
+MiniMax's docs, is limited to Token Plan and MiniMax Code accounts. An account
+without a Token Plan can see the model in the catalog and still have requests
+refused by MiniMax.
 
 ### Codex subscription
 

@@ -69,11 +69,56 @@ func TestModelsAndSupportedWire(t *testing.T) {
 	if !client.Supports(backend.KindAnthropic) || client.Supports(backend.KindOpenAIChat) || client.Supports(backend.KindOpenAIResponses) {
 		t.Fatal("MiniMax Code must expose only Anthropic Messages")
 	}
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != catalogPath {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("region") != "en" || r.URL.Query().Get("buildEnv") != "prod" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"version":"1.0","ttlSeconds":300,
+			"providers":[{"providerId":"minimax","config":{
+				"models":{"MiniMax-M3":{},"MiniMax-M3.1-Flash-Preview":{},"MiniMax-M2.7":{}},
+				"model_order":["MiniMax-M3.1-Flash-Preview","MiniMax-M3","MiniMax-M2.7"],
+				"whitelist":["MiniMax-M3","MiniMax-M2.7"]
+			}}]
+		}`)
+	}))
+	defer catalog.Close()
+	client = New(catalog.URL+"/mavis/api/v1/llm/v1", "")
 	models, err := client.Models(context.Background())
-	if err != nil || len(models) != 3 || models[0] != "MiniMax-M3" {
-		t.Errorf("models = %v, %v", models, err)
+	want := []string{"MiniMax-M3.1-Flash-Preview", "MiniMax-M3", "MiniMax-M2.7"}
+	if err != nil || strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Errorf("models = %v, %v; want %v", models, err, want)
 	}
 	if _, err := client.Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat}); err == nil {
 		t.Fatal("unsupported wire request succeeded")
+	}
+}
+
+func TestModelsFallsBackWhenCatalogUnparseable(t *testing.T) {
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"providers":[{"providerId":"other","config":{"models":{"X":{}}}}]}`)
+	}))
+	defer catalog.Close()
+	client := New(catalog.URL+"/mavis/api/v1/llm/v1", "")
+	models, err := client.Models(context.Background())
+	if err != nil || strings.Join(models, ",") != strings.Join(fallbackModels, ",") {
+		t.Errorf("models = %v, %v; want fallback %v", models, err, fallbackModels)
+	}
+}
+
+func TestModelsFallsBackWhenCatalogUnavailable(t *testing.T) {
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer catalog.Close()
+	client := New(catalog.URL+"/mavis/api/v1/llm/v1", "")
+	models, err := client.Models(context.Background())
+	if err != nil || strings.Join(models, ",") != strings.Join(fallbackModels, ",") {
+		t.Errorf("models = %v, %v; want fallback %v", models, err, fallbackModels)
 	}
 }

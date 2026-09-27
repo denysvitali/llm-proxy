@@ -7,8 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,7 +22,17 @@ import (
 // The SDK appends /v1/messages after removing the final /v1 from this URL.
 const defaultBaseURL = "https://agent.minimax.io/mavis/api/v1/llm/v1"
 
-var models = []string{"MiniMax-M3", "MiniMax-M2.7-highspeed", "MiniMax-M2.7"}
+// catalogPath is the official model snapshot MiniMax Code refreshes before
+// opening its picker (BKe in @minimax-ai/code 0.5.5). It is served by the
+// gateway origin, not under the inference /llm/v1 prefix.
+const catalogPath = "/mavis/api/v1/models"
+
+// fallbackModels are the IDs baked into MiniMax Code 0.5.5. The live snapshot
+// adds models (MiniMax-M3.1-Flash-Preview landed after that release), so these
+// are only used when the snapshot cannot be fetched or parsed.
+var fallbackModels = []string{"MiniMax-M3", "MiniMax-M2.7-highspeed", "MiniMax-M2.7"}
+
+const catalogResponseLimit = 1 << 20
 
 type Client struct {
 	BaseURL string
@@ -56,8 +69,106 @@ func (c *Client) Name() string { return "minimax-code" }
 
 func (c *Client) Supports(kind backend.Kind) bool { return kind == backend.KindAnthropic }
 
-func (c *Client) Models(context.Context) ([]string, error) {
-	return append([]string(nil), models...), nil
+func (c *Client) Models(ctx context.Context) ([]string, error) {
+	models, err := c.fetchModels(ctx)
+	if err != nil || len(models) == 0 {
+		return append([]string(nil), fallbackModels...), nil
+	}
+	return models, nil
+}
+
+// fetchModels reads the official model snapshot. MiniMax Code requests it as
+// <gateway origin>/mavis/api/v1/models?region=en&buildEnv=prod and copies every
+// model of the "minimax" provider, ordered by model_order. The snapshot's
+// whitelist field is ignored by the client, so it is ignored here too.
+func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
+	endpoint, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	endpoint.Path = catalogPath
+	endpoint.RawPath = ""
+	endpoint.RawQuery = url.Values{"region": {"en"}, "buildEnv": {"prod"}}.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if token := strings.TrimSpace(c.Key); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, catalogResponseLimit))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("MiniMax Code model catalog returned %d", resp.StatusCode)
+	}
+	return parseModelCatalog(body)
+}
+
+// catalogSnapshot is the subset of the official model config this proxy needs.
+// Extra provider fields are intentionally dropped.
+type catalogSnapshot struct {
+	Providers []struct {
+		ProviderID string `json:"providerId"`
+		Config     struct {
+			Models     map[string]json.RawMessage `json:"models"`
+			ModelOrder []string                   `json:"model_order"`
+		} `json:"config"`
+	} `json:"providers"`
+}
+
+func parseModelCatalog(body []byte) ([]string, error) {
+	var snapshot catalogSnapshot
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return nil, fmt.Errorf("parse MiniMax Code model catalog: %w", err)
+	}
+	var config *struct {
+		Models     map[string]json.RawMessage `json:"models"`
+		ModelOrder []string                   `json:"model_order"`
+	}
+	for i := range snapshot.Providers {
+		if snapshot.Providers[i].ProviderID == "minimax" {
+			config = &snapshot.Providers[i].Config
+			break
+		}
+	}
+	if config == nil || len(config.Models) == 0 {
+		return nil, fmt.Errorf("MiniMax Code model catalog has no minimax models")
+	}
+	seen := make(map[string]bool, len(config.Models))
+	models := make([]string, 0, len(config.Models))
+	for _, id := range config.ModelOrder {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		if _, ok := config.Models[id]; !ok {
+			continue
+		}
+		seen[id] = true
+		models = append(models, id)
+	}
+	for id := range config.Models {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		models = append(models, id)
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("MiniMax Code model catalog has no minimax models")
+	}
+	return models, nil
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
