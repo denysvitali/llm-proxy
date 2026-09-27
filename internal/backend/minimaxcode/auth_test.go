@@ -104,7 +104,7 @@ func TestDeviceLoginWithUserCodePolling(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/oauth2/device/code":
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"user_code":"EFGH","verification_url":"https://account.minimax.io/device","expired_in":%d,"interval":1000}`, time.Now().Add(time.Minute).UnixMilli())))
+			_, _ = fmt.Fprintf(w, `{"user_code":"EFGH","verification_url":"https://account.minimax.io/device","expired_in":%d,"interval":1000}`, time.Now().Add(time.Minute).UnixMilli())
 		case "/oauth2/token":
 			if r.Form.Get("user_code") != "EFGH" || r.Form.Get("device_code") != "" {
 				t.Errorf("legacy poll form = %v", r.Form)

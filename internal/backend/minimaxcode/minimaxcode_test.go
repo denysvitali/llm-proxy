@@ -49,7 +49,9 @@ func TestMessagesRequestMatchesMiniMaxCodeGateway(t *testing.T) {
 			t.Errorf("response = %d, %v", resp.Status, resp.Header)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
 		if !strings.Contains(string(body), "message_start") {
 			t.Errorf("response body = %q", body)
 		}
