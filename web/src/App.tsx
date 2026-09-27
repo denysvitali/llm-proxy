@@ -124,7 +124,7 @@ export default function App() {
       <AppShell.Main id="main" tabIndex={-1}>
         <Container size={1600} className="page-container">
           <Suspense fallback={<Group justify="center" py="xl"><Loader size="sm" /></Group>}>
-            <PageErrorBoundary>
+            <PageErrorBoundary key={pathname}>
               <Routes>
                 <Route path="/" element={<OverviewPage />} />
                 <Route path="/models" element={<ModelsPage />} />

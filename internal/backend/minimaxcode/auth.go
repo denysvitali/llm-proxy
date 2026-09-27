@@ -84,10 +84,13 @@ func (s *Store) Save(credentials *Credentials) error {
 }
 
 type Manager struct {
-	Store        *Store
-	OAuthBaseURL string
-	HTTP         *http.Client
-	mu           sync.Mutex
+	Store           *Store
+	OAuthBaseURL    string
+	AccountBaseURL  string
+	PlatformBaseURL string
+	HTTP            *http.Client
+	mu              sync.Mutex
+	claimMu         sync.Mutex
 }
 
 func NewManager(path string) *Manager {

@@ -20,10 +20,11 @@ import {
   Title,
 } from '@mantine/core'
 import { IconLogin, IconServerOff, IconSearch, IconSearchOff, IconChevronRight } from '@tabler/icons-react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchBackendStatsSeries, fetchGrokUsage, fetchOverview, fetchStats } from '../api'
-import type { GrokUsage, ModelStat, OverviewBackend, StatsSeries } from '../api'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
+import { fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage, fetchOverview, fetchStats } from '../api'
+import type { GrokUsage, MiniMaxUsage, ModelStat, OverviewBackend, StatsSeries } from '../api'
 import GrokUsageCompact from '../components/GrokUsageCompact'
+import MiniMaxUsageCard, { MiniMaxUsageCompact } from '../components/MiniMaxUsageCard'
 import { useMediaQuery } from '@mantine/hooks'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
@@ -98,6 +99,14 @@ export default function ProvidersPage() {
     queryKey: ['grok-usage'],
     queryFn: fetchGrokUsage,
     enabled: grokUsageEnabled,
+    refetchInterval: 60_000,
+    retry: 1,
+  })
+  const minimaxUsageEnabled = ovQ.data?.minimaxUsage?.configured ?? false
+  const minimaxUsageQ = useQuery({
+    queryKey: ['minimax-usage'],
+    queryFn: fetchMiniMaxUsage,
+    enabled: minimaxUsageEnabled,
     refetchInterval: 60_000,
     retry: 1,
   })
@@ -233,6 +242,7 @@ export default function ProvidersPage() {
                   grokUsage={b.name === 'grok' ? grokUsageQ.data : undefined}
                   grokUsageLoading={b.name === 'grok' && grokUsageQ.isPending}
                   grokUsageError={b.name === 'grok' ? grokUsageQ.error?.message : undefined}
+                  minimaxUsageQuery={b.name === 'minimax-code' && minimaxUsageEnabled ? minimaxUsageQ : undefined}
                   onInspect={() => setSelectedName(b.name)}
                 />
               ))}
@@ -265,6 +275,7 @@ export default function ProvidersPage() {
               models={selectedModels}
               statsState={statsState}
               grokUsage={selected.name === 'grok' ? grokUsageQ.data : undefined}
+              minimaxUsageQuery={selected.name === 'minimax-code' && minimaxUsageEnabled ? minimaxUsageQ : undefined}
               series={selectedSeriesQ.data?.series}
               seriesLoading={selectedSeriesQ.isPending}
               seriesError={selectedSeriesQ.error?.message}
@@ -362,6 +373,7 @@ function ProviderCard({
   grokUsage,
   grokUsageLoading,
   grokUsageError,
+  minimaxUsageQuery,
   onInspect,
 }: {
   backend: OverviewBackend
@@ -372,6 +384,7 @@ function ProviderCard({
   grokUsage?: GrokUsage
   grokUsageLoading?: boolean
   grokUsageError?: string
+  minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
   onInspect: () => void
 }) {
   const [catalogExpanded, setCatalogExpanded] = useState(false)
@@ -430,6 +443,14 @@ function ProviderCard({
           ) : null}
         </>
       )}
+
+      {minimaxUsageQuery && <>
+        <Divider my="sm" />
+        {minimaxUsageQuery.data ? <MiniMaxUsageCompact usage={minimaxUsageQuery.data} />
+          : minimaxUsageQuery.isPending ? <Text size="xs" c="dimmed" role="status">Loading MiniMax account…</Text>
+            : <Text size="xs" c="dimmed">Usage unavailable</Text>}
+        {minimaxUsageQuery.isError && minimaxUsageQuery.data && <Text size="xs" c="dimmed" mt={4}>Could not refresh usage. Showing the last available data.</Text>}
+      </>}
 
       {/* Stats show whenever traffic exists — even if every request carried
           zero tokens (segments all empty), the counts still matter. */}
@@ -520,6 +541,7 @@ function ProviderDetail({
   models,
   statsState,
   grokUsage,
+  minimaxUsageQuery,
   series,
   seriesLoading,
   seriesError,
@@ -530,6 +552,7 @@ function ProviderDetail({
   models: ModelStat[]
   statsState: StatsState
   grokUsage?: GrokUsage
+  minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
   series?: StatsSeries
   seriesLoading?: boolean
   seriesError?: string
@@ -607,6 +630,8 @@ function ProviderDetail({
             />
           </Group>
         </CardSection>
+
+        {minimaxUsageQuery && <MiniMaxUsageCard query={minimaxUsageQuery} />}
 
         <Group justify="space-between" align="center" wrap="wrap" gap="xs">
           <Title order={5}>History</Title>

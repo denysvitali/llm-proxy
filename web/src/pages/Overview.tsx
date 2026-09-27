@@ -38,11 +38,12 @@ import {
 import { BarChart } from '@mantine/charts'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { fetchGrokUsage, fetchOverview, fetchRequest, fetchRequests, fetchStats, fetchStatsSeries, fetchUpstreamErrors, fetchZcodeUsage } from '../api'
+import { fetchGrokUsage, fetchMiniMaxUsage, fetchOverview, fetchRequest, fetchRequests, fetchStats, fetchStatsSeries, fetchUpstreamErrors, fetchZcodeUsage } from '../api'
 import { useLiveStatsUpdates } from '../useLiveUpdates'
 import type { InspectedRequest, SeriesPoint, UpstreamErrorEvent } from '../api'
 import GrokUsageCard from '../components/GrokUsageCard'
 import ZcodeUsageCard from '../components/ZcodeUsageCard'
+import MiniMaxUsageCard from '../components/MiniMaxUsageCard'
 import { PageHeader } from '../components/PageHeader'
 import { PageSection } from '../components/PageSection'
 import { TimeRangeControl } from '../components/TimeRangeControl'
@@ -76,6 +77,14 @@ export default function OverviewPage() {
     queryKey: ['zcode-usage'],
     queryFn: fetchZcodeUsage,
     enabled: zcodeUsageEnabled,
+    refetchInterval: 60_000,
+    retry: 1,
+  })
+  const minimaxUsageEnabled = ovQ.data?.minimaxUsage?.configured ?? false
+  const minimaxUsageQ = useQuery({
+    queryKey: ['minimax-usage'],
+    queryFn: fetchMiniMaxUsage,
+    enabled: minimaxUsageEnabled,
     refetchInterval: 60_000,
     retry: 1,
   })
@@ -134,7 +143,7 @@ export default function OverviewPage() {
 
   const requestCount = sumPoints(seriesQ.data?.series.requests)
   const mix = providerSegments(models, pal.series)
-  const bothUsage = grokUsageEnabled && zcodeUsageEnabled
+  const usageCount = [grokUsageEnabled, zcodeUsageEnabled, minimaxUsageEnabled].filter(Boolean).length
   const ov = ovQ.data
 
   return (
@@ -271,21 +280,16 @@ export default function OverviewPage() {
           </Card>
         </PageSection>
 
-        {(grokUsageEnabled || zcodeUsageEnabled) && (
+        {usageCount > 0 && (
           <Accordion variant="separated" radius="lg">
             <Accordion.Item value="subscriptions">
-              <Accordion.Control>Subscription usage <Text component="span" size="xs" c="dimmed" ml="sm">{[grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode'].filter(Boolean).join(' / ')} account quotas</Text></Accordion.Control>
+              <Accordion.Control>Subscription usage <Text component="span" size="xs" c="dimmed" ml="sm">{[grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax'].filter(Boolean).join(' / ')} account quotas</Text></Accordion.Control>
               <Accordion.Panel>
-                {bothUsage ? (
-                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-                    <GrokUsageCard query={grokUsageQ} />
-                    <ZcodeUsageCard query={zcodeUsageQ} />
-                  </SimpleGrid>
-                ) : grokUsageEnabled ? (
-                  <GrokUsageCard query={grokUsageQ} />
-                ) : (
-                  <ZcodeUsageCard query={zcodeUsageQ} />
-                )}
+                <SimpleGrid cols={{ base: 1, md: Math.min(usageCount, 2) }} spacing="lg">
+                  {grokUsageEnabled && <GrokUsageCard query={grokUsageQ} />}
+                  {zcodeUsageEnabled && <ZcodeUsageCard query={zcodeUsageQ} />}
+                  {minimaxUsageEnabled && <MiniMaxUsageCard query={minimaxUsageQ} />}
+                </SimpleGrid>
               </Accordion.Panel>
             </Accordion.Item>
           </Accordion>

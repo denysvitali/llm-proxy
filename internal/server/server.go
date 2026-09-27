@@ -142,6 +142,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/zcode/usage", s.handleZcodeUsage)
 	mux.HandleFunc("GET /api/zcode/quota", s.handleZcodeQuota)
 	mux.HandleFunc("GET /api/zcode/balance", s.handleZcodeQuota)
+	mux.HandleFunc("GET /api/minimax-code/usage", s.handleMiniMaxCodeUsage)
+	mux.Handle("POST /api/minimax-code/checkin", http.NewCrossOriginProtection().Handler(http.HandlerFunc(s.handleMiniMaxCodeCheckin)))
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
 	mux.HandleFunc("GET /api/updates/sse", s.handleUpdatesSSE)
 	mux.HandleFunc("GET /login", s.grokLoginPage)

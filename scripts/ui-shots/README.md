@@ -56,6 +56,18 @@ complete live-reference and local-preview commands.
 browser checks for home-page navigation with nullable ZCode plans, null activity
 feeds, provider search, failed APIs, and render-error recovery.
 
+MiniMax account regressions also cover zero versus unknown credits, nullable
+check-in days, included bonus points, quota resets and unlimited allowances,
+partial account failures, and already-claimed rewards. Explicit check-in clicks
+use intercepted POST requests: no check-in reaches the supplied server, and the
+checks verify that loading a page never claims credits or retries a failed claim.
+Four `minimax__*.png` card screenshots show populated seven-day schedules in
+desktop/mobile light/dark states. Mobile card captures use extra viewport height
+to keep fixed navigation clear of the content; `minimax-viewport__*.png` retains
+the actual 390×844 view for usability review. `minimax-drawer__*.png` also captures
+the account within the provider drawer in all four views. All artifacts use the
+requested output directory.
+
 Captures fail for uncaught page errors, missing headings, horizontal overflow,
 or drawers that fail to open. Inspect the actual PNGs after a successful run.
 The default build now runs `npm run build`, including TypeScript checking.

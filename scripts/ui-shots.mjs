@@ -107,7 +107,7 @@ function buildShots() {
     route: ROUTES[1],
     view: 'desktop-dark',
     action: 'drawer',
-    trigger: '[aria-label^="Open details for"]',
+    trigger: '.models-table tbody tr, [aria-label^="Open details for"]',
   });
   shots.push({
     id: 'providers-drawer',
@@ -492,7 +492,7 @@ async function capture(outDir, base, shots, opts) {
     }
     if (opts.regression) {
       const { checkRegressions } = await import('./ui-shots/regressions.mjs');
-      await checkRegressions(browser, base);
+      written.push(...await checkRegressions(browser, base, outDir));
     }
   } finally {
     for (const c of Object.values(contexts)) await c.close().catch(() => {});

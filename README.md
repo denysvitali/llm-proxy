@@ -144,6 +144,29 @@ Completions and Responses requests through Messages. Its built-in catalog is
 `MiniMax-M3`, `MiniMax-M2.7-highspeed`, and `MiniMax-M2.7`; pin a model with
 an ID such as `minimax-code/MiniMax-M3`.
 
+The dashboard shows MiniMax credit balances, Token Plan remaining quota and reset
+times, and the seven-day check-in schedule. Open **Overview → Subscription usage**
+or inspect MiniMax on **Providers** to check in and claim the available daily
+reward. Check-in only happens when you click the button; dashboard reads never
+claim rewards. Reward amounts, promotional bonuses, eligibility, expiry, and
+quota resets come from MiniMax. Displayed reward totals already include bonuses.
+Unknown balances or unavailable quota are shown separately from zero.
+
+`GET /api/minimax-code/usage` returns account and check-in status independently,
+so one can remain visible when the other service is unavailable.
+`POST /api/minimax-code/checkin` checks eligibility and submits one claim without
+automatically retrying it. Both endpoints use the configured proxy authentication
+and stored MiniMax session. Account services use MiniMax's global account and
+platform hosts; `base_url` only overrides the inference gateway.
+
+These account integrations follow the MIT-licensed
+[MiniMax Code source](https://github.com/MiniMax-AI/minimax-code/tree/0f6ad5229ff1f144c72dd15a4b2d520feb26cd3d),
+with its license retained in `internal/backend/minimaxcode/MINIMAX-LICENSE`.
+The September 2026 announcement names M3.1-Flash-Preview, but the published source
+does not yet identify its gateway model ID; the built-in catalog retains the
+verified IDs above. Qualified model routes can address additional models once
+their upstream IDs are known.
+
 ### Codex subscription
 
 Enable Codex without an upstream API key:

@@ -1,4 +1,4 @@
-// Typed client for llm-proxy's read-only JSON APIs. Field names match the
+// Typed client for llm-proxy's JSON APIs. Field names match the
 // Go structs' json tags exactly (internal/server/stats.go, dashboard.go).
 
 export interface Percentiles {
@@ -135,6 +135,7 @@ export interface Overview {
   stats?: ModelStat[]
   grokUsage: GrokUsageMetadata
   zcodeUsage: ZcodeUsageMetadata
+  minimaxUsage?: GrokUsageMetadata
   hasDefault: boolean
   defaultRoute: OverviewRoute
   exampleModel: string
@@ -166,6 +167,59 @@ export interface ZcodePlanUsage {
 export interface ZcodeUsage {
   plans: ZcodePlanUsage[]
   fetchedAt: string
+}
+
+export interface MiniMaxQuotaWindow {
+  remaining_percent?: number
+  reset_at_ms?: number
+  unlimited: boolean
+}
+
+export interface MiniMaxVideoQuota {
+  remaining_count?: number
+  total_count?: number
+  reset_at_ms?: number
+  unlimited: boolean
+}
+
+export interface MiniMaxCheckinDay {
+  day_no: number
+  points: number
+  bonus_points?: number
+  status: 1 | 2 | 3 | 4
+  is_today: boolean
+}
+
+export interface MiniMaxCheckinPanel {
+  scene: number
+  days: MiniMaxCheckinDay[]
+}
+
+export interface MiniMaxUsage {
+  account?: {
+    has_token_plan?: boolean
+    tier?: string
+    expires_at_ms?: number
+    credit_balance?: string
+    quota_state: 'available' | 'not-subscribed' | 'unavailable'
+    quota?: {
+      five_hour: MiniMaxQuotaWindow
+      weekly: MiniMaxQuotaWindow
+      video?: MiniMaxVideoQuota
+    }
+  }
+  checkin?: MiniMaxCheckinPanel
+  accountError?: string
+  checkinError?: string
+  fetchedAt: string
+}
+
+export interface MiniMaxCheckinResult {
+  claim_result: 1 | 2
+  day_no: number
+  points: number
+  expire_at_ms: number
+  panel: MiniMaxCheckinPanel
 }
 
 export interface GrokUsage {
@@ -203,11 +257,15 @@ export class ApiError extends Error {
   }
 }
 
-async function getJSON<T>(url: string): Promise<T> {
+async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET'): Promise<T> {
   const doFetch = async (): Promise<T> => {
     let res: Response
     try {
-      res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+      res = await fetch(url, {
+        method,
+        signal: AbortSignal.timeout(method === 'POST' ? 60_000 : 10_000),
+        ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}),
+      })
     } catch (e) {
       if (e instanceof DOMException && e.name === 'TimeoutError') {
         throw new ApiError(`${url}: request timed out`, 0, 'timeout')
@@ -219,7 +277,19 @@ async function getJSON<T>(url: string): Promise<T> {
       let message = `${url}: HTTP ${res.status}`
       try {
         const text = await res.text()
-        if (text) message = text
+        if (text) {
+          message = text
+          try {
+            const body = JSON.parse(text)
+            const detail = typeof body.error === 'string' ? body.error : body.error?.message
+            if (typeof detail === 'string') message = detail
+            else if (url.startsWith('/api/minimax-code/')) {
+              message = [body.accountError, body.checkinError].filter((part) => typeof part === 'string').join(' ') || 'MiniMax account information is temporarily unavailable.'
+            }
+          } catch {
+            // Plain-text error responses are already readable.
+          }
+        }
       } catch {
         // ignore body read errors
       }
@@ -244,7 +314,7 @@ async function getJSON<T>(url: string): Promise<T> {
       return await doFetch()
     } catch (e) {
       lastError = e
-      if (e instanceof ApiError && (e.kind === 'network' || e.status >= 500) && attempt < 1) {
+      if (method === 'GET' && e instanceof ApiError && (e.kind === 'network' || e.status >= 500) && attempt < 1) {
         await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
         continue
       }
@@ -278,6 +348,21 @@ export async function fetchZcodeUsage(): Promise<ZcodeUsage> {
   // so every consumer sees a collection, including during background refresh.
   const usage = await getJSON<Omit<ZcodeUsage, 'plans'> & { plans?: ZcodePlanUsage[] | null }>('/api/zcode/usage')
   return { ...usage, plans: usage.plans ?? [] }
+}
+
+export async function fetchMiniMaxUsage(): Promise<MiniMaxUsage> {
+  const usage = await getJSON<MiniMaxUsage>('/api/minimax-code/usage')
+  return {
+    ...usage,
+    checkin: usage.checkin ? { ...usage.checkin, days: usage.checkin.days ?? [] } : undefined,
+  }
+}
+
+export async function claimMiniMaxCheckin(): Promise<MiniMaxCheckinResult> {
+  // Claims are never retried automatically: a lost response may still have
+  // awarded credits. The card refreshes the status after every attempt.
+  const claim = await getJSON<MiniMaxCheckinResult>('/api/minimax-code/checkin', 'POST')
+  return { ...claim, panel: { ...claim.panel, days: claim.panel?.days ?? [] } }
 }
 
 export async function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {
