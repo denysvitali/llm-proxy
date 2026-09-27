@@ -11,6 +11,7 @@ import {
   Group,
   Indicator,
   Loader,
+  Paper,
   Select,
   TextInput,
   SimpleGrid,
@@ -136,9 +137,10 @@ export default function ProvidersPage() {
     // history under the current selection while it loads.
   })
 
-  const { enabledCount, healthyCount, missingAuthCount, needsAttentionCount } = useMemo(() => {
+  const { enabledCount, healthyCount, noTrafficCount, missingAuthCount, needsAttentionCount } = useMemo(() => {
     let enabled = 0
     let healthy = 0
+    let noTraffic = 0
     let missingAuth = 0
     let attention = 0
     for (const b of backends) {
@@ -146,10 +148,11 @@ export default function ProvidersPage() {
       const agg = backendAgg(models, b.name)
       const health = healthState(agg.requests, agg.uptime)
       if (health === 'healthy') healthy++
+      if (health === 'no-traffic') noTraffic++
       if (!b.hasKey && !b.authConfigured) missingAuth++
       if (!b.catalogOK || (!b.hasKey && !b.authConfigured) || health === 'degraded' || health === 'unhealthy') attention++
     }
-    return { enabledCount: enabled, healthyCount: healthy, missingAuthCount: missingAuth, needsAttentionCount: attention }
+    return { enabledCount: enabled, healthyCount: healthy, noTrafficCount: noTraffic, missingAuthCount: missingAuth, needsAttentionCount: attention }
     // backends/models are new ?? [] arrays every render
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [backends, models])
@@ -174,10 +177,10 @@ export default function ProvidersPage() {
 
   return (
     <Fade pending={ovQ.isPending || statsQ.isPending}>
-      <Stack gap="lg">
+      <Stack gap="md">
         <PageHeader
           title="Providers"
-          subtitle="Manage connections and keep an eye on provider health."
+          subtitle="Connections, authentication, and request health."
         />
         {ovQ.isPending ? (
           <Group justify="center" py="xl">
@@ -213,13 +216,28 @@ export default function ProvidersPage() {
                   : `Health and token mix are unavailable right now${statsQ.error?.message ? ` (${statsQ.error.message})` : ''}; provider configuration below is still current.`}
               </Alert>
             )}
-            <SimpleGrid cols={{ base: 2, sm: 3, lg: 5 }} spacing="sm">
-              <CompactStat label="Configured" value={fmtInt(backends.length)} />
-              <CompactStat label="Enabled" value={fmtInt(enabledCount)} />
-              <CompactStat label="Healthy" value={statsState === 'ready' ? fmtInt(healthyCount) : '—'} />
-              <CompactStat label="Missing auth" value={fmtInt(missingAuthCount)} />
-              <CompactStat label="Needs attention" value={statsState === 'ready' ? fmtInt(needsAttentionCount) : '—'} />
-            </SimpleGrid>
+            <Paper component="section" aria-label="Provider summary" withBorder radius="md" className="provider-summary">
+              <Box className="provider-summary-item">
+                <Text className="provider-summary-label">Configured</Text>
+                <Text className="provider-summary-value stat-value">{fmtInt(backends.length)}</Text>
+                <Text className="provider-summary-note">{fmtInt(enabledCount)} enabled</Text>
+              </Box>
+              <Box className="provider-summary-item">
+                <Text className="provider-summary-label">Healthy</Text>
+                <Text className="provider-summary-value stat-value">{statsState === 'ready' ? fmtInt(healthyCount) : '—'}</Text>
+                <Text className="provider-summary-note">Recorded requests</Text>
+              </Box>
+              <Box className="provider-summary-item">
+                <Text className="provider-summary-label">Attention</Text>
+                <Text className="provider-summary-value stat-value">{statsState === 'ready' ? fmtInt(needsAttentionCount) : '—'}</Text>
+                <Text className="provider-summary-note">{fmtInt(missingAuthCount)} missing auth</Text>
+              </Box>
+              <Box className="provider-summary-item">
+                <Text className="provider-summary-label">No traffic</Text>
+                <Text className="provider-summary-value stat-value">{statsState === 'ready' ? fmtInt(noTrafficCount) : '—'}</Text>
+                <Text className="provider-summary-note">{statsState !== 'ready' ? 'Stats unavailable' : noTrafficCount ? 'Health unknown' : 'All have traffic'}</Text>
+              </Box>
+            </Paper>
             <Box className="provider-toolbar">
               <TextInput aria-label="Search providers" placeholder="Search providers or models…" leftSection={<IconSearch size={17} />}
                 size="md" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
@@ -228,7 +246,7 @@ export default function ProvidersPage() {
                 data={[{ value: 'all', label: 'All providers' }, { value: 'attention', label: 'Needs attention' },
                   { value: 'healthy', label: 'Healthy' }, { value: 'no-traffic', label: 'No traffic' }]} />
             </Box>
-            <Text size="xs" c="dimmed" aria-live="polite">Showing {visibleBackends.length} of {backends.length} providers · health reflects all recorded requests</Text>
+            <Text size="xs" c="dimmed" aria-live="polite">{visibleBackends.length} of {backends.length} providers · Health from recorded requests</Text>
             {visibleBackends.length === 0 && <EmptyState icon={<IconSearchOff size={24} />} title="No matching providers" hint="Try another name or choose a different health filter." />}
             <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="md">
               {visibleBackends.map((b) => (
@@ -239,6 +257,7 @@ export default function ProvidersPage() {
                   segments={segByBackend.get(b.name) ?? []}
                   models={models.filter((m) => m.backend === b.name)}
                   statsState={statsState}
+                  compact={isMobile}
                   grokUsage={b.name === 'grok' ? grokUsageQ.data : undefined}
                   grokUsageLoading={b.name === 'grok' && grokUsageQ.isPending}
                   grokUsageError={b.name === 'grok' ? grokUsageQ.error?.message : undefined}
@@ -272,6 +291,7 @@ export default function ProvidersPage() {
           {selected && (
             <ProviderDetail
               backend={selected}
+              routes={(ovQ.data?.routes ?? []).filter((route) => route.backend === selected.name)}
               models={selectedModels}
               statsState={statsState}
               grokUsage={selected.name === 'grok' ? grokUsageQ.data : undefined}
@@ -370,6 +390,7 @@ function ProviderCard({
   segments,
   models,
   statsState,
+  compact,
   grokUsage,
   grokUsageLoading,
   grokUsageError,
@@ -381,6 +402,7 @@ function ProviderCard({
   segments: Parameters<typeof TokenMixBar>[0]['segments']
   models: ModelStat[]
   statsState: StatsState
+  compact: boolean
   grokUsage?: GrokUsage
   grokUsageLoading?: boolean
   grokUsageError?: string
@@ -469,7 +491,7 @@ function ProviderCard({
         </>
       )}
 
-      {routes.length > 0 && (
+      {!compact && routes.length > 0 && (
         <>
           <Divider my="sm" />
           <CardSection title={`Routes · ${routes.length}`}>
@@ -487,7 +509,7 @@ function ProviderCard({
         </>
       )}
 
-      {shownModels.length > 0 && (
+      {!compact && shownModels.length > 0 && (
         <>
           <Divider my="sm" />
           <CardSection title={`Catalog · ${(b.models?.length ?? 0)}`}>
@@ -538,6 +560,7 @@ function ProviderCard({
 
 function ProviderDetail({
   backend,
+  routes,
   models,
   statsState,
   grokUsage,
@@ -549,6 +572,7 @@ function ProviderDetail({
   onRangeChange,
 }: {
   backend: OverviewBackend
+  routes: { model: string; backend: string; upstream: string }[]
   models: ModelStat[]
   statsState: StatsState
   grokUsage?: GrokUsage
@@ -630,6 +654,30 @@ function ProviderDetail({
             />
           </Group>
         </CardSection>
+
+        {(backend.models?.length ?? 0) > 0 && (
+          <details className="provider-detail-list">
+            <summary>Available models · {backend.models?.length}</summary>
+            <Stack gap="xs" mt="sm">
+              {backend.models?.map((model) => (
+                <Code key={model} style={{ overflowWrap: 'anywhere' }}>{model}</Code>
+              ))}
+            </Stack>
+          </details>
+        )}
+
+        {routes.length > 0 && (
+          <details className="provider-detail-list">
+            <summary>Routes · {routes.length}</summary>
+            <Stack gap="xs" mt="sm">
+              {routes.map((route) => (
+                <Code key={`${route.model}/${route.upstream}`} style={{ overflowWrap: 'anywhere' }}>
+                  {route.model} → {route.upstream || '(as requested)'}
+                </Code>
+              ))}
+            </Stack>
+          </details>
+        )}
 
         {minimaxUsageQuery && <MiniMaxUsageCard query={minimaxUsageQuery} />}
 
