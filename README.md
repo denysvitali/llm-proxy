@@ -8,7 +8,7 @@ configured backends, translating between API shapes when needed.
 Access control is two-sided: end users authenticate to the proxy with their own
 API keys (each user can hold any number of keys), while ordinary upstream
 provider keys are configured once, per backend, server-side. Subscription-backed
-Grok, WorkBuddy, Codex, and ZCode instead use account sessions signed in from the web dashboard,
+Grok, WorkBuddy, Codex, ZCode, and MiniMax Code instead use account sessions signed in from the web dashboard,
 not upstream API keys.
 
 > [!IMPORTANT]
@@ -29,6 +29,7 @@ not upstream API keys.
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
+| `minimax-code` | [MiniMax Code](https://agent.minimax.io/docs/cli/quick-start) | Anthropic Messages | Device-code sign-in stores a MiniMax account session; other request shapes are translated server-side. |
 | `mimo-token-plan` | [Xiaomi MiMo Token Plan](https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/subscription) | Chat Completions, Responses | Uses only MiMo's OpenAI-compatible regional endpoint; Anthropic Messages requests are translated through Chat Completions. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
 | `cloudflare` | [Cloudflare inference](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) | Chat Completions, Responses native; Messages translated via Chat | Account-scoped endpoint; static `stealth/union-alpha` catalog. Native wire provider-specific fields pass through unchanged. |
@@ -121,6 +122,27 @@ proxy aggregates it for non-streaming clients and uses the existing translation
 matrix for Claude Code (`/v1/messages`) and Codex (`/v1/responses`). This is an
 undocumented private endpoint and may change with a WorkBuddy update. Confirm
 that this use is permitted by WorkBuddy's terms for your account.
+
+### MiniMax Code
+
+The `minimax-code` backend uses the MiniMax Code account gateway found in the
+published [`@minimax-ai/code` 0.5.5](https://www.npmjs.com/package/@minimax-ai/code/v/0.5.5)
+client. Enable it with:
+
+```yaml
+backends:
+  - type: minimax-code
+```
+
+Open `http://127.0.0.1:8090/login/minimax-code` or use the dashboard sign-in
+button. Approve the one-time code in your MiniMax account. The proxy stores and
+refreshes its OAuth session at `~/.config/llm-proxy/minimax-code-auth.json`
+(override with `minimax_code_auth_file`). The global gateway defaults to
+`https://agent.minimax.io/mavis/api/v1/llm/v1`; `base_url` can override it.
+The backend forwards Anthropic Messages to `/messages`, and translates Chat
+Completions and Responses requests through Messages. Its built-in catalog is
+`MiniMax-M3`, `MiniMax-M2.7-highspeed`, and `MiniMax-M2.7`; pin a model with
+an ID such as `minimax-code/MiniMax-M3`.
 
 ### Codex subscription
 
@@ -596,10 +618,11 @@ flags are applied afterwards.
 | `workbuddy_auth_file`        | `LLM_PROXY_WORKBUDDY_AUTH_FILE`    | `~/.config/llm-proxy/workbuddy-auth.json` | Account session created by the WorkBuddy browser sign-in flow. |
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
+| `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
-| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`) use their web sign-in sessions instead. |
+| `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
@@ -684,6 +707,7 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET/POST | `/login/workbuddy`          | Web-only WorkBuddy account sign-in |
 | GET/POST | `/login/codex`              | ChatGPT device-code sign-in for Codex |
 | GET/POST | `/login/zcode`              | Web-only ZCode account sign-in and optional plan-claim verification |
+| GET/POST | `/login/minimax-code`       | Web-only MiniMax Code device-code sign-in |
 | POST     | `/login/zcode/captcha`      | Stores a browser verification parameter for the optional plan-claim flow |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
 | GET    | `/healthz`                    | Liveness probe                                 |

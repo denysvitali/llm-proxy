@@ -15,7 +15,7 @@ import (
 // BackendConfig is one upstream provider entry.
 type BackendConfig struct {
 	// Type is the registered backend identifier ("venice", "opencode", "opencode-go",
-	// "grok", "nous", "apodex", "zcode", "mimo-token-plan", ...). Valid types come from the backend registry;
+	// "grok", "nous", "apodex", "zcode", "minimax-code", "mimo-token-plan", ...). Valid types come from the backend registry;
 	// binaries populate it by importing internal/backend/all.
 	Type string `mapstructure:"type"`
 	// BaseURL overrides the provider default endpoint.
@@ -104,11 +104,13 @@ type Config struct {
 	CodexAuthFile string `mapstructure:"codex_auth_file"`
 	// ZCodeAuthFile stores the ZCode OAuth session used by the Start Plan
 	// backend. It is populated by browser login and is not an API key.
-	ZCodeAuthFile string          `mapstructure:"zcode_auth_file"`
-	Server        ServerConfig    `mapstructure:"server"`
-	Auth          AuthConfig      `mapstructure:"auth"`
-	Backends      []BackendConfig `mapstructure:"backends"`
-	Stats         StatsConfig     `mapstructure:"stats"`
+	ZCodeAuthFile string `mapstructure:"zcode_auth_file"`
+	// MiniMaxCodeAuthFile stores the MiniMax Code OAuth device session.
+	MiniMaxCodeAuthFile string          `mapstructure:"minimax_code_auth_file"`
+	Server              ServerConfig    `mapstructure:"server"`
+	Auth                AuthConfig      `mapstructure:"auth"`
+	Backends            []BackendConfig `mapstructure:"backends"`
+	Stats               StatsConfig     `mapstructure:"stats"`
 
 	// Routes maps inbound model name -> explicit route. Models not listed are
 	// matched against each enabled backend's catalog (first match wins in
@@ -145,6 +147,12 @@ func (c *Config) Defaults() {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			c.ZCodeAuthFile = filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json")
+		}
+	}
+	if c.MiniMaxCodeAuthFile == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			c.MiniMaxCodeAuthFile = filepath.Join(home, ".config", "llm-proxy", "minimax-code-auth.json")
 		}
 	}
 	if c.Server.Listen == "" {

@@ -36,6 +36,7 @@ func Load() (*Config, error) {
 		v.SetDefault("grok_auth_file", filepath.Join(home, ".config", "grok-proxy", "auth.json"))
 		v.SetDefault("codex_auth_file", filepath.Join(home, ".config", "llm-proxy", "codex-auth.json"))
 		v.SetDefault("zcode_auth_file", filepath.Join(home, ".config", "llm-proxy", "zcode-auth.json"))
+		v.SetDefault("minimax_code_auth_file", filepath.Join(home, ".config", "llm-proxy", "minimax-code-auth.json"))
 	}
 	v.SetDefault("log_level", "info")
 	v.SetDefault("log_format", "text")

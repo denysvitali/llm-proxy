@@ -89,7 +89,7 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 			Name:    bc.Type,
 			Enabled: bc.IsEnabled(),
 			Host:    baseURLHost(bc.BaseURL),
-			HasKey:  bc.Type != "grok" && bc.Type != "codex" && bc.Type != "zcode" && bc.ResolveKey(os.Getenv) != "",
+			HasKey:  bc.Type != "grok" && bc.Type != "codex" && bc.Type != "zcode" && bc.Type != "minimax-code" && bc.ResolveKey(os.Getenv) != "",
 		}
 		switch bc.Type {
 		case "grok":
@@ -106,6 +106,10 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 		case "zcode":
 			entry.AuthLabel = "ZCode account"
 			entry.AuthConfigured = s.zcodeAuth != nil && s.zcodeAuth.HasSession()
+			entry.HasKey = false
+		case "minimax-code":
+			entry.AuthLabel = "MiniMax Code account"
+			entry.AuthConfigured = s.minimaxCodeAuth != nil && s.minimaxCodeAuth.HasSession()
 			entry.HasKey = false
 		default:
 			entry.AuthLabel = "API key"

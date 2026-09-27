@@ -18,6 +18,7 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	codexbackend "github.com/denysvitali/llm-proxy/internal/backend/codex"
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
+	minimaxcodebackend "github.com/denysvitali/llm-proxy/internal/backend/minimaxcode"
 	workbuddybackend "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
 	zcodebackend "github.com/denysvitali/llm-proxy/internal/backend/zcode"
 	"github.com/denysvitali/llm-proxy/internal/config"
@@ -39,6 +40,7 @@ type Server struct {
 	workBuddyAuth   *workbuddybackend.Manager
 	codexAuth       *codexbackend.Manager
 	zcodeAuth       *zcodebackend.Manager
+	minimaxCodeAuth *minimaxcodebackend.Manager
 	catalogs        catalogCache
 	grokUsageMu     sync.Mutex
 	grokUsageValue  *grokbackend.UsageView
@@ -75,8 +77,12 @@ func NewWithAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.
 }
 
 // NewWithAllAccountAuth wires browser sign-in for every subscription backend.
-func NewWithAllAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager, codexAuth *codexbackend.Manager, zcodeAuth *zcodebackend.Manager) *Server {
-	return newServer(cfg, log, store, backends, grokAuth, workBuddyAuth, codexAuth, zcodeAuth)
+func NewWithAllAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager, codexAuth *codexbackend.Manager, zcodeAuth *zcodebackend.Manager, minimaxAuth ...*minimaxcodebackend.Manager) *Server {
+	s := newServer(cfg, log, store, backends, grokAuth, workBuddyAuth, codexAuth, zcodeAuth)
+	if len(minimaxAuth) > 0 {
+		s.minimaxCodeAuth = minimaxAuth[0]
+	}
+	return s
 }
 
 func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager, codexAuth *codexbackend.Manager, zcodeAuth *zcodebackend.Manager) *Server {
@@ -146,6 +152,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login/codex", s.codexLogin)
 	mux.HandleFunc("GET /login/zcode", s.zcodeLoginPage)
 	mux.HandleFunc("POST /login/zcode", s.zcodeLogin)
+	mux.HandleFunc("GET /login/minimax-code", s.minimaxCodeLoginPage)
+	mux.HandleFunc("POST /login/minimax-code", s.minimaxCodeLogin)
 	mux.HandleFunc("POST /login/zcode/captcha", s.zcodeCaptcha)
 	mux.HandleFunc("POST /api/zcode/claim", s.zcodeClaim)
 	mux.HandleFunc("GET /api/zcode/offers", s.zcodeOffers)

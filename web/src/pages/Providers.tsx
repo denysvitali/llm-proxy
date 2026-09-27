@@ -87,6 +87,7 @@ const ACCOUNT_AUTH: Record<string, { label: string; login: string }> = {
   workbuddy: { label: 'WorkBuddy', login: '/login/workbuddy' },
   codex: { label: 'ChatGPT', login: '/login/codex' },
   zcode: { label: 'ZCode', login: '/login/zcode' },
+  'minimax-code': { label: 'MiniMax', login: '/login/minimax-code' },
 }
 
 export default function ProvidersPage() {

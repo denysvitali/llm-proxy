@@ -255,6 +255,17 @@ export default function SetupPage() {
                     body="ZCode does not use an upstream API key."
                     tail=" to connect your Start Plan."
                   />
+
+                  <AccountConnectionCard
+                    show={ov.backends.some((b) => b.name === 'minimax-code')}
+                    signedIn={ov.backends.find((b) => b.name === 'minimax-code')?.authConfigured ?? false}
+                    color="blue"
+                    title="MiniMax Code uses your account"
+                    signInHref="/login/minimax-code"
+                    signInLabel="Sign in with MiniMax"
+                    body="MiniMax Code uses an account session."
+                    tail=" to connect your subscription."
+                  />
                 </SimpleGrid>
               </Stack>
             </PageSection>
