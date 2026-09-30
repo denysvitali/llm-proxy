@@ -40,7 +40,7 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchBackendStatsSeries, fetchStats } from '../api'
+import { fetchBackendStatsSeries, fetchOverview, fetchStats } from '../api'
 import type { ModelStat, StatsSeries } from '../api'
 import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
@@ -138,12 +138,14 @@ function sortValue(m: ModelStat, key: SortKey): string | number {
 
 export default function ModelsPage() {
   const q = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
+  const catalogQ = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
   // Memoized so the rows useMemo below sees a stable identity between fetches.
   const models = useMemo(() => q.data?.models ?? [], [q.data])
   const pal = useChartPalette()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
 
   const [filter, setFilter] = useState('')
+  const [catalogFilter, setCatalogFilter] = useState('')
   const [errorsOnly, setErrorsOnly] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   function clearFilter() {
@@ -153,6 +155,16 @@ export default function ModelsPage() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'requests', dir: -1 })
   const [selected, setSelected] = useState<ModelStat | null>(null)
   const [historyRange, setHistoryRange] = useState('24h')
+
+  const catalog = useMemo(() => catalogQ.data?.backends
+    .filter((b) => b?.enabled && b.catalogOK)
+    .flatMap((b) => b.models ?? [])
+    .filter((id, index, all) => all.indexOf(id) === index)
+    .sort((a, b) => a.localeCompare(b)) ?? [], [catalogQ.data])
+  const visibleCatalog = useMemo(() => catalog.filter((id) =>
+    id.toLowerCase().includes(catalogFilter.trim().toLowerCase()),
+  ), [catalog, catalogFilter])
+  const failedCatalogs = catalogQ.data?.backends.filter((b) => b?.enabled && !b.catalogOK).length ?? 0
 
   const selectedSeriesQ = useQuery({
     queryKey: ['stats-series', 'model', selected?.backend, selected?.model, historyRange],
@@ -211,8 +223,50 @@ export default function ModelsPage() {
       <Stack gap="lg" className="models-page">
         <PageHeader
           title="Models"
-          subtitle="Explore recorded model traffic, latency, and reliability."
+          subtitle="Browse available models and explore recorded traffic, latency, and reliability."
         />
+
+        <Card component="section" aria-label="Available model catalog" withBorder radius="lg" p="md">
+          <Stack gap="sm">
+            <Box>
+              <Title order={2} size="h4">Available models</Title>
+              <Text size="sm" c="dimmed">Models advertised by enabled providers. Copy an ID to use it in a request.</Text>
+            </Box>
+            <TextInput
+              leftSection={<IconSearch size={14} />}
+              placeholder="Find an available model…"
+              aria-label="Find an available model"
+              value={catalogFilter}
+              onChange={(e) => setCatalogFilter(e.currentTarget.value)}
+            />
+            {catalogQ.isPending ? (
+              <Group gap="xs" role="status"><Loader size="sm" /><Text size="sm">Loading model catalog…</Text></Group>
+            ) : catalogQ.isError ? (
+              <Alert color="red" title="Model catalog unavailable">
+                <Stack gap="xs" align="flex-start">
+                  <Text size="sm">{catalogQ.error.message}</Text>
+                  <Button size="compact-sm" variant="light" onClick={() => catalogQ.refetch()}>Retry</Button>
+                </Stack>
+              </Alert>
+            ) : (
+              <>
+                {failedCatalogs > 0 && <Text size="sm" c="dimmed">{failedCatalogs} provider catalog{failedCatalogs === 1 ? ' is' : 's are'} unavailable.</Text>}
+                <Text size="xs" c="dimmed" aria-live="polite">
+                  {catalogFilter.trim() ? `${visibleCatalog.length} of ${catalog.length} available models match` : `${catalog.length} available models`}
+                </Text>
+                {visibleCatalog.length === 0 ? (
+                  <Text size="sm" c="dimmed">{catalog.length === 0 ? 'No provider models are available.' : 'No available models match that search.'}</Text>
+                ) : (
+                  <ScrollArea mah={320} type="auto">
+                    <Stack gap={0}>
+                      {visibleCatalog.map((id) => <CatalogModel key={id} id={id} />)}
+                    </Stack>
+                  </ScrollArea>
+                )}
+              </>
+            )}
+          </Stack>
+        </Card>
 
         {models.length > 0 && (
           <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
@@ -469,6 +523,25 @@ export default function ModelsPage() {
         )}
       </Drawer>
     </Fade>
+  )
+}
+
+function CatalogModel({ id }: { id: string }) {
+  const clipboard = useClipboard({ timeout: 2000 })
+  return (
+    <Group justify="space-between" wrap="nowrap" gap="xs" py={6} style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+      <Code style={{ overflowWrap: 'anywhere', whiteSpace: 'normal' }}>{id}</Code>
+      <ActionIcon
+        variant="subtle"
+        color={clipboard.copied ? 'teal' : 'gray'}
+        size={36}
+        style={{ flexShrink: 0 }}
+        aria-label={`Copy ${id}`}
+        onClick={() => clipboard.copy(id)}
+      >
+        <IconCopy size={16} />
+      </ActionIcon>
+    </Group>
   )
 }
 

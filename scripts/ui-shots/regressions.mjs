@@ -45,7 +45,7 @@ export async function checkRegressions(browser, base, outDir) {
       await visible(page.getByRole('heading', { level: 1, name: 'Providers' }));
       await visible(page.getByRole('button', { name: 'Inspect zcode', exact: true }));
       await page.getByRole('textbox', { name: 'Search providers' }).fill('zcode');
-      await visible(page.getByText('Showing 1 of 2 providers', { exact: false }));
+      await visible(page.getByText(/1 of 2 providers/));
       assert.equal(await page.getByRole('button', { name: 'Inspect example', exact: true }).count(), 0);
       await page.getByRole('textbox', { name: 'Search providers' }).fill('does-not-exist');
       await visible(page.getByText('No matching providers', { exact: true }));
@@ -56,7 +56,7 @@ export async function checkRegressions(browser, base, outDir) {
         await visible(page.getByText('No matching providers', { exact: true }));
         await page.getByRole('combobox', { name: 'Filter provider health' }).click();
         await page.getByRole('option', { name: 'All providers', exact: true }).click();
-        await visible(page.getByText('Showing 2 of 2 providers', { exact: false }));
+        await visible(page.getByText(/2 of 2 providers/));
       }
 
       await page.getByRole('navigation').getByRole('link', { name: 'Overview', exact: true }).click();
@@ -80,6 +80,12 @@ export async function checkRegressions(browser, base, outDir) {
         assert.equal(await page.getByText('no traffic', { exact: true }).count(), 0);
         assert.deepEqual(errors, []);
         unavailableStats = false;
+
+        // Catalog entries remain visible even when no model has traffic.
+        await page.goto(`${base}/models`);
+        await visible(page.getByText('zcode/example-model', { exact: true }));
+        await visible(page.getByText('No model traffic yet', { exact: true }));
+        assert.deepEqual(errors, []);
 
         // Deliberately malformed data verifies the page boundary and recovery.
         brokenOverview = true;

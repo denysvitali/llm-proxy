@@ -23,23 +23,23 @@ const dark: [string, string, string, string, string, string, string, string, str
   '#6b7280', // 4 — muted
   '#3a414d', // 5 — disabled borders
   '#272d36', // 6 — raised borders
-  '#1a1e25', // 7 — raised surface (cards)
-  '#14161a', // 8 — toolbar / drawer surface
-  '#0b0d10', // 9 — canvas (body background)
+  '#171a24', // 7 — raised surface (cards)
+  '#12141c', // 8 — toolbar / drawer surface
+  '#090a10', // 9 — canvas (body background)
 ]
 
 // Accent ramp. Blue carries interaction, not data; charts use palette.ts.
 const brand: [string, string, string, string, string, string, string, string, string, string] = [
-  '#e8f1fb', // 0 tint
-  '#cfe3f8',
-  '#a8cdf1',
-  '#7cb2e8',
-  '#4e97dc',
-  '#2680d8',
-  '#0f6fc4', // 6 — filled buttons on light
-  '#0a84d8', // 7
-  '#3b9ae8', // 8 — filled buttons on dark
-  '#66b0f2', // 9
+  '#eef0ff', // 0 tint
+  '#dde1ff',
+  '#c1c8ff',
+  '#a0a9fb',
+  '#8189f5',
+  '#6b6feb',
+  '#5b54e0', // 6 — filled buttons on light
+  '#4d44c9', // 7
+  '#7c7bf2', // 8 — filled buttons on dark
+  '#a5a8fa', // 9
 ]
 
 export const theme = createTheme({
@@ -51,7 +51,7 @@ export const theme = createTheme({
   defaultRadius: 'md',
   cursorType: 'pointer',
   fontFamily:
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Inter, system-ui, sans-serif',
+    'Inter, "Inter var", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif',
   fontFamilyMonospace:
     'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
   headings: {
@@ -70,15 +70,15 @@ export const theme = createTheme({
     xs: rem(2),
     sm: rem(4),
     md: rem(6),
-    lg: rem(10),
-    xl: rem(14),
+    lg: rem(12),
+    xl: rem(18),
   },
   components: {
     Card: Card.extend({
-      defaultProps: { withBorder: true, radius: 'lg', padding: 'md' },
+      defaultProps: { withBorder: true, radius: 'xl', padding: 'lg' },
     }),
     Paper: Paper.extend({
-      defaultProps: { radius: 'md' },
+      defaultProps: { radius: 'lg' },
     }),
     Table: Table.extend({
       defaultProps: { highlightOnHoverColor: 'var(--mantine-color-default-hover)' },
@@ -90,7 +90,7 @@ export const theme = createTheme({
       defaultProps: { radius: 'md' },
     }),
     Badge: Badge.extend({
-      defaultProps: { radius: 'sm' },
+      defaultProps: { radius: 'xl' },
     }),
     Chip: Chip.extend({
       defaultProps: { radius: 'md' },

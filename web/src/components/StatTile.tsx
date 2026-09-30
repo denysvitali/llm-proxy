@@ -23,7 +23,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
       className="stat-tile"
       withBorder
       p="md"
-      radius="md"
+      radius="lg"
       role="group"
       aria-labelledby={labelId}
       h="100%"
@@ -33,7 +33,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
       <Group justify="space-between" align="center" wrap="nowrap" mb={6} gap="xs">
         <Text
           id={labelId}
-          fz={13}
+          fz={11.5}
           tt="uppercase"
           c="dimmed"
           fw={600}
@@ -45,12 +45,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
         {icon && (
           <span
             aria-hidden="true"
-            style={{
-              display: 'inline-flex',
-              flexShrink: 0,
-              color: 'var(--mantine-color-text)',
-              opacity: 0.85,
-            }}
+            className="stat-icon"
           >
             {icon}
           </span>
@@ -60,8 +55,8 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
         <Text
           component="div"
           className="stat-value"
-          fz={28}
-          fw={600}
+          fz={32}
+          fw={700}
           lh={1.15}
           style={{ overflowWrap: 'anywhere' }}
         >
