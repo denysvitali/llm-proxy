@@ -30,7 +30,7 @@ export function PageSection({
             order={2}
             id={titleId}
             fz={16}
-            fw={700}
+            fw={650}
             m={0}
             lh={1.3}
           >

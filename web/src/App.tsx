@@ -1,7 +1,7 @@
 import {
-  Anchor, AppShell, Badge, Box, Container, Group, Kbd, Loader, Modal,
+  Anchor, AppShell, Badge, Box, Container, Group, Kbd, Modal,
   type MantineColorScheme, SegmentedControl, type SegmentedControlItem,
-  Stack, Text, Tooltip, UnstyledButton, useMantineColorScheme,
+  Skeleton, Stack, Text, Tooltip, UnstyledButton, useMantineColorScheme,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { IconArrowUpRight, IconDeviceDesktop, IconKeyboard, IconMoonStars, IconSun, IconTerminal2 } from '@tabler/icons-react'
@@ -91,8 +91,8 @@ export default function App() {
   return (
     <AppShell
       layout="alt"
-      header={{ height: 64 }}
-      navbar={{ width: 232, breakpoint: 'sm', collapsed: { mobile: true, desktop: isMobile } }}
+      header={{ height: 60 }}
+      navbar={{ width: 216, breakpoint: 'sm', collapsed: { mobile: true, desktop: isMobile } }}
       footer={isMobile ? { height: 'calc(64px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
       padding={0}
     >
@@ -100,17 +100,14 @@ export default function App() {
       {!isMobile && (
         <AppShell.Navbar component="aside" className="app-sidebar" p="md">
           <HeaderBrand />
-          <Text className="nav-caption" mt={36} mb="sm">Workspace</Text>
+          <Text className="nav-caption" mt={40} mb="sm">Workspace</Text>
           <Navigation />
-          <Stack mt="auto" gap="lg" pt="xl">
-            <Box className="sidebar-note">
-              <span className="sidebar-note-icon" aria-hidden><IconTerminal2 size={20} /></span>
-              <Text size="sm" fw={650} mt="sm">One endpoint. Every model.</Text>
-              <Text size="xs" c="dimmed" mt={6} lh={1.65}>Bring your favorite coding tools to your gateway.</Text>
-              <Anchor component={NavLink} to="/setup" size="xs" mt="md" className="setup-link">
-                Connect an agent <IconArrowUpRight size={14} aria-hidden />
-              </Anchor>
-            </Box>
+          <Stack mt="auto" gap="md" pt="xl">
+            <Anchor component={NavLink} to="/setup" className="sidebar-connect" underline="never">
+              <IconTerminal2 size={18} aria-hidden />
+              <span><strong>Connect a client</strong><span>Endpoints & examples</span></span>
+              <IconArrowUpRight size={15} aria-hidden />
+            </Anchor>
             <UnstyledButton className="shortcut-trigger" onClick={() => setShortcutsOpen(true)}>
               <IconKeyboard size={17} aria-hidden />
               <span>Keyboard shortcuts</span>
@@ -123,8 +120,7 @@ export default function App() {
         <Group h="100%" justify="space-between" px={{ base: 'md', sm: 'xl' }} wrap="nowrap">
           {isMobile ? <HeaderBrand subtitle={pageName} /> : (
             <Group gap="sm" className="header-breadcrumb">
-              <span className="workspace-indicator" aria-hidden />
-              <Text size="sm" c="dimmed">Gateway</Text>
+              <Text size="sm" c="dimmed">Workspace</Text>
               <Text size="sm" c="dimmed" aria-hidden>/</Text>
               <Text size="sm" fw={600}>{pageName}</Text>
             </Group>
@@ -137,7 +133,7 @@ export default function App() {
       </AppShell.Header>
       <AppShell.Main id="main" tabIndex={-1}>
         <Container size={1600} className="page-container">
-          <Suspense fallback={<Group className="page-loading" justify="center" py="xl" role="status"><Loader size="sm" /><Text size="sm" c="dimmed">Loading {pageName.toLowerCase()}…</Text></Group>}>
+          <Suspense fallback={<PageLoading name={pageName} />}>
             <PageErrorBoundary key={pathname}>
               <Routes>
                 <Route path="/" element={<OverviewPage />} />
@@ -173,13 +169,23 @@ export default function App() {
   )
 }
 
+function PageLoading({ name }: { name: string }) {
+  return (
+    <Stack className="page-loading" gap="lg" role="status" aria-label={`Loading ${name.toLowerCase()}`}>
+      <Stack gap="sm"><Skeleton height={36} width={180} /><Skeleton height={16} width="min(100%, 380px)" /></Stack>
+      <div className="page-loading-metrics">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} height={120} radius="lg" />)}</div>
+      <Skeleton height={260} radius="lg" />
+    </Stack>
+  )
+}
+
 function HeaderBrand({ subtitle }: { subtitle?: string }) {
   const { data } = useQuery(dashboardQueries.overview())
   return (
     <UnstyledButton component={NavLink} to="/" className="brand-link" aria-label="llm-proxy home">
       <span className="brand-mark" aria-hidden>λ</span>
       <Stack gap={1}>
-        <Text fw={750} size="md" lh={1.2} lts="-0.03em">llm-proxy</Text>
+        <Text fw={700} size="lg" lh={1.2} lts="-0.03em">llm-proxy</Text>
         <Text c="dimmed" fz={11} lh={1.4}>{subtitle ?? (data?.version ? `Model gateway · v${data.version}` : 'Model gateway')}</Text>
       </Stack>
     </UnstyledButton>
@@ -189,7 +195,7 @@ function HeaderBrand({ subtitle }: { subtitle?: string }) {
 function LiveStatusBadge() {
   const connected = useLiveStatsUpdates()
   return (
-    <Tooltip label={connected ? 'Receiving live traffic updates' : 'Live updates disconnected; stats refresh on page load'}>
+    <Tooltip label={connected ? 'Receiving live traffic updates' : 'Live updates disconnected; periodic refresh remains available'}>
       <Badge variant="dot" color={connected ? 'teal' : 'gray'} tt="none" className="live-status" aria-live="polite">
         <span className="live-status-text">{connected ? 'Live updates' : 'Updates offline'}</span>
       </Badge>
@@ -206,9 +212,10 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
           className={mobile ? 'bottom-nav-link' : 'side-nav-link'}
           data-active={isActiveNavPath(pathname, path) || undefined}
           aria-label={label}
+          title={description}
           aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
           <span className="nav-icon"><Icon size={20} stroke={1.7} aria-hidden /></span>
-          <span className="nav-label">{label}{!mobile && <span className="nav-description">{description}</span>}</span>
+          <span className="nav-label">{label}</span>
         </UnstyledButton>
       ))}
     </Box>

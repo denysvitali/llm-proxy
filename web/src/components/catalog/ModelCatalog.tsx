@@ -25,7 +25,7 @@ export default function ModelCatalog() {
   const [provider, setProvider] = useState('all')
   const [page, setPage] = useState(0)
   const mobile = useMediaQuery('(max-width: 48em)') ?? false
-  const pageSize = mobile ? 3 : 6
+  const pageSize = mobile ? 6 : 18
   const backends = query.data?.backends ?? []
   const enabled = backends.filter((backend) => backend?.enabled)
   const catalog = useMemo(() => {
@@ -53,8 +53,8 @@ export default function ModelCatalog() {
       radius="lg"
       className="catalog-panel"
     >
-      <Group justify="space-between" gap="xs" mb="md">
-        <Group gap="sm">
+      <Group justify="space-between" gap="xs" mb="md" className="catalog-heading">
+        <Group gap="sm" wrap="nowrap" className="catalog-heading-title">
           <span className="catalog-section-icon">
             <IconCube size={19} />
           </span>
@@ -63,7 +63,7 @@ export default function ModelCatalog() {
               Available models
             </Title>
             <Text size="xs" c="dimmed">
-              Find a model. Copy its ID. Start building.
+              Copy a model ID to use it in your client configuration.
             </Text>
           </Box>
         </Group>

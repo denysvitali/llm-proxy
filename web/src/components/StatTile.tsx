@@ -29,12 +29,12 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
       miw={0}
       style={{ display: 'flex', flexDirection: 'column' }}
     >
-      <Group justify="space-between" align="center" wrap="nowrap" mb={14} gap="xs">
+      <Group justify="space-between" align="center" wrap="nowrap" mb={10} gap="xs">
         <Text
           id={labelId}
-          fz={12}
+          fz={13}
           c="dimmed"
-          fw={600}
+          fw={500}
           lh={1.3}
           style={{ overflowWrap: 'anywhere', minWidth: 0 }}
         >
@@ -53,7 +53,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
         <Text
           component="div"
           className="stat-value"
-          fw={700}
+          fw={600}
           lh={1.15}
           style={{ overflowWrap: 'anywhere' }}
         >
@@ -61,7 +61,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
         </Text>
       </Box>
       {hasHint && (
-        <Box mt={10} style={{ minWidth: 0 }}>
+        <Box className="stat-hint" style={{ minWidth: 0 }}>
           <Text size="xs" c="dimmed" lh={1.35} style={{ overflowWrap: 'anywhere' }}>
             {hint}
           </Text>

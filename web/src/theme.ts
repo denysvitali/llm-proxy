@@ -22,10 +22,10 @@ const dark: [string, string, string, string, string, string, string, string, str
   '#a1adc3', // 3 — tertiary / disabled
   '#74829a', // 4 — muted
   '#354159', // 5 — disabled borders
-  '#26324a', // 6 — raised borders
-  '#182237', // 7 — raised surface
+  '#2b303d', // 6 — raised borders
+  '#1c202b', // 7 — raised surface
   '#14161a', // 8 — card / drawer surface (chart contrast reference)
-  '#0c111d', // 9 — canvas
+  '#0f1117', // 9 — canvas
 ]
 
 // Indigo carries interaction; charts use palette.ts.
@@ -57,7 +57,7 @@ export const theme = createTheme({
   headings: {
     fontWeight: '650',
     sizes: {
-      h1: { fontSize: rem(32), lineHeight: '1.2', fontWeight: '700' },
+      h1: { fontSize: rem(34), lineHeight: '1.2', fontWeight: '650' },
       h2: { fontSize: rem(18), lineHeight: '1.3', fontWeight: '650' },
       h3: { fontSize: rem(15), lineHeight: '1.35', fontWeight: '650' },
       h4: { fontSize: rem(13), lineHeight: '1.4', fontWeight: '600' },
@@ -70,8 +70,8 @@ export const theme = createTheme({
     xs: rem(2),
     sm: rem(4),
     md: rem(8),
-    lg: rem(14),
-    xl: rem(18),
+    lg: rem(10),
+    xl: rem(14),
   },
   components: {
     Card: Card.extend({

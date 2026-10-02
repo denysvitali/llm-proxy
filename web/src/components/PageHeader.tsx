@@ -20,11 +20,11 @@ export function PageHeader({
       align="flex-end"
       wrap="wrap"
       gap="md"
-      mb={4}
+      mb={0}
       miw={0}
       className="page-header"
     >
-      <Stack gap={8} style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
+      <Stack gap={10} style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
         <Title order={1} size="h1" mb={0} lh={1.15} className="page-title">
           {title}
         </Title>

@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Box,
-  Button,
   Card,
   Group,
   ScrollArea,
@@ -54,7 +53,7 @@ export default function ModelTraffic({
     <ScrollArea>
       <Table
         miw={750}
-        verticalSpacing="md"
+        verticalSpacing="sm"
         horizontalSpacing="md"
         highlightOnHover
         className="models-table"
@@ -174,9 +173,6 @@ function ModelCard({ model, onInspect }: { model: ModelStat; onInspect: () => vo
         <Metric label="First token" value={fmtSec(model.ttft_seconds.p50)} />
         <Metric label="Tokens / sec" value={fmtTps(model.throughput_tps.p50)} />
       </SimpleGrid>
-      <Button fullWidth variant="subtle" size="xs" mt="sm" mih={40} onClick={onInspect}>
-        Explore performance
-      </Button>
     </Card>
   )
 }

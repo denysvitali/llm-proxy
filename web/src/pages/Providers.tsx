@@ -6,9 +6,7 @@ import {
   Drawer,
   Group,
   Loader,
-  Paper,
   Select,
-  SimpleGrid,
   Stack,
   Text,
 } from '@mantine/core'
@@ -24,6 +22,7 @@ import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/EmptyState'
 import { providerSegments, healthState } from '../lib/stats'
 import ProviderCard from '../components/catalog/ProviderCard'
+import { CatalogSummary } from '../components/catalog/CatalogSummary'
 import ProviderDetail from '../components/catalog/ProviderDetail'
 import { backendAgg, type StatsState } from '../components/catalog/providerData'
 import { Fade } from '../App'
@@ -102,7 +101,7 @@ export default function ProvidersPage() {
   return (
     <Fade pending={overview.isPending || stats.isPending}>
       <Stack gap="lg" className="providers-page">
-        <PageHeader title="Providers" subtitle="One place for every connection, catalog, and account." />
+        <PageHeader title="Providers" subtitle="Connections, health, and account usage across your gateway." />
         {overview.isPending ? (
           <Group justify="center" py="xl" role="status">
             <Loader size="sm" />
@@ -123,39 +122,20 @@ export default function ProvidersPage() {
           />
         ) : (
           <>
-            <Paper
-              component="section"
-              aria-label="Provider summary"
-              withBorder
-              radius="lg"
-              className="catalog-provider-summary"
-            >
-              <Summary label="Configured providers" value={fmtInt(configured)} hint={`${enabled} enabled`} />
-              <Summary
-                label="Healthy"
-                value={statsState === 'ready' ? fmtInt(healthy) : '—'}
-                hint="From recorded requests"
-              />
-              <Summary
-                label="Needs attention"
-                value={statsState === 'ready' ? fmtInt(attention) : '—'}
-                hint={`${missingAuth} missing authentication`}
-                attention={attention > 0}
-              />
-              <Summary
-                label="Awaiting traffic"
-                value={statsState === 'ready' ? fmtInt(idle) : '—'}
-                hint={statsState === 'ready' ? 'Health appears after requests' : 'Request stats unavailable'}
-              />
-            </Paper>
+            <CatalogSummary label="Provider summary" items={[
+              { label: 'Providers', value: fmtInt(configured), hint: `${enabled} enabled` },
+              { label: 'Healthy', value: statsState === 'ready' ? fmtInt(healthy) : '—', hint: 'From recorded requests' },
+              { label: 'Needs attention', value: statsState === 'ready' ? fmtInt(attention) : '—', hint: `${missingAuth} missing authentication`, attention: attention > 0 },
+              { label: 'Awaiting traffic', value: statsState === 'ready' ? fmtInt(idle) : '—', hint: statsState === 'ready' ? 'No requests recorded' : 'Stats unavailable' },
+            ]} />
             {statsState !== 'ready' && (
               <Alert
                 color="gray"
                 title={statsState === 'loading' ? 'Loading request stats…' : 'Request stats unavailable'}
               >
                 {statsState === 'loading'
-                  ? 'Health and token mix appear once stats finish loading.'
-                  : 'Health and token mix are unavailable right now. Provider configuration is still current.'}
+                  ? 'Health and traffic totals appear once stats finish loading.'
+                  : 'Health and traffic totals are unavailable right now. Provider configuration is still current.'}
                 {statsState === 'unavailable' && (
                   <Button variant="subtle" size="xs" mih={44} onClick={() => stats.refetch()}>
                     Retry statistics
@@ -226,7 +206,7 @@ export default function ProvidersPage() {
                 </Button>
               </Stack>
             ) : (
-              <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="md">
+              <Stack gap="sm" className="catalog-provider-list">
                 {visible.map(({ backend, models: providerModels }) => (
                   <ProviderCard
                     key={backend.name}
@@ -244,7 +224,7 @@ export default function ProvidersPage() {
                     onInspect={() => setSelectedName(backend.name)}
                   />
                 ))}
-              </SimpleGrid>
+              </Stack>
             )}
           </>
         )}
@@ -295,29 +275,5 @@ export default function ProvidersPage() {
         )}
       </Drawer>
     </Fade>
-  )
-}
-
-function Summary({
-  label,
-  value,
-  hint,
-  attention = false,
-}: {
-  label: string
-  value: string
-  hint: string
-  attention?: boolean
-}) {
-  return (
-    <Box className="catalog-provider-summary-item" data-attention={attention}>
-      <Text size="xs" fw={550} c="dimmed">
-        {label}
-      </Text>
-      <Text className="catalog-summary-number tabular">{value}</Text>
-      <Text size="xs" c="dimmed">
-        {hint}
-      </Text>
-    </Box>
   )
 }

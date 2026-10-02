@@ -87,6 +87,7 @@ export async function checkRegressions(browser, base, outDir) {
         // Catalog entries remain visible even when no model has traffic.
         await page.goto(`${base}/models`);
         await visible(page.getByText('zcode/example-model', { exact: true }));
+        await page.getByRole('tab', { name: 'Recorded traffic', exact: true }).click();
         await visible(page.getByText('No model traffic yet', { exact: true }));
         assert.deepEqual(errors, []);
 
@@ -100,7 +101,7 @@ export async function checkRegressions(browser, base, outDir) {
         await visible(page.getByRole('button', { name: 'Reload page', exact: true }));
         brokenOverview = false;
         await page.getByRole('button', { name: 'Reload page', exact: true }).click();
-        await visible(page.getByRole('heading', { name: 'Configure your client' }));
+        await visible(page.getByRole('heading', { name: 'Choose your client' }));
         for (const width of [320, 768, 769, 1024]) {
           await page.setViewportSize({ width, height: 900 });
           await page.waitForFunction((mobile) => Boolean(document.querySelector('.bottom-navigation')) === mobile, width <= 768);

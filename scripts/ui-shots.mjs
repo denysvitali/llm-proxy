@@ -449,6 +449,9 @@ async function capture(outDir, base, shots, opts) {
       await page.getByRole('heading', { level: 1 }).waitFor({ timeout: 15000 });
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(700);
+      if (shot.route.id === 'models') {
+        await page.getByText('Loading model catalog…', { exact: true }).waitFor({ state: 'hidden', timeout: 15000 });
+      }
 
       if (shot.action === 'scrollBottom') {
         await page.evaluate(() => {
@@ -462,6 +465,9 @@ async function capture(outDir, base, shots, opts) {
       }
 
       if (shot.action === 'drawer') {
+        if (shot.route.id === 'models') {
+          await page.getByRole('tab', { name: 'Recorded traffic', exact: true }).click();
+        }
         const trigger = page.locator(shot.trigger).first();
         const n = await page.locator(shot.trigger).count();
         if (n === 0) {

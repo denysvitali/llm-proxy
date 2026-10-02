@@ -131,9 +131,9 @@ export function Snippet({
 
   return (
     <Box miw={0}>
-      <Stack gap="sm" p="md">
+      <Stack gap="sm" p="lg">
         <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{description}</Text>
-        <Group justify="space-between" gap="sm" wrap="wrap">
+        <Group justify="space-between" gap="sm" wrap="wrap" className="setup-snippet-toolbar">
           <Switch
             size="sm"
             label="Wrap lines"
@@ -143,7 +143,7 @@ export function Snippet({
           />
           <Button
             size="sm"
-            variant={copied ? 'light' : 'default'}
+            variant={copied ? 'light' : 'filled'}
             color={copied ? 'teal' : undefined}
             leftSection={copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
             onClick={() => clipboard.copy(snippet)}

@@ -26,7 +26,7 @@ const backend = (name) => ({
   hasKey: true,
   authConfigured: true,
   catalogOK: true,
-  models: Array.from({ length: 8 }, (_, i) => `${name}/model-${i}`),
+  models: Array.from({ length: 20 }, (_, i) => `${name}/model-${i}`),
 })
 const overview = {
   backends: [backend('alpha'), backend('beta')],
@@ -52,13 +52,14 @@ export async function checkCatalogRegressions(browser, base) {
     const errors = []
     page.on('pageerror', (e) => errors.push(e.message))
     await page.goto(`${base}/models`)
-    await page.getByText('1–6 of 16 available models', { exact: true }).waitFor()
+    await page.getByText('1–18 of 40 available models', { exact: true }).waitFor()
     await page.getByRole('button', { name: 'Next catalog page' }).click()
-    await page.getByText('7–12 of 16 available models', { exact: true }).waitFor()
+    await page.getByText('19–36 of 40 available models', { exact: true }).waitFor()
     await page.getByRole('combobox', { name: 'Filter available models by provider' }).click()
     await page.getByRole('option', { name: 'beta', exact: true }).click()
-    await page.getByText('1–6 of 8 available models', { exact: true }).waitFor()
-    assert.equal(await page.locator('.catalog-model-entry').count(), 6)
+    await page.getByText('1–18 of 20 available models', { exact: true }).waitFor()
+    assert.equal(await page.locator('.catalog-model-entry').count(), 18)
+    await page.getByRole('tab', { name: 'Recorded traffic', exact: true }).click()
     const rows = page.locator('.models-table tbody tr')
     assert.match(await rows.first().innerText(), /0\.0%/, 'recorded zero success must be visible')
     const betaCells = await rows.nth(1).locator('td').allInnerTexts()
@@ -70,11 +71,12 @@ export async function checkCatalogRegressions(browser, base) {
     await page.getByRole('tab', { name: 'History', exact: true }).click()
     await page.getByRole('heading', { name: 'Performance history', exact: true }).waitFor()
     await page.keyboard.press('Escape')
+    await page.getByRole('tab', { name: 'Available models', exact: true }).click()
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.getByText('1–3 of 8 available models', { exact: true }).waitFor()
+    await page.getByText('1–6 of 20 available models', { exact: true }).waitFor()
     await page.getByRole('button', { name: 'Next catalog page' }).click()
-    await page.getByText('4–6 of 8 available models', { exact: true }).waitFor()
-    assert.equal(await page.locator('.catalog-model-entry').count(), 3)
+    await page.getByText('7–12 of 20 available models', { exact: true }).waitFor()
+    assert.equal(await page.locator('.catalog-model-entry').count(), 6)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false)
     await page.goto(`${base}/providers`)
     await page.getByRole('button', { name: 'Inspect alpha', exact: true }).waitFor()

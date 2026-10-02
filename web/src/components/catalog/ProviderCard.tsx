@@ -1,5 +1,5 @@
 import { Badge, Box, Button, Card, Group, Stack, Text, Title } from '@mantine/core'
-import { IconArrowUpRight, IconChevronRight, IconKey, IconPlugConnected, IconUser } from '@tabler/icons-react'
+import { IconChevronRight, IconKey, IconUser } from '@tabler/icons-react'
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { GrokUsage, MiniMaxUsage, ModelStat, OverviewBackend } from '../../api'
 import { fmtInt } from '../../format'
@@ -35,85 +35,64 @@ export default function ProviderCard({
   const hasAccount = ['grok', 'workbuddy', 'codex', 'zcode', 'minimax-code'].includes(backend.name)
   const authenticated = hasAccount ? backend.authConfigured : backend.hasKey
   return (
-    <Card withBorder radius="lg" p={0} className="provider-card catalog-provider-card" miw={0}>
+    <Card withBorder radius="md" p={0} className="provider-card catalog-provider-card" miw={0}>
       <div className="catalog-provider-main">
-        <Group justify="space-between" wrap="nowrap" align="flex-start" mb="md">
-          <Group gap="sm" wrap="nowrap" miw={0}>
-            <span className="catalog-provider-avatar" aria-hidden>
-              {backend.name.slice(0, 2).toUpperCase()}
-            </span>
-            <Box miw={0}>
-              <Title order={3} size="h4" className="catalog-model-name">
-                {backend.name}
-              </Title>
-              <Group gap={4} mt={4}>
-                <IconPlugConnected size={12} aria-hidden />
-                <Text size="xs" c="dimmed">
-                  {backend.enabled ? 'Enabled' : 'Disabled'}
-                </Text>
-              </Group>
-            </Box>
-          </Group>
-          <UptimeBadge uptime={ready ? aggregate.uptime : NaN} requests={ready ? aggregate.requests : NaN} />
+        <Group gap="sm" wrap="nowrap" align="flex-start" className="catalog-provider-identity">
+          <span className="catalog-provider-avatar" aria-hidden>
+            {backend.name.slice(0, 2).toUpperCase()}
+          </span>
+          <Box miw={0}>
+            <Group gap="xs">
+              <Title order={3} size="h4" className="catalog-model-name">{backend.name}</Title>
+              {!backend.enabled && <Badge size="xs" variant="light" color="gray">Disabled</Badge>}
+            </Group>
+            <Text size="xs" c="dimmed" className="catalog-provider-host" mt={3}>{backend.host}</Text>
+            <Text size="xs" c="dimmed" mt={4}>
+              {backend.catalogOK ? `${fmtInt(backend.models?.length ?? 0)} models` : 'Models unavailable'}
+              {routeCount > 0 && ` · ${routeCount} explicit route${routeCount === 1 ? '' : 's'}`}
+            </Text>
+          </Box>
         </Group>
-        <Text size="xs" c="dimmed" className="catalog-provider-host">
-          {backend.host}
-        </Text>
+        <Stack gap={7} align="flex-start" className="catalog-provider-status">
+          <Box><UptimeBadge uptime={ready ? aggregate.uptime : NaN} requests={ready ? aggregate.requests : NaN} /></Box>
+          <StatusDot ok={backend.catalogOK} okLabel="Catalog ready" badLabel="Catalog unavailable" />
+          <Group gap={5} wrap="nowrap" c={authenticated ? 'dimmed' : 'yellow'}>
+            {hasAccount ? <IconUser size={13} aria-hidden /> : <IconKey size={13} aria-hidden />}
+            <Text size="xs">{authenticated ? (hasAccount ? 'Account connected' : 'Key configured') : 'Auth needed'}</Text>
+          </Group>
+        </Stack>
         <div className="catalog-provider-metrics">
           <Metric label="Requests" value={ready ? fmtInt(aggregate.requests) : '—'} />
           <Metric label="Success" value={ready && aggregate.requests > 0 ? pct(aggregate.uptime) : '—'} />
-          <Metric label="Models" value={backend.catalogOK ? fmtInt(backend.models?.length ?? 0) : '—'} />
+          <Metric label="Tokens" value={ready ? fmtInt(tokenTotal) : '—'} />
         </div>
-        <Group justify="space-between" gap="xs">
-          <StatusDot ok={backend.catalogOK} okLabel="Catalog ready" badLabel="Catalog unavailable" />
-          <Badge
-            size="sm"
-            variant="light"
-            color={authenticated ? 'gray' : 'yellow'}
-            leftSection={hasAccount ? <IconUser size={11} /> : <IconKey size={11} />}
-          >
-            {authenticated ? (hasAccount ? 'Account connected' : 'Key configured') : 'Auth needed'}
-          </Badge>
-        </Group>
-        {ready && tokenTotal > 0 && (
-          <Box mt="md">
-            <TokenMixBar segments={segments} height={5} />
-            <Text size="xs" c="dimmed" mt={5}>
-              {fmtInt(tokenTotal)} tokens · {fmtInt(aggregate.toolCalls)} tool calls
-            </Text>
-          </Box>
-        )}
-        {(grokUsage || minimaxUsageQuery) && (
-          <Stack gap="xs" className="catalog-provider-usage" mt="sm">
-            {grokUsage && <GrokUsageCompact usage={grokUsage} />}
-            {minimaxUsageQuery &&
-              (minimaxUsageQuery.data ? (
-                <MiniMaxUsageCompact usage={minimaxUsageQuery.data} />
-              ) : (
-                <Text size="xs" c="dimmed">
-                  {minimaxUsageQuery.isPending ? 'Loading MiniMax account…' : 'Usage unavailable'}
-                </Text>
-              ))}
-          </Stack>
-        )}
-      </div>
-      <Group justify="space-between" className="catalog-provider-footer" gap="xs">
-        <Text size="xs" c="dimmed">
-          {routeCount ? `${routeCount} explicit route${routeCount === 1 ? '' : 's'}` : 'Provider catalog'}
-          <IconArrowUpRight size={12} aria-hidden style={{ verticalAlign: 'middle', marginLeft: 4 }} />
-        </Text>
         <Button
           aria-label={`Inspect ${backend.name}`}
           onClick={onInspect}
           variant="subtle"
+          color="gray"
           size="xs"
           mih={44}
           px="xs"
-          rightSection={<IconChevronRight size={14} />}
+          className="catalog-provider-inspect"
+          rightSection={<IconChevronRight size={16} />}
         >
-          Inspect provider
+          Details
         </Button>
-      </Group>
+      </div>
+      {(grokUsage || minimaxUsageQuery) && (
+        <Stack gap="xs" className="catalog-provider-usage">
+          {grokUsage && <GrokUsageCompact usage={grokUsage} />}
+          {minimaxUsageQuery &&
+            (minimaxUsageQuery.data ? (
+              <MiniMaxUsageCompact usage={minimaxUsageQuery.data} />
+            ) : (
+              <Text size="xs" c="dimmed">
+                {minimaxUsageQuery.isPending ? 'Loading MiniMax account…' : 'Usage unavailable'}
+              </Text>
+            ))}
+        </Stack>
+      )}
     </Card>
   )
 }
@@ -121,12 +100,8 @@ export default function ProviderCard({
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <Box miw={0}>
-      <Text size="xs" c="dimmed">
-        {label}
-      </Text>
-      <Text fw={650} fz={20} mt={2} className="tabular">
-        {value}
-      </Text>
+      <Text size="xs" c="dimmed">{label}</Text>
+      <Text fw={650} size="sm" mt={5} className="tabular">{value}</Text>
     </Box>
   )
 }

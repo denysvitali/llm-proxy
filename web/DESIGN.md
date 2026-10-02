@@ -8,12 +8,18 @@ raise it with the lead rather than silently diverging.
 
 A compact gateway workspace with a persistent slate sidebar, indigo interaction
 accents, and a clear hierarchy from page title to sections to data. Light and
-dark schemes share the same layouts. Cards use quiet borders and restrained
+dark schemes share the same layouts. Cards use flat surfaces, quiet borders, and restrained
 rounding; charts and tables keep the emphasis on readable values.
 
-Desktop navigation is 232px wide. Mobile uses bottom navigation and shows the
+Desktop navigation is a compact 216px rail with single-line links. The app bar is
+60px high; a small client-setup utility sits at the foot of the rail. Mobile uses bottom navigation and shows the
 current page below the brand. Keep the first screen useful: show key statistics,
 primary controls, and the start of the main content before secondary details.
+
+Page headers end with a hairline and keep actions alongside the title on desktop.
+Metrics use neutral icons, strong values, and secondary explanatory text; reserve
+status color for actual operational states. Initial route loads use content-shaped
+skeletons so the shell and the page hierarchy stay stable.
 
 Prefer structure over decoration: group related controls, disclose dense detail,
 and preserve complete model IDs. Gradients are limited to the small brand mark.
@@ -25,12 +31,12 @@ Defined in `web/src/index.css` per color-scheme, and mirrored as Mantine ramps i
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--canvas` | `#f5f7fb` | `#0c111d` | `body` background |
+| `--canvas` | `#f6f7fa` | `#0f1117` | `body` background |
 | `--card` | `#ffffff` | `#14161a` | Card/Paper surface — **the exact value charts are validated against** |
-| `--sunken` | `#eff2f8` | `#1a2539` | Code blocks, inset wells |
-| `--hairline` | `#e2e7f0` | `#26324a` | All borders/dividers |
-| `--segmented-track` | `#edf0f7` | `#1a2539` | Segmented control track |
-| `--segmented-thumb` | `#ffffff` | `#303b53` | Segmented control selected |
+| `--sunken` | `#f0f2f6` | `#1c202b` | Code blocks, inset wells |
+| `--hairline` | `#e3e6ed` | `#2b303d` | All borders/dividers |
+| `--segmented-track` | `#edf0f7` | `#1c202b` | Segmented control track |
+| `--segmented-thumb` | `#ffffff` | `#303644` | Segmented control selected |
 | `--chart-grid-color` | `rgba(37,51,78,.08)` | `rgba(196,210,236,.10)` | Chart gridlines |
 | `--chart-cursor-fill` | `rgba(37,51,78,.04)` | `rgba(196,210,236,.06)` | Chart crosshair band |
 
@@ -89,7 +95,7 @@ Never use a chart status color for a UI badge, or vice versa.
 
 - UI/body: Inter with system fallbacks; monospace for code and identifiers.
 - Use tabular figures for numbers compared in columns (`tabular` or `stat-value`).
-- Scale: `xs 12 · sm 13 · md 14 · lg 16`; page titles are 32px on desktop
+- Scale: `xs 12 · sm 13 · md 14 · lg 16`; page titles are 34px on desktop
   and 28px on mobile. Section titles remain 15–18px.
 - Keep paragraph line lengths readable. Do not reduce text sizes to fit a layout;
   let controls wrap or switch to a single column.
@@ -97,9 +103,9 @@ Never use a chart status color for a UI badge, or vice versa.
 ## 4. Spacing / radius / elevation
 
 - Mantine spacing: `xs 6 · sm 10 · md 16 · lg 24 · xl 32`.
-- Radius: `xs 2 · sm 4 · md 8 · lg 14 · xl 18`; default controls use `md`,
+- Radius: `xs 2 · sm 4 · md 8 · lg 10 · xl 14`; default controls use `md`,
   cards use `lg`. Badges can be rounded. Avoid nested oversized cards.
-- Borders use `var(--hairline)`. The shared card shadow is subtle; do not add
+- Borders use `var(--hairline)`. Cards are flat, with no shadow; do not add
   independent shadows or animated lifts to static data cards.
 
 ## 5. Chart rules (hard rules)

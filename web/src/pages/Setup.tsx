@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import {
   Alert, Anchor, Badge, Box, Button, Card, Code, Group,
-  Skeleton, Stack, Tabs, Text, ThemeIcon, Title,
+  Skeleton, Stack, Tabs, Text, Title,
 } from '@mantine/core'
 import {
   IconArrowUpRight, IconCheck, IconHeartbeat, IconInfoCircle,
-  IconPlugConnected, IconShieldLock, IconTerminal2,
+  IconPlugConnected, IconShieldLock,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -35,7 +35,7 @@ export default function SetupPage() {
   return (
     <Fade pending={q.isPending}>
       <Stack gap="lg" miw={0}>
-        <PageHeader title="Setup" subtitle="Connect your favorite tools to one model gateway." />
+        <PageHeader title="Setup" subtitle="Copy a client configuration, add your proxy key, and connect." />
         {q.isError && (
           <Alert color="red" variant="light" icon={<IconInfoCircle size={16} />} title={ov ? 'Setup details could not be refreshed' : 'Setup details unavailable'}>
             <Stack gap="sm">
@@ -54,20 +54,12 @@ export default function SetupPage() {
         )}
         {ov && (
           <>
-            <Box component="ol" className="setup-steps" aria-label="Connection steps">
-              <li><span>01</span><div><Text fw={600} size="sm">Choose a client</Text><Text size="xs" c="dimmed">Your tool, your workflow</Text></div></li>
-              <li><span>02</span><div><Text fw={600} size="sm">Copy configuration</Text><Text size="xs" c="dimmed">Replace the key and model</Text></div></li>
-              <li><span>03</span><div><Text fw={600} size="sm">Connect and go</Text><Text size="xs" c="dimmed">Launch from your terminal</Text></div></li>
-            </Box>
             <div className="setup-layout">
               <Stack gap="lg" miw={0}>
                 <Card className="setup-client-card" p={0}>
-                  <Box p="lg">
-                    <Group gap="sm" mb="xs">
-                      <ThemeIcon variant="light" size={32}><IconTerminal2 size={18} /></ThemeIcon>
-                      <Title order={2} size="h3">Configure your client</Title>
-                    </Group>
-                    <Text size="sm" c="dimmed">Choose your client, then copy the configuration below.</Text>
+                  <Box className="setup-section-heading">
+                    <Text size="xs" c="dimmed" fw={600} mb={5}>01 / CONFIGURE</Text>
+                    <Title order={2} size="h3">Choose your client</Title>
                   </Box>
                   <Tabs defaultValue="claude" keepMounted={false}>
                     <Tabs.List px="md" aria-label="Coding agent" className="setup-client-tabs">
@@ -85,7 +77,8 @@ export default function SetupPage() {
                       <Snippet title="Other / curl" description="Replace the placeholders, then run from a terminal that can reach this address." snippet={curlSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
                     </Tabs.Panel>
                   </Tabs>
-                  <Box className="setup-key-note" p="md">
+                  <Box className="setup-key-note" p="lg">
+                    <Text size="xs" c="dimmed" fw={600} mb="sm">02 / AUTHENTICATE</Text>
                     <Group gap="xs" mb={6} wrap="nowrap"><IconShieldLock size={16} aria-hidden /><Text size="sm" fw={600}>{ov.authEnabled ? 'Use your proxy API key' : 'No proxy key required'}</Text></Group>
                     <Text size="xs" c="dimmed" lh={1.6}>{ov.authEnabled
                       ? 'Replace <key> with an llx_ proxy key. For Codex CLI, set LLM_PROXY_API_KEY in your terminal before launching. Manage keys with ./llm-proxy keys.'
@@ -113,8 +106,8 @@ export default function SetupPage() {
 
 function GatewayDetails({ overview: ov }: { overview: Overview }) {
   return (
-    <Card p="lg">
-      <Group gap="xs" mb="md"><IconPlugConnected size={18} aria-hidden /><Title order={2} size="h3">Your gateway</Title></Group>
+    <Card p="lg" className="setup-gateway-card">
+      <Title order={2} size="h3" mb="md">Gateway details</Title>
       <Stack gap="md">
         <div><Text size="xs" c="dimmed" mb={5}>Listen address</Text><Code className="setup-identifier">{ov.listen}</Code></div>
         <div><Text size="xs" c="dimmed" mb={5}>Authentication</Text><Badge variant="light" color={ov.authEnabled ? 'teal' : 'gray'} tt="none">{ov.authEnabled ? 'Proxy key required' : 'Disabled'}</Badge></div>
@@ -169,9 +162,10 @@ function ConnectionCheck() {
   }
   return (
     <Card className="setup-connection-check" p="lg">
+      <Text size="xs" c="dimmed" fw={600} mb="sm">03 / VERIFY</Text>
       <Group justify="space-between" gap="md">
         <Box style={{ flex: '1 1 15rem' }}>
-          <Group gap="xs" mb={5}><IconHeartbeat size={18} aria-hidden /><Title order={2} size="h3">Ready to connect?</Title></Group>
+          <Group gap="xs" mb={5}><IconHeartbeat size={18} aria-hidden /><Title order={2} size="h3">Check your connection</Title></Group>
           <Text size="sm" c="dimmed">Check gateway reachability from this browser. Then launch your client to verify its key and model.</Text>
         </Box>
         <Button variant="light" loading={testing} onClick={() => void checkConnection()} leftSection={<IconPlugConnected size={16} />}>Check connection</Button>

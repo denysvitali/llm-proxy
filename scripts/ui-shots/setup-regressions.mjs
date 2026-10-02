@@ -31,7 +31,7 @@ export async function checkSetupRegressions(browser, base, overview, series) {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}/setup`);
-    await page.getByRole('heading', { name: 'Configure your client' }).waitFor();
+    await page.getByRole('heading', { name: 'Choose your client' }).waitFor();
     assert.deepEqual(healthRequests, [], 'health check must require an explicit click');
     await page.getByRole('button', { name: 'Copy Claude Code snippet' }).click();
     assert.equal(await page.evaluate(() => window.copiedSnippet), overview.claudeSnippet);
