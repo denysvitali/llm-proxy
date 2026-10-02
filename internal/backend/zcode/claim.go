@@ -77,7 +77,7 @@ func (m *Manager) ClaimPlan(ctx context.Context, planID string) (ClaimOutcome, e
 	req.Header.Set("X-Client-Timezone", zcodeClientTimezone())
 	req.Header.Set("X-Os-Category", zcodeOSCategory())
 	req.Header.Set("X-Os-Version", zcodeOSVersion)
-	req.Header.Set("X-Device-Mid", deviceMID(token))
+	req.Header.Set("X-Device-Mid", m.DeviceMIDForToken(token))
 	req.Header.Set(aliyunCaptchaHeader, captcha)
 	req.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
 
@@ -154,7 +154,7 @@ func (m *Manager) PreviewPlans(ctx context.Context) ([]PreviewPlan, error) {
 	req.Header.Set("X-Client-Timezone", zcodeClientTimezone())
 	req.Header.Set("X-Os-Category", zcodeOSCategory())
 	req.Header.Set("X-Os-Version", zcodeOSVersion)
-	req.Header.Set("X-Device-Mid", deviceMID(token))
+	req.Header.Set("X-Device-Mid", m.DeviceMIDForToken(token))
 
 	resp, err := m.HTTPClient.Do(req)
 	if err != nil {

@@ -55,6 +55,7 @@ type captchaTaker interface {
 type Credentials struct {
 	AccessToken string `json:"access_token"`
 	ExpiresAt   int64  `json:"expires_at,omitempty"`
+	DeviceMID   string `json:"device_mid,omitempty"`
 }
 
 // Store persists a ZCode session with owner-only permissions.
@@ -66,6 +67,10 @@ type Store struct {
 func (s *Store) Load() (*Credentials, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadUnlocked()
+}
+
+func (s *Store) loadUnlocked() (*Credentials, error) {
 	b, err := os.ReadFile(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -86,10 +91,16 @@ func (s *Store) Save(credentials *Credentials) error {
 	if credentials == nil || strings.TrimSpace(credentials.AccessToken) == "" {
 		return errors.New("cannot save empty ZCode credentials")
 	}
+	previous, err := s.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	saved := *credentials
+	saved.DeviceMID = persistentDeviceMID(previous, &saved)
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(credentials, "", "  ")
+	b, err := json.MarshalIndent(&saved, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -183,6 +194,54 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 		return "", errors.New("ZCode session expired; sign in again from the dashboard")
 	}
 	return credentials.AccessToken, nil
+}
+
+// DeviceMIDForToken returns the persistent device identity associated with the
+// current stored session. Legacy credential files fall back to the original
+// token-derived identity until the next successful sign-in stores it.
+func (m *Manager) DeviceMIDForToken(token string) string {
+	token = strings.TrimSpace(token)
+	if m != nil && m.Store != nil {
+		credentials, err := m.Store.Load()
+		if err == nil && credentials != nil &&
+			strings.TrimSpace(credentials.AccessToken) == token && isUUID(credentials.DeviceMID) {
+			return credentials.DeviceMID
+		}
+	}
+	return deviceMID(token)
+}
+
+func persistentDeviceMID(previous, next *Credentials) string {
+	if previous != nil {
+		if isUUID(previous.DeviceMID) {
+			return previous.DeviceMID
+		}
+		if token := strings.TrimSpace(previous.AccessToken); token != "" {
+			return deviceMID(token)
+		}
+	}
+	if next != nil {
+		if isUUID(next.DeviceMID) {
+			return next.DeviceMID
+		}
+		return deviceMID(next.AccessToken)
+	}
+	return ""
+}
+
+func isUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	for i, r := range value {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // SetCaptchaVerifyParam stores a browser-generated Aliyun verification

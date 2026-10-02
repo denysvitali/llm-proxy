@@ -35,7 +35,7 @@ const (
 	// zcodeAppVersion identifies the current open-source ZCode client build.
 	// Keep this in sync with ZCode's package.json because the plan gateway uses
 	// it for client capability and billing responses.
-	zcodeAppVersion = "3.14.0"
+	zcodeAppVersion = "3.14.3"
 	zcodeLanguage   = "en-US"
 
 	// unusualActivityCooldown is how long model requests pause after the plan
@@ -181,7 +181,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		// before reaching this same answer.
 		return nil, backend.Terminal(fmt.Errorf("ZCode plan gateway rejected the session for unusual activity (code 3012); requests are paused until %s to let the block clear", until.UTC().Format(time.RFC3339)))
 	}
-	identity := requestIdentity(token, req.Header)
+	deviceID := deviceMID(token)
+	if resolver, ok := c.Tokens.(interface{ DeviceMIDForToken(string) string }); ok {
+		deviceID = resolver.DeviceMIDForToken(token)
+	}
+	identity := requestIdentityWithDeviceMID(token, req.Header, deviceID)
 	requestBody := transformStartPlanRequest(req.RawBody, identity)
 	buildRequest := func(param string) (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(requestBody))
@@ -554,14 +558,19 @@ func normalizedAttribution(value string, prefixes []string, fallback string) str
 	return value
 }
 
-// requestIdentity derives the device/session attribution for one request. The
-// stable device ID is scoped to the configured ZCode token. If the client
-// supplies session or query attribution, it is normalized and then one-way
-// derived into a UUID so ZCode can retain affinity without learning the
-// client's identifiers. Missing attribution stays missing, matching the
-// official model-request builder instead of creating synthetic context.
+// requestIdentity derives the device/session attribution using the legacy
+// token-based device ID. The manager-backed client supplies its persisted
+// device ID to requestIdentityWithDeviceMID. Client session and query values
+// are normalized and then one-way derived into UUIDs so ZCode can retain
+// affinity without learning the client's identifiers.
 func requestIdentity(token string, header http.Header) zcodeIdentity {
-	deviceMid := deviceMID(token)
+	return requestIdentityWithDeviceMID(token, header, deviceMID(token))
+}
+
+func requestIdentityWithDeviceMID(token string, header http.Header, deviceMid string) zcodeIdentity {
+	if !isUUID(deviceMid) {
+		deviceMid = deviceMID(token)
+	}
 	rawSession := strings.TrimSpace(header.Get("X-Session-Id"))
 	clientSession := normalizedAttribution(rawSession, zcodeSessionPrefixes, "")
 	sessionType := normalizeSessionType(header.Get("X-ZCode-Session-Type"))
@@ -610,9 +619,9 @@ func randomUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", raw[0:4], raw[4:6], raw[6:8], raw[8:10], raw[10:16])
 }
 
-// deviceMID returns a stable, non-secret UUID-shaped identifier for a ZCode
-// session. It prevents unrelated inbound client identities from making a
-// single proxy process appear as a constantly changing device.
+// deviceMID returns the legacy UUID-shaped identifier derived from a ZCode
+// token. Store.Save persists this value so later sign-ins retain the same
+// device identity.
 func deviceMID(token string) string {
 	return derivedUUID("llm-proxy/zcode/device/" + strings.TrimSpace(token))
 }

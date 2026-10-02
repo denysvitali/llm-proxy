@@ -11,6 +11,7 @@ import (
 
 func TestPlanUsageSendsBalanceZCodeIdentity(t *testing.T) {
 	t.Helper()
+	const previousToken = "previous-zcode-jwt"
 	const token = "test-zcode-jwt"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/zcode-plan/billing/balance" {
@@ -27,7 +28,7 @@ func TestPlanUsageSendsBalanceZCodeIdentity(t *testing.T) {
 			"X-Title":             "Z Code@electron",
 			"HTTP-Referer":        "https://zcode.z.ai",
 			"X-Platform":          runtime.GOOS + "-" + zcodeArch(),
-			"X-Device-Mid":        deviceMID(token),
+			"X-Device-Mid":        deviceMID(previousToken),
 		}
 		for name, want := range wantHeaders {
 			if got := r.Header.Get(name); got != want {
@@ -45,6 +46,9 @@ func TestPlanUsageSendsBalanceZCodeIdentity(t *testing.T) {
 	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
 	manager.Issuer = upstream.URL
 	manager.HTTPClient = upstream.Client()
+	if err := manager.Store.Save(&Credentials{AccessToken: previousToken}); err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.Store.Save(&Credentials{AccessToken: token}); err != nil {
 		t.Fatal(err)
 	}

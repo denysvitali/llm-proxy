@@ -38,6 +38,31 @@ func TestStoreSaveLoadUsesPrivateFile(t *testing.T) {
 	}
 }
 
+func TestStoreSavePreservesDeviceMIDAcrossSignIns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "zcode-auth.json")
+	store := &Store{Path: path}
+	const previousToken = "previous-session-token"
+	const currentToken = "current-session-token"
+	if err := os.WriteFile(path, []byte(`{"access_token":"`+previousToken+`"}`), 0600); err != nil {
+		t.Fatalf("write legacy credentials: %v", err)
+	}
+	if err := store.Save(&Credentials{AccessToken: currentToken}); err != nil {
+		t.Fatalf("Save() replacement session error = %v", err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	wantMID := deviceMID(previousToken)
+	if loaded == nil || loaded.AccessToken != currentToken || loaded.DeviceMID != wantMID {
+		t.Fatalf("credentials = %#v, want current token with prior stable device ID %q", loaded, wantMID)
+	}
+	manager := &Manager{Store: store}
+	if got := manager.DeviceMIDForToken(currentToken); got != wantMID {
+		t.Fatalf("DeviceMIDForToken() = %q, want preserved %q", got, wantMID)
+	}
+}
+
 func TestLoginDevicePollsAndStoresOnlyZCodeToken(t *testing.T) {
 	const sessionToken = "eyJhbGciOiJub25lIn0.eyJleHAiOjQwMDAwMDAwMDB9.signature"
 	var pollCount atomic.Int32

@@ -18,6 +18,7 @@ import (
 
 func TestClaimPlanSendsCurrentZCodeIdentity(t *testing.T) {
 	t.Helper()
+	const previousToken = "previous-zcode-jwt"
 	const token = "test-zcode-jwt"
 	const proof = "fresh-captcha-proof"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +33,7 @@ func TestClaimPlanSendsCurrentZCodeIdentity(t *testing.T) {
 			"X-Title":                 "Z Code@electron",
 			"HTTP-Referer":            "https://zcode.z.ai",
 			"X-Platform":              runtime.GOOS + "-" + zcodeArch(),
-			"X-Device-Mid":            deviceMID(token),
+			"X-Device-Mid":            deviceMID(previousToken),
 			aliyunCaptchaHeader:       proof,
 			aliyunCaptchaRegionHeader: aliyunCaptchaRegion,
 		}
@@ -59,6 +60,9 @@ func TestClaimPlanSendsCurrentZCodeIdentity(t *testing.T) {
 	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
 	manager.Issuer = upstream.URL
 	manager.HTTPClient = upstream.Client()
+	if err := manager.Store.Save(&Credentials{AccessToken: previousToken}); err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.Store.Save(&Credentials{AccessToken: token}); err != nil {
 		t.Fatal(err)
 	}

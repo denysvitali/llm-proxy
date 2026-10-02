@@ -189,7 +189,7 @@ func (m *Manager) newPlanBillingRequest(ctx context.Context, path, token string)
 	req.Header.Set("X-Client-Timezone", zcodeClientTimezone())
 	req.Header.Set("X-Os-Category", zcodeOSCategory())
 	req.Header.Set("X-Os-Version", zcodeOSVersion)
-	req.Header.Set("X-Device-Mid", deviceMID(token))
+	req.Header.Set("X-Device-Mid", m.DeviceMIDForToken(token))
 	return req, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -493,6 +494,8 @@ func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 	// identifiers in metadata.user_id; the wire body must replace them with
 	// the official device identity shape instead of forwarding them.
 	const claudeCodeBody = `{"model":"glm-5.3-flash","metadata":{"user_id":"user_5f3a_account_6c9f1d2e-account-uuid_session_1b2c3d4e-session-uuid"},"messages":[{"role":"user","content":"hello"}]}`
+	const previousToken = "previous-session-token"
+	const currentToken = "secret"
 	var upstreamBody []byte
 	var upstreamSessionHeader string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -502,7 +505,15 @@ func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := New(server.URL, "secret")
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	if err := manager.Store.Save(&Credentials{AccessToken: previousToken}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Store.Save(&Credentials{AccessToken: currentToken}); err != nil {
+		t.Fatal(err)
+	}
+	client := New(server.URL, "")
+	client.Tokens = manager
 	requestHeaders := http.Header{
 		"X-Session-Id": []string{"sess_proxy-session-1"},
 	}
@@ -524,7 +535,7 @@ func TestSendReplacesClientMetadataWithDeviceIdentity(t *testing.T) {
 	if !ok || len(metadata) != 1 {
 		t.Fatalf("metadata = %#v, want exactly the user_id key", sent["metadata"])
 	}
-	wantIdentity := requestIdentity("secret", requestHeaders)
+	wantIdentity := requestIdentityWithDeviceMID(currentToken, requestHeaders, deviceMID(previousToken))
 	wantUserID := zcodeMetadataUserID(wantIdentity)
 	if got := metadata["user_id"]; got != wantUserID {
 		t.Errorf("metadata.user_id = %v, want %v", got, wantUserID)
