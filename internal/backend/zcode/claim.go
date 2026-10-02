@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -228,14 +229,17 @@ func (m *Manager) PreviewPlans(ctx context.Context) ([]PreviewPlan, error) {
 func numericCode(code any) int {
 	switch value := code.(type) {
 	case float64:
-		return int(value)
+		parsed := int(value)
+		if float64(parsed) == value {
+			return parsed
+		}
 	case string:
-		var parsed int
-		_, _ = fmt.Sscanf(value, "%d", &parsed)
-		return parsed
-	default:
-		return 0
+		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		}
 	}
+	// Missing or malformed result codes must never imply success.
+	return -1
 }
 
 func classifyClaimCode(code, status int) string {
@@ -254,6 +258,8 @@ func classifyClaimCode(code, status int) string {
 		return "invalid_request"
 	case 3007:
 		return "captcha"
+	case 3012:
+		return "risk_blocked"
 	case 401:
 		return "login_required"
 	}

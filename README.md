@@ -233,6 +233,13 @@ their own account and session identifiers) is rewritten to the ZCode device
 identity, so client identifiers never reach the plan gateway.
 The browser verification UI remains available only for the optional legacy plan
 claim endpoint; it is not part of model authentication.
+`GET /api/zcode/offers` lists available offers; `POST /api/zcode/claim`
+accepts a JSON body with `plan_id` and sends one upstream claim attempt.
+The claim response reports `ok: true` only for a successful HTTP response
+with an explicit zero result code. Code 3012 is reported as
+`failure_kind: "risk_blocked"` with HTTP 409; it is not a CAPTCHA failure
+and the claim is not retried automatically. Confirm the resulting entitlement
+with `GET /api/zcode/usage` before treating an offer as activated.
 Client-supplied session correlation values are one-way derived into opaque
 proxy UUIDs before they are used in the ZCode headers or metadata, preserving
 affinity without forwarding the client's identifier. The inbound client system
@@ -248,8 +255,9 @@ account rather than the proof — re-verifying does not lift it — so the proxy
 relays the first rejection verbatim and then pauses `zcode` requests instead
 of hammering the gateway and burning browser proofs. The pause starts at
 15 minutes and doubles with each consecutive 3012 (up to 6 hours, reset by
-the next successful request), because observed blocks outlast a fixed
-15-minute window and repeated probing only deepens them. During the pause
+the next successful request). This is the proxy's local model-request backoff
+policy, not a documented upstream cooldown or a guarantee that the block
+will clear after that time; manual plan claims do not use this backoff. During the pause
 requests fail fast with an explanatory error and fall back to other backends
 when `fallbacks` are configured.
 

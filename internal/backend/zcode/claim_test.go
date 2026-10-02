@@ -184,3 +184,56 @@ func TestPreviewPlansSurfacesGatewayRejection(t *testing.T) {
 		t.Fatalf("PreviewPlans() error = %v, want gateway rejection surfaced", err)
 	}
 }
+
+func TestClaimPlanDoesNotReportRejectedOrMalformedResponsesAsSuccess(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		status   int
+		wantOK   bool
+		wantKind string
+	}{
+		{"numeric success", `{"code":0}`, http.StatusOK, true, ""},
+		{"string success", `{"code":"0"}`, http.StatusOK, true, ""},
+		{"missing code", `{}`, http.StatusOK, false, "unknown"},
+		{"null code", `{"code":null}`, http.StatusOK, false, "unknown"},
+		{"invalid string", `{"code":"invalid"}`, http.StatusOK, false, "unknown"},
+		{"trailing text", `{"code":"0invalid"}`, http.StatusOK, false, "unknown"},
+		{"fractional code", `{"code":0.5}`, http.StatusOK, false, "unknown"},
+		{"object code", `{"code":{}}`, http.StatusOK, false, "unknown"},
+		{"risk block", `{"code":3012,"msg":"request has been blocked due to unusual activity."}`, http.StatusForbidden, false, "risk_blocked"},
+		{"risk block string", `{"code":"3012","msg":"request has been blocked due to unusual activity."}`, http.StatusOK, false, "risk_blocked"},
+		{"HTTP rejection", `{"code":0}`, http.StatusForbidden, false, "http_error"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer upstream.Close()
+			manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+			manager.CaptchaSolverURL = ""
+			manager.Issuer = upstream.URL
+			manager.HTTPClient = upstream.Client()
+			if err := manager.Store.Save(&Credentials{AccessToken: "test-zcode-jwt"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.SetCaptchaVerifyParam("test-proof"); err != nil {
+				t.Fatal(err)
+			}
+			outcome, err := manager.ClaimPlan(context.Background(), "current-plan")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome.OK != tt.wantOK || outcome.FailureKind != tt.wantKind {
+				t.Fatalf("outcome = %+v, want OK=%v, kind=%q", outcome, tt.wantOK, tt.wantKind)
+			}
+			if calls != 1 {
+				t.Fatalf("upstream calls = %d, want exactly one", calls)
+			}
+		})
+	}
+}
