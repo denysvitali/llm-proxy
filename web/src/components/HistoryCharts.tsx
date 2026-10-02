@@ -225,11 +225,8 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
     })
     return row
   }), [data, series])
-  // Direct-label the right end of each line when there are 2-4 series and every
-  // series has at least one real sample (DESIGN.md §5). Recharts' label content
-  // fn receives an `index` that aligns 1:1 with the plotData rows (label entries
-  // are built for every point, nulls coerced not filtered), so match on the
-  // plotData index of each series' last non-null sample. Fallback: the legend.
+  // Keep latest sampled values beside their stable line keys. In-plot labels
+  // collide when series converge and consume most of a narrow chart's width.
   const lastIndexBySeries = useMemo(() => {
     const map = new Map<string, number>()
     series.forEach((item) => {
@@ -242,7 +239,6 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
     })
     return map
   }, [data, series])
-  const canDirectLabel = series.length >= 2 && series.length <= 4 && series.every((item) => lastIndexBySeries.has(item.name))
   const hasData = plotData.some((point) => series.some((item) => typeof point[item.name] === 'number'))
   const formatter = axisFormatter(series[0]?.formatter ?? fmtInt)
   // Single series reads as an area with a gradient wash; multi-series keeps
@@ -289,6 +285,21 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
     <Box miw={0} role="group" aria-labelledby={id} aria-describedby={`${id}-description`}>
       <Text id={id} size="sm" fw={650} lh={1.25}>{title}</Text>
       <Text id={`${id}-description`} size="xs" c="dimmed" mt={1} mb={10} lh={1.3}>{description}</Text>
+      {hasData && (
+        <Group gap="md" mb="sm" aria-label="Latest sampled values and chart legend">
+          {coloredSeries.map((item) => {
+            const index = lastIndexBySeries.get(item.name)
+            const point = index === undefined ? undefined : data[index]
+            const value = point ? sampleValue(point[item.name], item.formatter) : undefined
+            return <Group key={item.name} gap={6} wrap="nowrap" miw={0} title={point ? `Latest sample: ${formatTooltipTime(String(point.time))}` : 'No sample'}>
+              <LineKey item={item} />
+              <Text size="xs" c="dimmed">{item.label}</Text>
+              <Text size="xs" fw={600} className="tabular">{value === undefined ? '—' : item.formatter(value)}</Text>
+              <Text size="xs" c="dimmed">latest</Text>
+            </Group>
+          })}
+        </Group>
+      )}
       {!hasData ? (
         <Box h={height} style={{ display: 'grid', placeItems: 'center' }}>
           <Text size="sm" c="dimmed" ta="center">No recorded samples in this range</Text>
@@ -314,43 +325,12 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
               lineProps={(item) => ({
                 strokeLinecap: 'round',
                 strokeLinejoin: 'round',
-                ...(canDirectLabel
-                  ? { label: { content: (props: {
-                        x?: string | number
-                        y?: string | number
-                        value?: string | number | boolean | null
-                        index?: number
-                      }) =>
-                      props.index === lastIndexBySeries.get(item.name)
-                        ? (
-                          <text
-                            x={Number(props.x) + 10}
-                            y={Number(props.y) + 4}
-                            textAnchor="start"
-                            fontSize={13}
-                            fill={item.color}
-                            style={{ fontVariantNumeric: 'tabular-nums' }}
-                          >
-                            {`${item.label ?? item.name} · ${(item as ColoredSeries).formatter(Number(props.value))}`}
-                          </text>
-                        )
-                        : null } }
-                  : {}),
+                strokeDasharray: (item as ColoredSeries).strokeDasharray,
               })}
               dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--card)' }}
               activeDotProps={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }}
-              lineChartProps={{ margin: { right: 120 } }}
+              lineChartProps={{ margin: { right: 8 } }}
             />
-          )}
-          {!canDirectLabel && coloredSeries.length > 1 && (
-            <Group gap="xs" justify="center" mt={4} aria-label="Chart legend">
-              {coloredSeries.map((item) => (
-                <Group key={item.name} gap={6} wrap="nowrap" miw={0}>
-                  <LineKey item={item} />
-                  <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{item.label}</Text>
-                </Group>
-              ))}
-            </Group>
           )}
           <ChartDataTable title={title} data={data} series={series} />
         </>

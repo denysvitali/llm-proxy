@@ -10,6 +10,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      '/healthz': apiTarget,
       '/stats': apiTarget,
       '/api': { target: apiTarget, ws: true },
       '/v1/models': apiTarget,

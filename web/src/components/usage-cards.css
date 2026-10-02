@@ -1,0 +1,7 @@
+.usage-card { min-width: 0; overflow-wrap: anywhere; }
+.usage-card-icon { display: grid; place-items: center; flex-shrink: 0; width: 34px; height: 34px; border: 1px solid var(--hairline); border-radius: var(--mantine-radius-md); background: var(--sunken); color: var(--mantine-color-dimmed); }
+.usage-card-updated { border-top: 1px solid var(--hairline); padding-top: 9px; font-variant-numeric: tabular-nums; }
+.usage-card-balance { padding: 12px; background: var(--sunken); border-radius: var(--mantine-radius-md); }
+.usage-checkin-day { min-width: 0; border: 1px solid var(--hairline); border-radius: var(--mantine-radius-md); }
+.usage-checkin-day[data-today="true"] { border-color: var(--mantine-color-brand-light-color); background: var(--mantine-color-brand-light); }
+.usage-checkin-day[data-claimed="true"] { background: var(--mantine-color-teal-light); }

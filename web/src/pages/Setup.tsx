@@ -1,317 +1,108 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import {
-  Alert,
-  Anchor,
-  Badge,
-  Box,
-  Button,
-  Card,
-  Code,
-  Divider,
-  Group,
-  Loader,
-  SimpleGrid,
-  Stack,
-  Switch,
-  Tabs,
-  Text,
+  Alert, Anchor, Badge, Box, Button, Card, Code, Group,
+  Skeleton, Stack, Tabs, Text, ThemeIcon, Title,
 } from '@mantine/core'
-import { useClipboard } from '@mantine/hooks'
 import {
-  IconCheck,
-  IconCopy,
-  IconExclamationCircle,
-  IconInfoCircle,
-  IconTerminal2,
+  IconArrowUpRight, IconCheck, IconHeartbeat, IconInfoCircle,
+  IconPlugConnected, IconShieldLock, IconTerminal2,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchOverview } from '../api'
+import { Link } from 'react-router-dom'
+import { fetchOverview, type Overview } from '../api'
 import { Fade } from '../App'
 import { PageHeader } from '../components/PageHeader'
-import { PageSection } from '../components/PageSection'
+import { Snippet } from '../components/setup/Snippet'
+import './setup.css'
 
-// ─── Syntax highlighting ────────────────────────────────────────────────────
-
-type TokenType = 'comment' | 'string' | 'keyword' | 'flag' | 'variable' | 'number' | 'key' | 'section' | 'boolean' | 'plain'
-
-interface Token {
-  type: TokenType
-  value: string
-}
-
-const tokenColors: Record<TokenType, string> = {
-  comment: 'var(--mantine-color-dimmed)',
-  string: 'var(--mantine-color-teal-6)',
-  keyword: 'var(--mantine-color-blue-6)',
-  flag: 'var(--mantine-color-cyan-6)',
-  variable: 'var(--mantine-color-orange-6)',
-  number: 'var(--mantine-color-violet-6)',
-  key: 'var(--mantine-color-blue-6)',
-  section: 'var(--mantine-color-blue-7)',
-  boolean: 'var(--mantine-color-violet-6)',
-  plain: 'inherit',
-}
-
-function tokenize(code: string, language: 'shell' | 'toml'): Token[] {
-  if (language === 'toml') return tokenizeToml(code)
-  return tokenizeShell(code)
-}
-
-function tokenizeShell(code: string): Token[] {
-  const tokens: Token[] = []
-  const regex = /(#.*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(--?[\w-]+)|(\$\{?\w+\}?)|(\b\d+\b)/g
-  let pos = 0
-  let match
-
-  while ((match = regex.exec(code)) !== null) {
-    if (match.index > pos) {
-      tokens.push({ type: 'plain', value: code.slice(pos, match.index) })
-    }
-    const type = match[1] ? 'comment'
-      : match[2] ? 'string'
-      : match[3] ? 'flag'
-      : match[4] ? 'variable'
-      : 'number'
-    tokens.push({ type, value: match[0] })
-    pos = match.index + match[0].length
-  }
-
-  if (pos < code.length) {
-    tokens.push({ type: 'plain', value: code.slice(pos) })
-  }
-
-  return tokens
-}
-
-function tokenizeToml(code: string): Token[] {
-  const tokens: Token[] = []
-  const lines = code.split('\n')
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trimStart()
-    const indent = line.slice(0, line.length - trimmed.length)
-
-    if (indent) tokens.push({ type: 'plain', value: indent })
-
-    if (trimmed.startsWith('#')) {
-      tokens.push({ type: 'comment', value: trimmed })
-    } else if (trimmed.startsWith('[')) {
-      tokens.push({ type: 'section', value: trimmed })
-    } else {
-      const keyMatch = trimmed.match(/^([\w.-]+)(\s*=\s*)(.*)$/)
-      if (keyMatch) {
-        tokens.push({ type: 'key', value: keyMatch[1] })
-        tokens.push({ type: 'plain', value: keyMatch[2] })
-        tokens.push(...tokenizeTomlValue(keyMatch[3]))
-      } else {
-        tokens.push({ type: 'plain', value: trimmed })
-      }
-    }
-
-    if (i < lines.length - 1) {
-      tokens.push({ type: 'plain', value: '\n' })
-    }
-  }
-
-  return tokens
-}
-
-function tokenizeTomlValue(value: string): Token[] {
-  const tokens: Token[] = []
-  const regex = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\btrue\b|\bfalse\b)|(\b\d+\.?\d*\b)/g
-  let pos = 0
-  let match
-
-  while ((match = regex.exec(value)) !== null) {
-    if (match.index > pos) {
-      tokens.push({ type: 'plain', value: value.slice(pos, match.index) })
-    }
-    const type = match[1] ? 'string' : match[2] ? 'boolean' : 'number'
-    tokens.push({ type, value: match[0] })
-    pos = match.index + match[0].length
-  }
-
-  if (pos < value.length) {
-    tokens.push({ type: 'plain', value: value.slice(pos) })
-  }
-
-  return tokens
-}
-
-// ─── Page ───────────────────────────────────────────────────────────────────
+const accountProviders = [
+  { name: 'grok', label: 'Grok', account: 'xAI account', href: '/login' },
+  { name: 'workbuddy', label: 'WorkBuddy', account: 'WorkBuddy account', href: '/login/workbuddy' },
+  { name: 'codex', label: 'Codex', account: 'ChatGPT account', href: '/login/codex' },
+  { name: 'zcode', label: 'ZCode', account: 'ZCode account', href: '/login/zcode' },
+  { name: 'minimax-code', label: 'MiniMax Code', account: 'MiniMax account', href: '/login/minimax-code' },
+]
 
 export default function SetupPage() {
   const q = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
   const ov = q.data
-  const [wrapLines, setWrapLines] = useState(false)
-
+  const [wrapLines, setWrapLines] = useState(true)
   const curlSnippet = ov
-    ? `curl http://${ov.listen.replace('0.0.0.0', 'localhost')}/v1/messages \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: <key>" \\
-  -d '{"model": "${ov.exampleModel !== '<model>' ? ov.exampleModel : '<model>'}", "messages": [{"role": "user", "content": "Hello"}]}'`
+    ? `curl http://${ov.listen.replace('0.0.0.0', 'localhost')}/v1/messages \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: <key>" \\\n  -d '${JSON.stringify({ model: ov.exampleModel, messages: [{ role: 'user', content: 'Hello' }] })}'`
     : ''
 
   return (
     <Fade pending={q.isPending}>
-      <Stack gap="lg" maw={960} miw={0}>
-        <PageHeader title="Setup" subtitle="One connection for all your models. Get your coding agent up and running." />
-
+      <Stack gap="lg" miw={0}>
+        <PageHeader title="Setup" subtitle="Connect your favorite tools to one model gateway." />
         {q.isError && (
-          <Alert
-            color="gray"
-            variant="light"
-            icon={<IconInfoCircle size={16} />}
-            title={ov ? 'Setup details could not be refreshed' : 'Setup details unavailable'}
-          >
+          <Alert color="red" variant="light" icon={<IconInfoCircle size={16} />} title={ov ? 'Setup details could not be refreshed' : 'Setup details unavailable'}>
             <Stack gap="sm">
-              <Text size="sm">
-                {ov
-                  ? 'Showing the last loaded configuration. Refresh before using these snippets if the proxy configuration has changed.'
-                  : 'The proxy configuration could not be loaded. Check your connection and try again.'}
-              </Text>
-              <Button variant="default" size="sm" loading={q.isFetching} onClick={() => void q.refetch()} style={{ alignSelf: 'flex-start' }}>
-                Try again
-              </Button>
+              <Text size="sm">{ov
+                ? 'Showing the last loaded configuration. Refresh before using these snippets if the proxy configuration has changed.'
+                : 'The proxy configuration could not be loaded. Check your connection and try again.'}</Text>
+              <Button variant="default" size="sm" loading={q.isFetching} onClick={() => void q.refetch()} style={{ alignSelf: 'flex-start' }}>Try again</Button>
             </Stack>
           </Alert>
         )}
-
         {!ov && q.isPending && (
-          <Group justify="center" py="xl" role="status">
-            <Loader size="sm" aria-hidden="true" />
-            <Text size="sm" c="dimmed">
-              {q.fetchStatus === 'paused' ? 'Waiting for a connection to load setup…' : 'Loading setup details…'}
-            </Text>
-          </Group>
+          <Stack role="status" aria-label="Loading setup details" gap="md">
+            <Skeleton h={74} />
+            <Skeleton h={330} />
+          </Stack>
         )}
-
         {ov && (
           <>
-            <PageSection title="1. Check your connection" description="Review the proxy configuration and any account sign-ins before launching your agent.">
-              <Stack gap="sm" miw={0}>
-                <Card withBorder radius="md" p={0} miw={0}>
-                  <StatusRow label="Listen address">
-                    <Code style={{ overflowWrap: 'anywhere' }}>{ov.listen}</Code>
-                  </StatusRow>
-                  <Divider />
-                  <StatusRow label="Proxy authentication">
-                    <Badge color={ov.authEnabled ? 'teal' : 'gray'} variant="light" size="sm" tt="none">
-                      {ov.authEnabled ? 'enabled (llx_… keys)' : 'disabled'}
-                    </Badge>
-                  </StatusRow>
-                  {ov.exampleModel !== '<model>' && (
-                    <>
-                      <Divider />
-                      <StatusRow label="Example model">
-                        <Code style={{ overflowWrap: 'anywhere' }}>{ov.exampleModel}</Code>
-                      </StatusRow>
-                    </>
-                  )}
-                </Card>
-
-                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                  <AccountConnectionCard
-                    show={ov.backends.some((b) => b.name === 'grok')}
-                    signedIn={ov.backends.find((b) => b.name === 'grok')?.authConfigured ?? false}
-                    color="violet"
-                    title="Grok uses your xAI account"
-                    signInHref="/login"
-                    signInLabel="Sign in with xAI"
-                    body="Grok does not use an upstream API key."
-                    tail=" to use your coding subscription."
-                  />
-
-                  <AccountConnectionCard
-                    show={ov.backends.some((b) => b.name === 'workbuddy')}
-                    signedIn={ov.backends.find((b) => b.name === 'workbuddy')?.authConfigured ?? false}
-                    color="blue"
-                    title="WorkBuddy uses your account"
-                    signInHref="/login/workbuddy"
-                    signInLabel="Sign in with WorkBuddy"
-                    body="WorkBuddy does not use an upstream API key."
-                    tail=" to connect your subscription."
-                  />
-
-                  <AccountConnectionCard
-                    show={ov.backends.some((b) => b.name === 'codex')}
-                    signedIn={ov.backends.find((b) => b.name === 'codex')?.authConfigured ?? false}
-                    color="gray"
-                    title="Codex uses your ChatGPT account"
-                    signInHref="/login/codex"
-                    signInLabel="Sign in with ChatGPT"
-                    body="Codex does not use an upstream API key."
-                    tail=" using a one-time device code."
-                  />
-
-                  <AccountConnectionCard
-                    show={ov.backends.some((b) => b.name === 'zcode')}
-                    signedIn={ov.backends.find((b) => b.name === 'zcode')?.authConfigured ?? false}
-                    color="violet"
-                    title="ZCode uses your account"
-                    signInHref="/login/zcode"
-                    signInLabel="Sign in with ZCode"
-                    body="ZCode does not use an upstream API key."
-                    tail=" to connect your Start Plan."
-                  />
-
-                  <AccountConnectionCard
-                    show={ov.backends.some((b) => b.name === 'minimax-code')}
-                    signedIn={ov.backends.find((b) => b.name === 'minimax-code')?.authConfigured ?? false}
-                    color="blue"
-                    title="MiniMax Code uses your account"
-                    signInHref="/login/minimax-code"
-                    signInLabel="Sign in with MiniMax"
-                    body="MiniMax Code uses an account session."
-                    tail=" to connect your subscription."
-                  />
-                </SimpleGrid>
-              </Stack>
-            </PageSection>
-
-            <PageSection title="2. Configure your agent" description="Choose your CLI, copy its snippet, and review the placeholders before using it.">
-              <Stack gap="sm" miw={0}>
-                <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />} title={ov.authEnabled ? 'Use a proxy API key' : 'Proxy authentication is disabled'}>
-                  {ov.authEnabled
-                    ? 'For Claude Code, replace <key> with your proxy API key. For Codex CLI, set LLM_PROXY_API_KEY in your terminal environment before launching. Use a proxy key, not an upstream provider key. Create one with `./llm-proxy keys create-user <name>`.'
-                    : 'No proxy key is required. For Claude Code, replace <key> with a non-empty placeholder such as unused. For Codex CLI, set LLM_PROXY_API_KEY to a non-empty placeholder so the client can start.'}
-                </Alert>
-
-                {ov.exampleModel === '<model>' && (
-                  <Alert color="gray" variant="light" icon={<IconInfoCircle size={16} />} title="Choose a model before launching">
-                    No example model is available. Replace <Code>{'<model>'}</Code> in the snippet with a configured model or route. Check the <Anchor href="/models">model catalog</Anchor> or your proxy configuration.
-                  </Alert>
-                )}
-
-                <Card withBorder radius="md" p={0} miw={0}>
+            <Box component="ol" className="setup-steps" aria-label="Connection steps">
+              <li><span>01</span><div><Text fw={600} size="sm">Choose a client</Text><Text size="xs" c="dimmed">Your tool, your workflow</Text></div></li>
+              <li><span>02</span><div><Text fw={600} size="sm">Copy configuration</Text><Text size="xs" c="dimmed">Replace the key and model</Text></div></li>
+              <li><span>03</span><div><Text fw={600} size="sm">Connect and go</Text><Text size="xs" c="dimmed">Launch from your terminal</Text></div></li>
+            </Box>
+            <div className="setup-layout">
+              <Stack gap="lg" miw={0}>
+                <Card className="setup-client-card" p={0}>
+                  <Box p="lg">
+                    <Group gap="sm" mb="xs">
+                      <ThemeIcon variant="light" size={32}><IconTerminal2 size={18} /></ThemeIcon>
+                      <Title order={2} size="h3">Configure your client</Title>
+                    </Group>
+                    <Text size="sm" c="dimmed">Choose your client, then copy the configuration below.</Text>
+                  </Box>
                   <Tabs defaultValue="claude" keepMounted={false}>
-                    <Tabs.List px="md" pt="sm" pb={4} aria-label="Coding agent">
-                      <Tabs.Tab value="claude" leftSection={<IconTerminal2 size={14} />}>
-                        Claude Code
-                      </Tabs.Tab>
-                      <Tabs.Tab value="codex" leftSection={<IconTerminal2 size={14} />}>
-                        Codex CLI
-                      </Tabs.Tab>
-                      <Tabs.Tab value="curl" leftSection={<IconTerminal2 size={14} />}>
-                        Other / curl
-                      </Tabs.Tab>
+                    <Tabs.List px="md" aria-label="Coding agent" className="setup-client-tabs">
+                      <Tabs.Tab value="claude">Claude Code</Tabs.Tab>
+                      <Tabs.Tab value="codex">Codex CLI</Tabs.Tab>
+                      <Tabs.Tab value="curl">HTTP / curl</Tabs.Tab>
                     </Tabs.List>
                     <Tabs.Panel value="claude">
-                      <Snippet title="Claude Code" description="Run this command in your terminal after replacing the placeholders." snippet={ov.claudeSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
+                      <Snippet title="Claude Code" description="Replace the placeholders, then run this command in your terminal." snippet={ov.claudeSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
                     </Tabs.Panel>
                     <Tabs.Panel value="codex">
-                      <Snippet title="Codex CLI" description="Merge this provider section into ~/.codex/config.toml without replacing your other settings. Then run the launch command shown in the comment." snippet={ov.codexSnippet} language="toml" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
+                      <Snippet title="Codex CLI" description="Merge this provider section into ~/.codex/config.toml, preserving your other settings. Then run the launch command in the comment." snippet={ov.codexSnippet} language="toml" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
                     </Tabs.Panel>
                     <Tabs.Panel value="curl">
-                      <Snippet title="Other / curl" description="Use this generic curl command with any HTTP client. Replace the placeholders before running." snippet={curlSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
+                      <Snippet title="Other / curl" description="Replace the placeholders, then run from a terminal that can reach this address." snippet={curlSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
                     </Tabs.Panel>
                   </Tabs>
+                  <Box className="setup-key-note" p="md">
+                    <Group gap="xs" mb={6} wrap="nowrap"><IconShieldLock size={16} aria-hidden /><Text size="sm" fw={600}>{ov.authEnabled ? 'Use your proxy API key' : 'No proxy key required'}</Text></Group>
+                    <Text size="xs" c="dimmed" lh={1.6}>{ov.authEnabled
+                      ? 'Replace <key> with an llx_ proxy key. For Codex CLI, set LLM_PROXY_API_KEY in your terminal before launching. Manage keys with ./llm-proxy keys.'
+                      : 'Use a non-empty placeholder such as unused for <key>. For Codex CLI, set LLM_PROXY_API_KEY to that placeholder before launching.'}</Text>
+                  </Box>
                 </Card>
+                {ov.exampleModel === '<model>' && (
+                  <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />} title="Choose a model before launching">
+                    Replace <Code>{'<model>'}</Code> with a configured model or route from the <Anchor component={Link} to="/models">model catalog</Anchor>.
+                  </Alert>
+                )}
+                <ConnectionCheck />
               </Stack>
-            </PageSection>
-
-            <TestItSection listen={ov.listen} exampleModel={ov.exampleModel} wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
+              <Stack gap="md" miw={0}>
+                <GatewayDetails overview={ov} />
+                <AccountConnections overview={ov} />
+              </Stack>
+            </div>
           </>
         )}
       </Stack>
@@ -319,206 +110,74 @@ export default function SetupPage() {
   )
 }
 
-// ─── Test it section ────────────────────────────────────────────────────────
-
-function TestItSection({
-  listen,
-  exampleModel,
-  wrapLines,
-  onWrapLinesChange,
-}: {
-  listen: string
-  exampleModel: string
-  wrapLines: boolean
-  onWrapLinesChange: (value: boolean) => void
-}) {
-  const [testResult, setTestResult] = useState<{ status: number; body: string } | null>(null)
-  const [testing, setTesting] = useState(false)
-
-  const model = exampleModel !== '<model>' ? exampleModel : 'claude-sonnet-4-20250514'
-  const host = listen.replace('0.0.0.0', 'localhost')
-  const curlCommand = `curl http://${host}/v1/messages \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: <key>" \\
-  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello"}]}'`
-
-  async function runTest() {
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const response = await fetch(`http://${host}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': '<key>',
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'Hello' }],
-        }),
-      })
-      const text = await response.text()
-      setTestResult({ status: response.status, body: text.slice(0, 200) })
-    } catch (error) {
-      setTestResult({ status: 0, body: error instanceof Error ? error.message : String(error) })
-    } finally {
-      setTesting(false)
-    }
-  }
-
+function GatewayDetails({ overview: ov }: { overview: Overview }) {
   return (
-    <PageSection title="3. Test it" description="Verify your proxy is reachable and responding.">
-      <Stack gap="sm" miw={0}>
-        <Card withBorder radius="md" p={0} miw={0}>
-          <Snippet title="Test curl" description="Run this command to test your proxy endpoint, or use the button below." snippet={curlCommand} language="shell" wrapLines={wrapLines} onWrapLinesChange={onWrapLinesChange} />
-        </Card>
-        <Group gap="sm" align="flex-start">
-          <Button size="sm" loading={testing} onClick={runTest} leftSection={<IconTerminal2 size={15} />}>
-            Run test
-          </Button>
-          {testResult && (
-            <Text size="sm" c={testResult.status >= 200 && testResult.status < 300 ? 'teal' : 'red'} fw={600}>
-              Status: {testResult.status}
-            </Text>
-          )}
-        </Group>
-        {testResult && testResult.body && (
-          <Box miw={0}>
-            <Text size="xs" c="dimmed" mb={4}>Response (first 200 chars):</Text>
-            <pre
-              className="snippet-block"
-              style={{ maxWidth: '100%', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
-            >
-              <code>{testResult.body}</code>
-            </pre>
-          </Box>
-        )}
+    <Card p="lg">
+      <Group gap="xs" mb="md"><IconPlugConnected size={18} aria-hidden /><Title order={2} size="h3">Your gateway</Title></Group>
+      <Stack gap="md">
+        <div><Text size="xs" c="dimmed" mb={5}>Listen address</Text><Code className="setup-identifier">{ov.listen}</Code></div>
+        <div><Text size="xs" c="dimmed" mb={5}>Authentication</Text><Badge variant="light" color={ov.authEnabled ? 'teal' : 'gray'} tt="none">{ov.authEnabled ? 'Proxy key required' : 'Disabled'}</Badge></div>
+        <div><Text size="xs" c="dimmed" mb={5}>Example model</Text><Code className="setup-identifier">{ov.exampleModel}</Code></div>
+        <Anchor component={Link} to="/models" size="sm" className="setup-inline-link">Browse models <IconArrowUpRight size={15} /></Anchor>
       </Stack>
-    </PageSection>
-  )
-}
-
-// ─── Account connections ────────────────────────────────────────────────────
-
-// Account connections share a compact card with an explicit sign-in state.
-function AccountConnectionCard({
-  show,
-  signedIn,
-  color,
-  title,
-  body,
-  signInHref,
-  signInLabel,
-  tail,
-}: {
-  show: boolean
-  signedIn: boolean
-  color: 'violet' | 'blue' | 'gray'
-  title: string
-  body: string
-  signInHref: string
-  signInLabel: string
-  tail: string
-}) {
-  if (!show) return null
-  return (
-    <Card withBorder radius="md" p="md">
-      <Group justify="space-between" align="flex-start" gap="sm" mb="xs">
-        <Text size="sm" fw={600}>{title}</Text>
-        <Badge variant="dot" color={signedIn ? 'teal' : color} tt="none" size="sm">{signedIn ? 'Connected' : 'Sign-in needed'}</Badge>
-      </Group>
-      <Text size="xs" c="dimmed">{body}</Text>
-      <Text size="sm" mt="sm"><Anchor href={signInHref}>{signInLabel}</Anchor>{tail}</Text>
     </Card>
   )
 }
 
-function StatusRow({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
+function AccountConnections({ overview }: { overview: Overview }) {
+  const accounts = accountProviders.flatMap((provider) => {
+    const backend = overview.backends.find((item) => item.name === provider.name && item.enabled)
+    return backend ? [{ ...provider, signedIn: backend.authConfigured }] : []
+  })
+  if (accounts.length === 0) return null
   return (
-    <Group justify="space-between" wrap="wrap" gap="xs" px="md" py="sm" miw={0}>
-      <Text size="sm" c="dimmed">{label}</Text>
-      <Box miw={0} maw="100%" style={{ overflowWrap: 'anywhere' }}>{children}</Box>
-    </Group>
+    <Card p="lg">
+      <Title order={2} size="h3" mb={5}>Account connections</Title>
+      <Text size="xs" c="dimmed" mb="md">Subscriptions linked to this gateway.</Text>
+      <Stack gap={0}>
+        {accounts.map((provider) => (
+          <div className="setup-account" key={provider.name}>
+            <Group justify="space-between" gap="xs" wrap="nowrap">
+              <Text size="sm" fw={600}>{provider.label}</Text>
+              <Badge variant="dot" size="sm" color={provider.signedIn ? 'teal' : 'orange'} tt="none">{provider.signedIn ? 'Connected' : 'Sign-in needed'}</Badge>
+            </Group>
+            <Anchor href={provider.href} size="xs" className="setup-inline-link" mt={6} aria-label={`${provider.signedIn ? 'Manage' : 'Connect'} ${provider.account}`}>
+              {provider.signedIn ? provider.account : `Connect ${provider.account}`} <IconArrowUpRight size={13} />
+            </Anchor>
+          </div>
+        ))}
+      </Stack>
+    </Card>
   )
 }
 
-// ─── Snippet ────────────────────────────────────────────────────────────────
-
-function Snippet({
-  title,
-  description,
-  snippet,
-  language,
-  wrapLines,
-  onWrapLinesChange,
-}: {
-  title: string
-  description: string
-  snippet: string
-  language: 'shell' | 'toml'
-  wrapLines: boolean
-  onWrapLinesChange: (value: boolean) => void
-}) {
-  const clipboard = useClipboard({ timeout: 2000 })
-  const copied = clipboard.copied
-  const tokens = useMemo(() => tokenize(snippet, language), [snippet, language])
-
+function ConnectionCheck() {
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+  async function checkConnection() {
+    setTesting(true)
+    setResult(null)
+    try {
+      const response = await fetch('/healthz', { cache: 'no-store', signal: AbortSignal.timeout(10000) })
+      setResult({ ok: response.ok, message: response.ok ? 'Gateway is reachable.' : `Gateway returned HTTP ${response.status}.` })
+    } catch {
+      setResult({ ok: false, message: 'Could not reach the gateway. Check your connection and try again.' })
+    } finally {
+      setTesting(false)
+    }
+  }
   return (
-    <Box miw={0}>
-      <Stack gap="sm" p="md">
-        <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{description}</Text>
-        <Group justify="space-between" gap="sm" wrap="wrap">
-          <Switch
-            size="sm"
-            label="Wrap lines"
-            checked={wrapLines}
-            onChange={(event) => onWrapLinesChange(event.currentTarget.checked)}
-            aria-label={`Wrap ${title} snippet lines`}
-          />
-          <Button
-            size="sm"
-            variant={copied ? 'light' : 'default'}
-            color={copied ? 'teal' : undefined}
-            leftSection={copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
-            onClick={() => clipboard.copy(snippet)}
-            aria-label={`Copy ${title} snippet`}
-            disabled={snippet.length === 0}
-          >
-            {/* live region announces the idle→copied flip without moving focus */}
-            <span aria-live="polite">{copied ? 'Copied' : 'Copy snippet'}</span>
-          </Button>
-        </Group>
-        {clipboard.error && (
-          <Group gap="xs" role="alert">
-            <IconExclamationCircle size={16} style={{ flexShrink: 0 }} />
-            <Text size="sm" c="yellow">
-              Clipboard access is unavailable. Select the snippet below and copy it manually.
-            </Text>
-          </Group>
-        )}
-      </Stack>
-      <Divider />
-      <pre
-        className="snippet-block"
-        tabIndex={0}
-        role="region"
-        aria-label={`${title} setup snippet`}
-        style={{ maxWidth: '100%', whiteSpace: wrapLines ? 'pre-wrap' : 'pre', overflowWrap: wrapLines ? 'anywhere' : 'normal' }}
-      >
-        <code>
-          {tokens.map((token, i) => (
-            <span key={i} style={{ color: tokenColors[token.type] }}>
-              {token.value}
-            </span>
-          ))}
-        </code>
-      </pre>
-    </Box>
+    <Card className="setup-connection-check" p="lg">
+      <Group justify="space-between" gap="md">
+        <Box style={{ flex: '1 1 15rem' }}>
+          <Group gap="xs" mb={5}><IconHeartbeat size={18} aria-hidden /><Title order={2} size="h3">Ready to connect?</Title></Group>
+          <Text size="sm" c="dimmed">Check gateway reachability from this browser. Then launch your client to verify its key and model.</Text>
+        </Box>
+        <Button variant="light" loading={testing} onClick={() => void checkConnection()} leftSection={<IconPlugConnected size={16} />}>Check connection</Button>
+      </Group>
+      <div role="status" aria-live="polite">
+        {result && <Group gap="xs" mt="md" align="flex-start" wrap="nowrap"><Box c={result.ok ? 'teal' : 'red'}>{result.ok ? <IconCheck size={16} /> : <IconInfoCircle size={16} />}</Box><Text size="sm" c={result.ok ? 'teal' : 'red'}>{result.message}</Text></Group>}
+      </div>
+    </Card>
   )
 }

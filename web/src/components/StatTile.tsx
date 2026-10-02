@@ -12,7 +12,6 @@ interface StatTileProps {
 }
 
 export default function StatTile({ label, value, hint, icon, accent = 'brand' }: StatTileProps) {
-  void accent // accepted for backward compatibility; all accents resolve to neutral
   const labelId = useId()
   const hasValue = value !== null && value !== undefined && value !== '' && typeof value !== 'boolean'
     && !(typeof value === 'number' && !Number.isFinite(value))
@@ -21,8 +20,8 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
   return (
     <Paper
       className="stat-tile"
+      data-accent={accent}
       withBorder
-      p="md"
       radius="lg"
       role="group"
       aria-labelledby={labelId}
@@ -30,15 +29,14 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
       miw={0}
       style={{ display: 'flex', flexDirection: 'column' }}
     >
-      <Group justify="space-between" align="center" wrap="nowrap" mb={6} gap="xs">
+      <Group justify="space-between" align="center" wrap="nowrap" mb={14} gap="xs">
         <Text
           id={labelId}
-          fz={11.5}
-          tt="uppercase"
+          fz={12}
           c="dimmed"
           fw={600}
           lh={1.3}
-          style={{ letterSpacing: '0.07em', overflowWrap: 'anywhere', minWidth: 0 }}
+          style={{ overflowWrap: 'anywhere', minWidth: 0 }}
         >
           {label}
         </Text>
@@ -51,11 +49,10 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
           </span>
         )}
       </Group>
-      <Box style={{ flex: 1, display: 'flex', alignItems: 'flex-end', minWidth: 0 }}>
+      <Box style={{ display: 'flex', alignItems: 'flex-start', minWidth: 0 }}>
         <Text
           component="div"
           className="stat-value"
-          fz={32}
           fw={700}
           lh={1.15}
           style={{ overflowWrap: 'anywhere' }}
@@ -64,7 +61,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'brand' }:
         </Text>
       </Box>
       {hasHint && (
-        <Box mt={8} pt={8} style={{ borderTop: '1px solid var(--hairline)', minWidth: 0 }}>
+        <Box mt={10} style={{ minWidth: 0 }}>
           <Text size="xs" c="dimmed" lh={1.35} style={{ overflowWrap: 'anywhere' }}>
             {hint}
           </Text>

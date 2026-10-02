@@ -1,0 +1,46 @@
+.overview-operations {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 13px 18px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--mantine-radius-lg);
+}
+.overview-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mantine-color-brand-6); }
+.overview-summary-footer { padding: 10px 4px 0; }
+.overview-history-grid, .overview-breakdown-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--mantine-spacing-md); }
+.overview-chart-card { min-width: 0; }
+.overview-activity-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--mantine-spacing-md); }
+.overview-activity-grid > *, .overview-usage-grid > * { min-width: 0; }
+.overview-usage-grid { align-items: start; }
+.overview-subscriptions .mantine-Accordion-control { padding-top: 5px; padding-bottom: 5px; }
+.overview-subscriptions .mantine-Accordion-panel > div { padding-top: 4px; }
+.overview-identifier { overflow-wrap: anywhere; }
+.overview-model-ranking { list-style: none; padding: 0; margin: 0; }
+.overview-model-ranking li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; padding: 11px 0; }
+.overview-model-ranking li + li { border-top: 1px solid var(--hairline); }
+.overview-rank-number { padding-top: 2px; font-family: var(--numeric-font); }
+.overview-rank-track { height: 4px; border-radius: 2px; background: var(--sunken); margin-top: 8px; overflow: hidden; }
+.overview-rank-track > div { height: 100%; border-radius: inherit; }
+.overview-provider-list .mantine-Accordion-control { padding: 11px 0; }
+.overview-provider-list .mantine-Accordion-content { padding-left: 0; padding-right: 0; }
+.overview-provider-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 64px; gap: 10px; align-items: center; padding-right: 10px; }
+.overview-provider-row > :last-child { text-align: right; }
+.overview-activity-grid .mantine-Table-thead { background: var(--sunken); }
+.overview-activity-grid .mantine-Table-th { font-size: var(--mantine-font-size-xs); color: var(--mantine-color-dimmed); font-weight: 500; }
+.overview-activity-grid .mantine-Table-td { padding-top: 10px; padding-bottom: 10px; }
+@media (max-width: 74em) {
+  .overview-activity-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 62em) {
+  .overview-history-grid, .overview-breakdown-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 48em) {
+  .overview-operations { padding: 12px; gap: 8px; }
+  .overview-provider-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .overview-provider-row > :last-child { display: none; }
+  .overview-page .mantine-Card-root { padding: var(--mantine-spacing-md); }
+}

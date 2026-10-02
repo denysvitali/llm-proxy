@@ -77,3 +77,9 @@ toolchain. The library shim is scoped to Chromium only.
 
 The generated mock config sets `stats.persist_file: ""` so it cannot load the
 shared `~/.local/state/llm-proxy/stats.json` from unrelated local runs.
+
+Setup and shell checks cover client tabs, exact snippet copying, line wrapping,
+explicit health checks and failure recovery, plus keyboard navigation that
+ignores typing, modified keys, and open dialogs. Health responses are intercepted;
+these checks never send inference. Catalog checks cover pagination, provider
+filtering, empty results, and model/provider detail navigation.

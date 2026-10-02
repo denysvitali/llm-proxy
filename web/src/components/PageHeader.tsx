@@ -19,8 +19,8 @@ export function PageHeader({
       justify="space-between"
       align="flex-end"
       wrap="wrap"
-      gap="sm"
-      mb={8}
+      gap="md"
+      mb={4}
       miw={0}
       className="page-header"
     >
@@ -29,13 +29,13 @@ export function PageHeader({
           {title}
         </Title>
         {subtitle && (
-          <Text component="div" size="sm" c="dimmed" lh={1.45} maw={620}>
+          <Text component="div" className="page-subtitle" c="dimmed" lh={1.6} maw={680}>
             {subtitle}
           </Text>
         )}
       </Stack>
       {extra != null && (
-        <Group gap="xs" wrap="wrap" align="center" miw={0} maw="100%" style={{ flexShrink: 0 }}>
+        <Group className="page-header-actions" gap="xs" wrap="wrap" align="center" miw={0} maw="100%" style={{ flexShrink: 0 }}>
           {extra}
         </Group>
       )}

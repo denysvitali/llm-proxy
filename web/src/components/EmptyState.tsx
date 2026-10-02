@@ -1,9 +1,7 @@
 import { Stack, Text, Title } from '@mantine/core'
 import type { ReactNode } from 'react'
 
-// Empty state. An idle proxy is the common case, not an edge case, so this has
-// to read as informative rather than broken: a quiet outlined glyph (no filled
-// colored disc competing with real data), the fact, and then what to do next.
+// Empty states explain the next step while keeping the surrounding layout stable.
 export function EmptyState({
   icon,
   title,
@@ -16,9 +14,10 @@ export function EmptyState({
   return (
     <Stack
       role="status"
+      className="empty-state"
       aria-atomic="true"
       align="center"
-      py="md"
+      py="lg"
       px="sm"
       gap={6}
       miw={0}
@@ -26,21 +25,11 @@ export function EmptyState({
     >
       <span
         aria-hidden="true"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 40,
-          height: 40,
-          borderRadius: 'var(--mantine-radius-md)',
-          border: '1px solid var(--hairline)',
-          color: 'var(--mantine-color-dimmed)',
-          marginBottom: 4,
-        }}
+        className="empty-state-icon"
       >
         {icon}
       </span>
-      <Title order={5} fz={13} ta="center" maw="100%">
+      <Title order={5} fz={14} ta="center" maw="100%">
         {title}
       </Title>
       {hint && (

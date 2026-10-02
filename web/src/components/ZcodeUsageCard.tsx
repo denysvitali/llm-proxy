@@ -1,49 +1,27 @@
 import {
-  Alert,
   Box,
-  Card,
   Divider,
   Group,
-  Loader,
   Progress,
   SimpleGrid,
   Stack,
   Text,
-  Title,
 } from '@mantine/core'
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { ZcodePlanUsage, ZcodeUsage } from '../api'
 import { fmtInt } from '../format'
-import { usageTone } from './GrokUsageCard'
+import { usageTone } from './usageFormatting'
+import UsageCardShell from './UsageCardShell'
 
 export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeUsage, Error> }) {
   const usage = query.data
   const error = query.error
-  const updated = usage ? new Date(usage.fetchedAt) : null
-  const hasUpdated = updated !== null && !Number.isNaN(updated.getTime())
 
   return (
-    <Card withBorder radius="lg" p="md" style={{ minWidth: 0 }}>
-      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" mb="sm">
-        <Box style={{ minWidth: 0 }}>
-          <Title order={5}>ZCode plan</Title>
-          <Text size="xs" c="dimmed">Current billing period · units</Text>
-        </Box>
-        {query.isFetching && !query.isPending ? <Loader size="xs" aria-label="Refreshing ZCode usage" style={{ flexShrink: 0 }} /> : null}
-      </Group>
-
-      {error && (
-        <Alert color="red" variant="light" title={usage ? 'Could not refresh usage' : 'Usage unavailable'} mb={usage ? 'sm' : 0}>
-          {sanitizeZcodeError(error.message)}
-          {usage && <Text size="sm" mt={4}>Showing the last available data.</Text>}
-        </Alert>
-      )}
-      {query.isPending ? (
-        <Group justify="center" py="md" role="status">
-          <Loader size="sm" aria-hidden="true" />
-          <Text size="sm" c="dimmed">Loading plan usage…</Text>
-        </Group>
-      ) : usage?.plans.length ? (
+    <UsageCardShell title="ZCode plan" subtitle="Current billing period · units"
+      isFetching={query.isFetching} isPending={query.isPending} hasData={!!usage}
+      error={error ? new Error(sanitizeZcodeError(error.message)) : null} updated={usage?.fetchedAt}>
+      {usage?.plans.length ? (
         <Stack gap="md">
           {usage.plans.map((plan, index) => (
             <Box key={plan.plan_id}>
@@ -51,14 +29,11 @@ export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeU
               <PlanRow plan={plan} />
             </Box>
           ))}
-          <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
-            {hasUpdated ? <>Updated <time dateTime={updated.toISOString()} title={updated.toLocaleString()}>{updated.toLocaleTimeString('en-US', { hour12: false })}</time></> : 'Update time unavailable'}
-          </Text>
         </Stack>
       ) : usage || !error ? (
         <Text size="sm" c="dimmed">No plan usage is available for this account.</Text>
       ) : null}
-    </Card>
+    </UsageCardShell>
   )
 }
 

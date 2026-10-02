@@ -1,800 +1,339 @@
-import { useId, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Alert,
   Box,
-  Badge,
   Button,
-  Card,
-  Code,
-  Divider,
   Drawer,
   Group,
-  Indicator,
   Loader,
   Paper,
   Select,
-  TextInput,
   SimpleGrid,
   Stack,
-  Table,
   Text,
-  Title,
 } from '@mantine/core'
-import { IconLogin, IconServerOff, IconSearch, IconSearchOff, IconChevronRight } from '@tabler/icons-react'
-import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage, fetchOverview, fetchStats } from '../api'
-import type { GrokUsage, MiniMaxUsage, ModelStat, OverviewBackend, StatsSeries } from '../api'
-import GrokUsageCompact from '../components/GrokUsageCompact'
-import MiniMaxUsageCard, { MiniMaxUsageCompact } from '../components/MiniMaxUsageCard'
 import { useMediaQuery } from '@mantine/hooks'
-import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
+import { IconCircleCheck, IconSearchOff, IconServerOff } from '@tabler/icons-react'
+import { useQuery } from '@tanstack/react-query'
+import { fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage, fetchOverview, fetchStats } from '../api'
+import { fmtInt } from '../format'
 import { useChartPalette } from '../palette'
-import StatTile from '../components/StatTile'
 import UptimeBadge from '../components/UptimeBadge'
-import TokenMixBar, { TokenLegend } from '../components/TokenMixBar'
-import {
-  HistoryBarChart,
-  HistoryLineChart,
-  historyData,
-  historyFormatters,
-} from '../components/HistoryCharts'
+import SearchInput from '../components/SearchInput'
 import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/EmptyState'
-import { TimeRangeControl } from '../components/TimeRangeControl'
 import { providerSegments, healthState } from '../lib/stats'
+import ProviderCard from '../components/catalog/ProviderCard'
+import ProviderDetail from '../components/catalog/ProviderDetail'
+import { backendAgg, type StatsState } from '../components/catalog/providerData'
 import { Fade } from '../App'
-
-const CATALOG_PREVIEW = 3
-const ROUTES_PREVIEW = 3
-
-// fmtPct renders an exact zero as an em dash, which would hide a genuine
-// 0% success rate (every request failed) or a 0% tool error rate. Render a
-// real zero honestly; the truly-absent cases ('—') are guarded by callers.
-function pct(ratio: number, digits = 1): string {
-  if (ratio === 0) return `${(0).toFixed(digits)}%`
-  return fmtPct(ratio, digits)
-}
-
-type StatsState = 'ready' | 'loading' | 'unavailable'
-
-// Aggregate one backend's ModelStat rows into the numbers its card, the
-// drawer, and the page summary all share.
-function backendAgg(models: ModelStat[], backendName: string) {
-  const ms = models.filter((m) => m.backend === backendName)
-  const requests = ms.reduce((s, m) => s + m.requests, 0)
-  const successes = ms.reduce((s, m) => s + m.successes, 0)
-  const toolCalls = ms.reduce((s, m) => s + m.tool_calls, 0)
-  const toolErrors = ms.reduce((s, m) => s + m.tool_errors, 0)
-  const statusCodes: Record<string, number> = {}
-  for (const m of ms) {
-    for (const [code, n] of Object.entries(m.status_codes ?? {})) {
-      statusCodes[code] = (statusCodes[code] ?? 0) + n
-    }
-  }
-  return {
-    requests,
-    successes,
-    uptime: requests ? successes / requests : 0,
-    toolCalls,
-    toolErrors,
-    statusCodes,
-  }
-}
-
-// Account-backed providers sign in through the proxy's web login flow; this
-// table is the single source for label + login path in card and drawer.
-// grok mounts at /login, the others at /login/<name>.
-const ACCOUNT_AUTH: Record<string, { label: string; login: string }> = {
-  grok: { label: 'xAI', login: '/login' },
-  workbuddy: { label: 'WorkBuddy', login: '/login/workbuddy' },
-  codex: { label: 'ChatGPT', login: '/login/codex' },
-  zcode: { label: 'ZCode', login: '/login/zcode' },
-  'minimax-code': { label: 'MiniMax', login: '/login/minimax-code' },
-}
+import './catalog.css'
 
 export default function ProvidersPage() {
-  const ovQ = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
-  const statsQ = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
-  const grokUsageEnabled = ovQ.data?.grokUsage.configured ?? false
-  const grokUsageQ = useQuery({
+  const overview = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const stats = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
+  const grokUsage = useQuery({
     queryKey: ['grok-usage'],
     queryFn: fetchGrokUsage,
-    enabled: grokUsageEnabled,
+    enabled: overview.data?.grokUsage.configured ?? false,
     refetchInterval: 60_000,
     retry: 1,
   })
-  const minimaxUsageEnabled = ovQ.data?.minimaxUsage?.configured ?? false
-  const minimaxUsageQ = useQuery({
+  const minimaxEnabled = overview.data?.minimaxUsage?.configured ?? false
+  const minimaxUsage = useQuery({
     queryKey: ['minimax-usage'],
     queryFn: fetchMiniMaxUsage,
-    enabled: minimaxUsageEnabled,
+    enabled: minimaxEnabled,
     refetchInterval: 60_000,
     retry: 1,
   })
-  const pal = useChartPalette()
-
-  const backends = ovQ.data?.backends ?? []
-  // Stats availability drives every health signal: without it the page must
-  // say "no data", never a green-looking "no traffic".
-  const statsState: StatsState = statsQ.data ? 'ready' : statsQ.isPending ? 'loading' : 'unavailable'
-  const models = statsQ.data?.models ?? []
-  const palSeries = pal.series
-  const segByBackend = useMemo(() => new Map(providerSegments(models, palSeries)), [models, palSeries])
-  const isMobile = useMediaQuery('(max-width: 48em)') ?? false
+  const palette = useChartPalette()
+  const mobile = useMediaQuery('(max-width: 48em)') ?? false
   const [search, setSearch] = useState('')
   const [healthFilter, setHealthFilter] = useState('all')
+  const [sort, setSort] = useState('name')
   const [selectedName, setSelectedName] = useState<string | null>(null)
-  // Resolve the drawer selection from current overview data, so a backend
-  // removed from config while the drawer is open doesn't render a stale object.
-  const selected = backends.find((b) => b.name === selectedName) ?? null
   const [historyRange, setHistoryRange] = useState('24h')
-
-  const selectedSeriesQ = useQuery({
-    queryKey: ['stats-series', 'backend', selected?.name, historyRange],
-    queryFn: () => fetchBackendStatsSeries(selected!.name, historyRange),
+  const backends = useMemo(() => overview.data?.backends ?? [], [overview.data])
+  const models = useMemo(() => stats.data?.models ?? [], [stats.data])
+  const statsState: StatsState = stats.data ? 'ready' : stats.isPending ? 'loading' : 'unavailable'
+  const segments = useMemo(() => new Map(providerSegments(models, palette.series)), [models, palette.series])
+  const providers = useMemo(
+    () =>
+      backends.map((backend) => {
+        const providerModels = models.filter((model) => model.backend === backend.name)
+        const aggregate = backendAgg(providerModels, backend.name)
+        const health = statsState === 'ready' ? healthState(aggregate.requests, aggregate.uptime) : 'unknown'
+        const attention =
+          !backend.catalogOK ||
+          (!backend.hasKey && !backend.authConfigured) ||
+          health === 'degraded' ||
+          health === 'unhealthy'
+        return { backend, models: providerModels, aggregate, health, attention }
+      }),
+    [backends, models, statsState],
+  )
+  const visible = useMemo(
+    () =>
+      providers
+        .filter(({ backend, health, attention }) => {
+          const needle = search.trim().toLowerCase()
+          const matchesSearch =
+            !needle ||
+            [backend.name, backend.host, ...(backend.models ?? [])].some((value) =>
+              value.toLowerCase().includes(needle),
+            )
+          const activeFilter = statsState === 'ready' ? healthFilter : 'all'
+          return (
+            matchesSearch &&
+            (activeFilter === 'all' ||
+              (activeFilter === 'attention'
+                ? attention
+                : activeFilter === 'enabled'
+                  ? backend.enabled
+                  : health === activeFilter))
+          )
+        })
+        .sort((a, b) =>
+          sort === 'traffic' && statsState === 'ready'
+            ? b.aggregate.requests - a.aggregate.requests
+            : sort === 'attention'
+              ? Number(b.attention) - Number(a.attention) || a.backend.name.localeCompare(b.backend.name)
+              : a.backend.name.localeCompare(b.backend.name),
+        ),
+    [providers, search, healthFilter, sort, statsState],
+  )
+  const selected = providers.find(({ backend }) => backend.name === selectedName) ?? null
+  const history = useQuery({
+    queryKey: ['stats-series', 'backend', selectedName, historyRange],
+    queryFn: () => fetchBackendStatsSeries(selectedName!, historyRange),
     enabled: !!selected,
-    // No placeholderData: never show another provider's or another range's
-    // history under the current selection while it loads.
   })
-
-  const { enabledCount, healthyCount, noTrafficCount, missingAuthCount, needsAttentionCount } = useMemo(() => {
-    let enabled = 0
-    let healthy = 0
-    let noTraffic = 0
-    let missingAuth = 0
-    let attention = 0
-    for (const b of backends) {
-      if (b.enabled) enabled++
-      const agg = backendAgg(models, b.name)
-      const health = healthState(agg.requests, agg.uptime)
-      if (health === 'healthy') healthy++
-      if (health === 'no-traffic') noTraffic++
-      if (!b.hasKey && !b.authConfigured) missingAuth++
-      if (!b.catalogOK || (!b.hasKey && !b.authConfigured) || health === 'degraded' || health === 'unhealthy') attention++
-    }
-    return { enabledCount: enabled, healthyCount: healthy, noTrafficCount: noTraffic, missingAuthCount: missingAuth, needsAttentionCount: attention }
-    // backends/models are new ?? [] arrays every render
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [backends, models])
-
-  const visibleBackends = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return backends.filter((backend) => {
-      const matchesSearch = !query || [backend.name, backend.host, ...(backend.models ?? [])]
-        .some((value) => value.toLowerCase().includes(query))
-      const agg = backendAgg(models, backend.name)
-      const health = healthState(agg.requests, agg.uptime)
-      const attention = !backend.catalogOK || (!backend.hasKey && !backend.authConfigured)
-        || health === 'degraded' || health === 'unhealthy'
-      return matchesSearch && (healthFilter === 'all' || (healthFilter === 'attention' ? attention : health === healthFilter))
-    })
-    // backends/models are new ?? [] arrays every render
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [backends, models, search, healthFilter])
-
-  const selectedModels = useMemo(() => selected ? models.filter((m) => m.backend === selected.name) : [], [models, selected])
-  const selectedAgg = useMemo(() => backendAgg(models, selected?.name ?? ''), [models, selected])
-
+  const configured = backends.length
+  const enabled = backends.filter((backend) => backend.enabled).length
+  const healthy = providers.filter((provider) => provider.health === 'healthy').length
+  const attention = providers.filter((provider) => provider.attention).length
+  const idle = providers.filter((provider) => provider.health === 'no-traffic').length
+  const missingAuth = backends.filter((backend) => !backend.hasKey && !backend.authConfigured).length
   return (
-    <Fade pending={ovQ.isPending || statsQ.isPending}>
-      <Stack gap="md">
-        <PageHeader
-          title="Providers"
-          subtitle="Connections, authentication, and request health."
-        />
-        {ovQ.isPending ? (
-          <Group justify="center" py="xl">
+    <Fade pending={overview.isPending || stats.isPending}>
+      <Stack gap="lg" className="providers-page">
+        <PageHeader title="Providers" subtitle="One place for every connection, catalog, and account." />
+        {overview.isPending ? (
+          <Group justify="center" py="xl" role="status">
             <Loader size="sm" />
+            <Text size="sm">Loading providers…</Text>
           </Group>
-        ) : ovQ.isError ? (
-          <Alert variant="light" color="red" title="Couldn't load providers">
-            {ovQ.error.message}
-            <Group gap={4} mt={6}>
-              <Button size="xs" mih={44} variant="light" onClick={() => ovQ.refetch()}>
-                Retry
-              </Button>
-            </Group>
+        ) : overview.isError ? (
+          <Alert color="red" title="Couldn't load providers">
+            <Text size="sm">{overview.error.message}</Text>
+            <Button variant="light" mih={44} mt="sm" onClick={() => overview.refetch()}>
+              Retry
+            </Button>
           </Alert>
         ) : backends.length === 0 ? (
           <EmptyState
-            icon={<IconServerOff size={20} stroke={1.6} />}
+            icon={<IconServerOff size={24} />}
             title="No providers configured"
             hint="Add a backend to the proxy config and it will appear here."
           />
         ) : (
           <>
-            {/* A failed or in-flight stats fetch must not read as "no traffic":
-                say so explicitly above the cards. */}
+            <Paper
+              component="section"
+              aria-label="Provider summary"
+              withBorder
+              radius="lg"
+              className="catalog-provider-summary"
+            >
+              <Summary label="Configured providers" value={fmtInt(configured)} hint={`${enabled} enabled`} />
+              <Summary
+                label="Healthy"
+                value={statsState === 'ready' ? fmtInt(healthy) : '—'}
+                hint="From recorded requests"
+              />
+              <Summary
+                label="Needs attention"
+                value={statsState === 'ready' ? fmtInt(attention) : '—'}
+                hint={`${missingAuth} missing authentication`}
+                attention={attention > 0}
+              />
+              <Summary
+                label="Awaiting traffic"
+                value={statsState === 'ready' ? fmtInt(idle) : '—'}
+                hint={statsState === 'ready' ? 'Health appears after requests' : 'Request stats unavailable'}
+              />
+            </Paper>
             {statsState !== 'ready' && (
               <Alert
-                variant="light"
                 color="gray"
                 title={statsState === 'loading' ? 'Loading request stats…' : 'Request stats unavailable'}
               >
                 {statsState === 'loading'
                   ? 'Health and token mix appear once stats finish loading.'
-                  : `Health and token mix are unavailable right now${statsQ.error?.message ? ` (${statsQ.error.message})` : ''}; provider configuration below is still current.`}
+                  : 'Health and token mix are unavailable right now. Provider configuration is still current.'}
+                {statsState === 'unavailable' && (
+                  <Button variant="subtle" size="xs" mih={44} onClick={() => stats.refetch()}>
+                    Retry statistics
+                  </Button>
+                )}
               </Alert>
             )}
-            <Paper component="section" aria-label="Provider summary" withBorder radius="md" className="provider-summary">
-              <Box className="provider-summary-item">
-                <Text className="provider-summary-label">Configured</Text>
-                <Text className="provider-summary-value stat-value">{fmtInt(backends.length)}</Text>
-                <Text className="provider-summary-note">{fmtInt(enabledCount)} enabled</Text>
-              </Box>
-              <Box className="provider-summary-item">
-                <Text className="provider-summary-label">Healthy</Text>
-                <Text className="provider-summary-value stat-value">{statsState === 'ready' ? fmtInt(healthyCount) : '—'}</Text>
-                <Text className="provider-summary-note">Recorded requests</Text>
-              </Box>
-              <Box className="provider-summary-item">
-                <Text className="provider-summary-label">Attention</Text>
-                <Text className="provider-summary-value stat-value">{statsState === 'ready' ? fmtInt(needsAttentionCount) : '—'}</Text>
-                <Text className="provider-summary-note">{fmtInt(missingAuthCount)} missing auth</Text>
-              </Box>
-              <Box className="provider-summary-item">
-                <Text className="provider-summary-label">No traffic</Text>
-                <Text className="provider-summary-value stat-value">{statsState === 'ready' ? fmtInt(noTrafficCount) : '—'}</Text>
-                <Text className="provider-summary-note">{statsState !== 'ready' ? 'Stats unavailable' : noTrafficCount ? 'Health unknown' : 'All have traffic'}</Text>
-              </Box>
-            </Paper>
-            <Box className="provider-toolbar">
-              <TextInput aria-label="Search providers" placeholder="Search providers or models…" leftSection={<IconSearch size={17} />}
-                size="md" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
-              <Select aria-label="Filter provider health" size="md" value={healthFilter} allowDeselect={false}
-                disabled={statsState !== 'ready'} onChange={(value) => setHealthFilter(value ?? 'all')}
-                data={[{ value: 'all', label: 'All providers' }, { value: 'attention', label: 'Needs attention' },
-                  { value: 'healthy', label: 'Healthy' }, { value: 'no-traffic', label: 'No traffic' }]} />
-            </Box>
-            <Text size="xs" c="dimmed" aria-live="polite">{visibleBackends.length} of {backends.length} providers · Health from recorded requests</Text>
-            {visibleBackends.length === 0 && <EmptyState icon={<IconSearchOff size={24} />} title="No matching providers" hint="Try another name or choose a different health filter." />}
-            <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="md">
-              {visibleBackends.map((b) => (
-                <ProviderCard
-                  key={b.name}
-                  backend={b}
-                  routes={(ovQ.data?.routes ?? []).filter((r) => r.backend === b.name)}
-                  segments={segByBackend.get(b.name) ?? []}
-                  models={models.filter((m) => m.backend === b.name)}
-                  statsState={statsState}
-                  compact={isMobile}
-                  grokUsage={b.name === 'grok' ? grokUsageQ.data : undefined}
-                  grokUsageLoading={b.name === 'grok' && grokUsageQ.isPending}
-                  grokUsageError={b.name === 'grok' ? grokUsageQ.error?.message : undefined}
-                  minimaxUsageQuery={b.name === 'minimax-code' && minimaxUsageEnabled ? minimaxUsageQ : undefined}
-                  onInspect={() => setSelectedName(b.name)}
+            <Stack gap="sm">
+              <div className="catalog-provider-toolbar">
+                <SearchInput
+                  label="Search providers"
+                  placeholder="Search providers, hosts, or models…"
+                  value={search}
+                  onChange={setSearch}
                 />
-              ))}
-            </SimpleGrid>
+                <Select
+                  aria-label="Filter provider health"
+                  value={healthFilter}
+                  allowDeselect={false}
+                  disabled={statsState !== 'ready'}
+                  onChange={(value) => setHealthFilter(value ?? 'all')}
+                  data={[
+                    { value: 'all', label: 'All providers' },
+                    { value: 'attention', label: 'Needs attention' },
+                    { value: 'healthy', label: 'Healthy' },
+                    { value: 'no-traffic', label: 'No traffic' },
+                    { value: 'enabled', label: 'Enabled' },
+                  ]}
+                />
+                <Select
+                  aria-label="Sort providers"
+                  value={sort}
+                  allowDeselect={false}
+                  onChange={(value) => setSort(value ?? 'name')}
+                  data={[
+                    { value: 'name', label: 'Name A–Z' },
+                    { value: 'attention', label: 'Attention first' },
+                    { value: 'traffic', label: 'Most requests', disabled: statsState !== 'ready' },
+                  ]}
+                />
+              </div>
+              <Group justify="space-between" gap="xs">
+                <Text size="xs" c="dimmed" aria-live="polite">
+                  {visible.length} of {configured} providers
+                </Text>
+                <Text size="xs" c="dimmed" className="catalog-health-note">
+                  <IconCircleCheck size={13} />
+                  Health from recorded requests
+                </Text>
+              </Group>
+            </Stack>
+            {visible.length === 0 ? (
+              <Stack align="center" gap="xs">
+                <EmptyState
+                  icon={<IconSearchOff size={24} />}
+                  title="No matching providers"
+                  hint="Try another name or choose a different health filter."
+                />
+                <Button
+                  variant="light"
+                  mih={44}
+                  onClick={() => {
+                    setSearch('')
+                    setHealthFilter('all')
+                  }}
+                >
+                  Clear filters
+                </Button>
+              </Stack>
+            ) : (
+              <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="md">
+                {visible.map(({ backend, models: providerModels }) => (
+                  <ProviderCard
+                    key={backend.name}
+                    backend={backend}
+                    models={providerModels}
+                    routeCount={
+                      (overview.data?.routes ?? []).filter((route) => route.backend === backend.name).length
+                    }
+                    segments={segments.get(backend.name) ?? []}
+                    statsState={statsState}
+                    grokUsage={backend.name === 'grok' ? grokUsage.data : undefined}
+                    minimaxUsageQuery={
+                      backend.name === 'minimax-code' && minimaxEnabled ? minimaxUsage : undefined
+                    }
+                    onInspect={() => setSelectedName(backend.name)}
+                  />
+                ))}
+              </SimpleGrid>
+            )}
           </>
         )}
-
-        <Drawer
-          opened={!!selected}
-          onClose={() => setSelectedName(null)}
-          position="right"
-          size={isMobile ? '100%' : 'lg'}
-          title={selected && (
+      </Stack>
+      <Drawer
+        opened={!!selected}
+        onClose={() => setSelectedName(null)}
+        position="right"
+        size={mobile ? '100%' : 'lg'}
+        className="catalog-detail-drawer"
+        closeButtonProps={{ ...{ 'data-autofocus': true }, 'aria-label': 'Close provider details', size: 44 }}
+        styles={{ title: { minWidth: 0, flex: 1 }, close: { flexShrink: 0 } }}
+        title={
+          selected && (
             <Box miw={0}>
-              <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>Provider</Text>
-              <Group gap="xs" wrap="wrap">
-                <Text fw={700} style={{ overflowWrap: 'anywhere' }}>{selected.name}</Text>
-                {statsState === 'ready' ? (
-                  <UptimeBadge uptime={selectedAgg.uptime} requests={selectedAgg.requests} />
-                ) : (
-                  <UptimeBadge uptime={Number.NaN} requests={Number.NaN} />
-                )}
+              <Text size="xs" c="dimmed">
+                Provider / Connection details
+              </Text>
+              <Group gap="sm" mt={5}>
+                <Text fw={700} className="catalog-model-name">
+                  {selected.backend.name}
+                </Text>
+                <UptimeBadge
+                  uptime={statsState === 'ready' ? selected.aggregate.uptime : NaN}
+                  requests={statsState === 'ready' ? selected.aggregate.requests : NaN}
+                />
               </Group>
             </Box>
-          )}
-        >
-          {selected && (
-            <ProviderDetail
-              backend={selected}
-              routes={(ovQ.data?.routes ?? []).filter((route) => route.backend === selected.name)}
-              models={selectedModels}
-              statsState={statsState}
-              grokUsage={selected.name === 'grok' ? grokUsageQ.data : undefined}
-              minimaxUsageQuery={selected.name === 'minimax-code' && minimaxUsageEnabled ? minimaxUsageQ : undefined}
-              series={selectedSeriesQ.data?.series}
-              seriesLoading={selectedSeriesQ.isPending}
-              seriesError={selectedSeriesQ.error?.message}
-              range={historyRange}
-              onRangeChange={setHistoryRange}
-            />
-          )}
-        </Drawer>
-      </Stack>
+          )
+        }
+      >
+        {selected && (
+          <ProviderDetail
+            backend={selected.backend}
+            routes={(overview.data?.routes ?? []).filter((route) => route.backend === selected.backend.name)}
+            models={selected.models}
+            statsState={statsState}
+            grokUsage={selected.backend.name === 'grok' ? grokUsage.data : undefined}
+            minimaxUsageQuery={
+              selected.backend.name === 'minimax-code' && minimaxEnabled ? minimaxUsage : undefined
+            }
+            series={history.data?.series}
+            seriesLoading={history.isPending}
+            seriesError={history.error?.message}
+            range={historyRange}
+            onRangeChange={setHistoryRange}
+          />
+        )}
+      </Drawer>
     </Fade>
   )
 }
 
-function CompactStat({ label, value }: { label: string; value: string }) {
-  return <StatTile label={label} value={value} />
-}
-
-// A native indicator plus explicit text keeps configuration state readable
-// without color; theme roles match the rest of the health chrome.
-function StatusDot({
-  ok,
-  okLabel,
-  badLabel,
+function Summary({
+  label,
+  value,
+  hint,
+  attention = false,
 }: {
-  ok: boolean
-  okLabel: string
-  badLabel: string
+  label: string
+  value: string
+  hint: string
+  attention?: boolean
 }) {
   return (
-    <Group gap="xs" wrap="nowrap" miw={0}>
-      <Indicator
-        size={7}
-        w={7}
-        h={7}
-        position="middle-center"
-        zIndex={0}
-        aria-hidden="true"
-        style={{ flexShrink: 0, backgroundColor: ok ? 'var(--data-good)' : 'var(--data-warning)' }}
-      />
-      <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
-        {ok ? okLabel : badLabel}
+    <Box className="catalog-provider-summary-item" data-attention={attention}>
+      <Text size="xs" fw={550} c="dimmed">
+        {label}
       </Text>
-    </Group>
-  )
-}
-
-// Auth state for one provider: account-backed backends show account sign-in
-// state plus a link to the login flow; key-based ones show key presence.
-function AuthStatus({ backend }: { backend: OverviewBackend }) {
-  const account = ACCOUNT_AUTH[backend.name]
-  if (account) {
-    return (
-      <Group gap="xs" miw={0} wrap="wrap">
-        <StatusDot
-          ok={backend.authConfigured}
-          okLabel={`${account.label} account signed in`}
-          badLabel={`${account.label} account not signed in`}
-        />
-        <Button
-          component="a"
-          href={account.login}
-          size="xs"
-          mih={44}
-          color="brand"
-          variant={backend.authConfigured ? 'subtle' : 'light'}
-          onClick={(event) => event.stopPropagation()}
-          leftSection={<IconLogin size={12} stroke={1.8} aria-hidden="true" />}
-        >
-          {backend.authConfigured ? 'Sign in again' : 'Sign in'}
-        </Button>
-      </Group>
-    )
-  }
-  return <StatusDot ok={backend.hasKey} okLabel="API key set" badLabel="API key missing" />
-}
-
-function CardSection({ title, children }: { title: string; children: ReactNode }) {
-  const titleId = useId()
-  return (
-    <Stack component="section" aria-labelledby={titleId} gap="xs" miw={0}>
-      <Title id={titleId} order={5} mb={0} style={{ overflowWrap: 'anywhere' }}>
-        {title}
-      </Title>
-      <Group gap={6} miw={0} align="flex-start" wrap="wrap">{children}</Group>
-    </Stack>
-  )
-}
-
-function ProviderCard({
-  backend: b,
-  routes,
-  segments,
-  models,
-  statsState,
-  compact,
-  grokUsage,
-  grokUsageLoading,
-  grokUsageError,
-  minimaxUsageQuery,
-  onInspect,
-}: {
-  backend: OverviewBackend
-  routes: { model: string; backend: string; upstream: string }[]
-  segments: Parameters<typeof TokenMixBar>[0]['segments']
-  models: ModelStat[]
-  statsState: StatsState
-  compact: boolean
-  grokUsage?: GrokUsage
-  grokUsageLoading?: boolean
-  grokUsageError?: string
-  minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
-  onInspect: () => void
-}) {
-  const [catalogExpanded, setCatalogExpanded] = useState(false)
-  const [routesExpanded, setRoutesExpanded] = useState(false)
-  const catalogListId = useId()
-  const routesListId = useId()
-  const agg = backendAgg(models, b.name)
-  const requests = agg.requests
-  const uptime = agg.uptime
-  const segTotal = segments.reduce((s, x) => s + x.value, 0)
-  const shownModels = catalogExpanded ? (b.models ?? []) : (b.models?.slice(0, CATALOG_PREVIEW) ?? [])
-  const extra = (b.models?.length ?? 0) - shownModels.length
-  const shownRoutes = routesExpanded ? routes : routes.slice(0, ROUTES_PREVIEW)
-  const statsReady = statsState === 'ready'
-
-  return (
-    <Card
-      withBorder
-      radius="lg"
-      p="md"
-      className="provider-card"
-      miw={0}
-      h="100%"
-    >
-      <Box className="provider-card-heading">
-        <Group gap="sm" wrap="nowrap" miw={0}>
-          <span className="provider-avatar" aria-hidden>{b.name.slice(0, 2).toUpperCase()}</span>
-          <Box miw={0}>
-            <Title order={3} size="h4" style={{ overflowWrap: 'anywhere' }}>{b.name}</Title>
-            <Text size="xs" c="dimmed">{b.enabled ? 'Enabled' : 'Disabled'}</Text>
-          </Box>
-        </Group>
-        <Button size="xs" variant="subtle" mih={44} px={8} rightSection={<IconChevronRight size={15} />}
-          aria-label={`Inspect ${b.name}`} onClick={onInspect}>Details</Button>
-      </Box>
-      <Group justify="space-between" gap="xs" mt="md">
-        <UptimeBadge uptime={statsReady ? uptime : NaN} requests={statsReady ? requests : NaN} />
-        <StatusDot ok={b.catalogOK} okLabel="Catalog ready" badLabel="Catalog unavailable" />
-      </Group>
-      <Box className="provider-metrics">
-        <Box><Text size="xs" c="dimmed">Requests</Text><Text fw={650} className="stat-value">{statsReady ? fmtInt(requests) : '—'}</Text></Box>
-        <Box><Text size="xs" c="dimmed">Success</Text><Text fw={650} className="stat-value">{statsReady && requests ? pct(uptime) : '—'}</Text></Box>
-        <Box><Text size="xs" c="dimmed">Models</Text><Text fw={650} className="stat-value">{b.catalogOK ? (b.models?.length ?? 0) : '—'}</Text></Box>
-      </Box>
-      <AuthStatus backend={b} />
-
-      {b.name === 'grok' && (grokUsage || grokUsageLoading || grokUsageError) && (
-        <>
-          <Divider my="sm" />
-          {grokUsageLoading && !grokUsage ? (
-            <Group justify="center" py={4}><Loader size="xs" /></Group>
-          ) : grokUsageError && !grokUsage ? (
-            <Text size="xs" c="dimmed">Usage unavailable</Text>
-          ) : grokUsage ? (
-            <GrokUsageCompact usage={grokUsage} />
-          ) : null}
-        </>
-      )}
-
-      {minimaxUsageQuery && <>
-        <Divider my="sm" />
-        {minimaxUsageQuery.data ? <MiniMaxUsageCompact usage={minimaxUsageQuery.data} />
-          : minimaxUsageQuery.isPending ? <Text size="xs" c="dimmed" role="status">Loading MiniMax account…</Text>
-            : <Text size="xs" c="dimmed">Usage unavailable</Text>}
-        {minimaxUsageQuery.isError && minimaxUsageQuery.data && <Text size="xs" c="dimmed" mt={4}>Could not refresh usage. Showing the last available data.</Text>}
-      </>}
-
-      {/* Stats show whenever traffic exists — even if every request carried
-          zero tokens (segments all empty), the counts still matter. */}
-      {statsReady && requests > 0 && (
-        <>
-          <Divider my="sm" />
-          {segTotal > 0 && (
-            <>
-              <TokenMixBar segments={segments} height={10} />
-              <TokenLegend segments={segments} compact />
-            </>
-          )}
-          <Text size="xs" c="dimmed" mt={segTotal > 0 ? 6 : 0}>
-            {fmtInt(segTotal)} tokens · {fmtInt(agg.toolCalls)} tool calls
-          </Text>
-        </>
-      )}
-
-      {!compact && routes.length > 0 && (
-        <>
-          <Divider my="sm" />
-          <CardSection title={`Routes · ${routes.length}`}>
-            {shownRoutes.map((r) => (
-              <Code key={r.model} fz="xs" miw={0} style={{ overflowWrap: 'anywhere' }}>
-                {r.model} → {r.upstream || '(as requested)'}
-              </Code>
-            ))}
-            {routes.length > ROUTES_PREVIEW && (
-              <Button size="xs" variant="subtle" mih={44} aria-expanded={routesExpanded} aria-controls={routesListId} onClick={() => setRoutesExpanded((value) => !value)}>
-                {routesExpanded ? 'Show fewer routes' : `Show all ${routes.length} routes`}
-              </Button>
-            )}
-          </CardSection>
-        </>
-      )}
-
-      {!compact && shownModels.length > 0 && (
-        <>
-          <Divider my="sm" />
-          <CardSection title={`Catalog · ${(b.models?.length ?? 0)}`}>
-            {shownModels.map((m) => (
-              <Group key={m} gap={4} wrap="nowrap" miw={0} maw="100%">
-                <Text className="provider-model">{m.startsWith(`${b.name}/`) ? m.slice(b.name.length + 1) : m}</Text>
-                {b.modelCredits?.[m] && (
-                  <Badge size="xs" variant="light" color="violet" style={{ flexShrink: 0 }}>
-                    {b.modelCredits[m]}
-                  </Badge>
-                )}
-              </Group>
-            ))}
-            {extra > 0 && (
-              <Button
-                size="xs" mih={44}
-                variant="subtle"
-                aria-expanded={catalogExpanded}
-                aria-controls={catalogListId}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setCatalogExpanded(true)
-                }}
-              >
-                Show all (+{extra})
-              </Button>
-            )}
-            {catalogExpanded && (b.models?.length ?? 0) > CATALOG_PREVIEW && (
-              <Button
-                size="xs" mih={44}
-                variant="subtle"
-                aria-expanded={catalogExpanded}
-                aria-controls={catalogListId}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setCatalogExpanded(false)
-                }}
-              >
-                Show less
-              </Button>
-            )}
-          </CardSection>
-        </>
-      )}
-    </Card>
-  )
-}
-
-function ProviderDetail({
-  backend,
-  routes,
-  models,
-  statsState,
-  grokUsage,
-  minimaxUsageQuery,
-  series,
-  seriesLoading,
-  seriesError,
-  range,
-  onRangeChange,
-}: {
-  backend: OverviewBackend
-  routes: { model: string; backend: string; upstream: string }[]
-  models: ModelStat[]
-  statsState: StatsState
-  grokUsage?: GrokUsage
-  minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
-  series?: StatsSeries
-  seriesLoading?: boolean
-  seriesError?: string
-  range: string
-  onRangeChange: (value: string) => void
-}) {
-  const requests = models.reduce((sum, model) => sum + model.requests, 0)
-  const successes = models.reduce((sum, model) => sum + model.successes, 0)
-  const toolCalls = models.reduce((sum, model) => sum + model.tool_calls, 0)
-  const toolErrors = models.reduce((sum, model) => sum + model.tool_errors, 0)
-  const uptime = requests ? successes / requests : 0
-  const statsReady = statsState === 'ready'
-
-  // Health verdict only exists when stats are actually loaded; "no traffic"
-  // (nothing wrong) is kept distinct from degraded/unhealthy traffic.
-  const health = healthState(requests, uptime)
-  const healthCopy = {
-    'no-traffic': {
-      title: 'No requests recorded yet',
-      body: 'No traffic has reached this provider through the proxy yet. Its configuration and routes below still apply; send a request and health stats will appear here.',
-      color: 'gray' as const,
-    },
-    degraded: {
-      title: 'Degraded availability',
-      body: `Some upstream requests to this provider are failing — ${pct(1 - uptime)} of ${requests.toLocaleString('en-US')} requests did not succeed. Check the per-model table below for the worst offenders.`,
-      color: 'yellow' as const,
-    },
-    unhealthy: {
-      title: 'Unhealthy',
-      body: `A large share of upstream requests to this provider failed — ${pct(1 - uptime)} of ${requests.toLocaleString('en-US')}. Recent failures are listed on the Overview page.`,
-      color: 'red' as const,
-    },
-  }
-
-  return (
-    <Box miw={0}>
-      <Stack gap="lg" miw={0} pb="md">
-        {statsReady && health !== 'healthy' && (
-          <Alert
-            variant="light"
-            color={healthCopy[health].color}
-            title={healthCopy[health].title}
-          >
-            {healthCopy[health].body}
-          </Alert>
-        )}
-
-        {statsState !== 'ready' && (
-          <Alert variant="light" color="gray" title="Per-model stats unavailable">
-            {statsState === 'loading'
-              ? 'Loading model stats…'
-              : 'Per-model stats are temporarily unavailable; the configuration summary below is still current.'}
-          </Alert>
-        )}
-
-        {seriesError && (
-          <Alert variant="light" color="gray" title="History unavailable">
-            {seriesError}
-          </Alert>
-        )}
-
-        {/* Configuration summary: the drawer stays useful for identity/auth
-            even when stats or history are unavailable. */}
-        <CardSection title="Configuration">
-          <Group gap="sm" wrap="wrap">
-            <Code style={{ overflowWrap: 'anywhere' }}>{backend.host}</Code>
-            <Badge size="sm" variant="light" color={backend.enabled ? 'teal' : 'gray'}>
-              {backend.enabled ? 'enabled' : 'disabled'}
-            </Badge>
-            <AuthStatus backend={backend} />
-            <StatusDot
-              ok={backend.catalogOK}
-              okLabel="catalog ok"
-              badLabel="catalog unavailable"
-            />
-          </Group>
-        </CardSection>
-
-        {(backend.models?.length ?? 0) > 0 && (
-          <details className="provider-detail-list">
-            <summary>Available models · {backend.models?.length}</summary>
-            <Stack gap="xs" mt="sm">
-              {backend.models?.map((model) => (
-                <Code key={model} style={{ overflowWrap: 'anywhere' }}>{model}</Code>
-              ))}
-            </Stack>
-          </details>
-        )}
-
-        {routes.length > 0 && (
-          <details className="provider-detail-list">
-            <summary>Routes · {routes.length}</summary>
-            <Stack gap="xs" mt="sm">
-              {routes.map((route) => (
-                <Code key={`${route.model}/${route.upstream}`} style={{ overflowWrap: 'anywhere' }}>
-                  {route.model} → {route.upstream || '(as requested)'}
-                </Code>
-              ))}
-            </Stack>
-          </details>
-        )}
-
-        {minimaxUsageQuery && <MiniMaxUsageCard query={minimaxUsageQuery} />}
-
-        <Group justify="space-between" align="center" wrap="wrap" gap="xs">
-          <Title order={5}>History</Title>
-          <TimeRangeControl value={range} onChange={onRangeChange} />
-        </Group>
-
-        {backend.name === 'grok' && grokUsage && <GrokUsageCompact usage={grokUsage} />}
-
-        <Text size="xs" c="dimmed">All recorded traffic · totals are independent of the history range</Text>
-        <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
-          <CompactStat label="Requests" value={statsReady ? fmtInt(requests) : '—'} />
-          <CompactStat label="Uptime" value={statsReady && requests ? pct(uptime) : '—'} />
-          <CompactStat label="Models" value={statsReady ? fmtInt(models.length) : '—'} />
-          <CompactStat
-            label="Tool err rate"
-            value={statsReady && toolCalls ? pct(toolErrors / toolCalls) : '—'}
-          />
-        </SimpleGrid>
-
-        {seriesLoading && !series ? (
-          <Group justify="center" py="xl"><Loader size="sm" /></Group>
-        ) : seriesError && !series ? (
-          <Text size="sm" c="dimmed">
-            History charts are unavailable for this provider right now. The cumulative
-            totals above still reflect all recorded traffic.
-          </Text>
-        ) : (
-          <>
-            <HistoryLineChart
-              title="Latency"
-              description="Median first byte and full response"
-              data={historyData([series?.ttft_p50, series?.e2e_p50])}
-              series={[
-                { name: 'series0', label: 'First byte', formatter: historyFormatters.seconds },
-                { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds },
-              ]}
-            />
-            <HistoryLineChart
-              title="Throughput"
-              description="Median output rate"
-              data={historyData([series?.throughput_p50])}
-              series={[{ name: 'series0', label: 'Tokens/sec', formatter: historyFormatters.tps }]}
-            />
-            <HistoryBarChart
-              title="Requests"
-              description="Requests per interval"
-              points={series?.requests ?? []}
-            />
-            <HistoryLineChart
-              title="Token volume"
-              description="Input and output tokens per interval"
-              data={historyData([series?.tokens_in, series?.tokens_out])}
-              series={[
-                { name: 'series0', label: 'Input', formatter: historyFormatters.count },
-                { name: 'series1', label: 'Output', formatter: historyFormatters.count },
-              ]}
-            />
-            <HistoryBarChart
-              title="Tool calls"
-              description="Observed calls per interval"
-              points={series?.tool_calls ?? []}
-            />
-          </>
-        )}
-
-        <Divider my="xs" />
-        <Title order={5}>Model performance</Title>
-        {statsState === 'loading' ? (
-          <Text size="sm" c="dimmed" role="status">Loading model stats…</Text>
-        ) : statsState === 'unavailable' ? (
-          <Text size="sm" c="dimmed">
-            Model stats are temporarily unavailable.
-          </Text>
-        ) : models.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No requests recorded for this provider yet. Once traffic flows through the
-            proxy, per-model uptime and latency appear here.
-          </Text>
-        ) : (
-          <Table.ScrollContainer minWidth={520}>
-            <Table highlightOnHover verticalSpacing="sm" horizontalSpacing="sm" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              <Table.Caption>Per-model performance · all recorded traffic</Table.Caption>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Model</Table.Th>
-                  <Table.Th ta="right">Req</Table.Th>
-                  <Table.Th>Uptime</Table.Th>
-                  <Table.Th ta="right">TTFT</Table.Th>
-                  <Table.Th ta="right">E2E</Table.Th>
-                  <Table.Th ta="right">tok/s</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {[...models].sort((a, b) => b.requests - a.requests).map((model) => (
-                  <Table.Tr key={`${model.backend}/${model.model}`}>
-                    <Table.Td><Code style={{ overflowWrap: 'anywhere' }}>{model.model}</Code></Table.Td>
-                    <Table.Td ta="right">{fmtInt(model.requests)}</Table.Td>
-                    <Table.Td>
-                      <UptimeBadge uptime={model.uptime} requests={model.requests} />
-                    </Table.Td>
-                    <Table.Td ta="right">{fmtSec(model.ttft_seconds.p50)}</Table.Td>
-                    <Table.Td ta="right">{fmtSec(model.e2e_seconds.p50)}</Table.Td>
-                    <Table.Td ta="right">{fmtTps(model.throughput_tps.p50)}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-        )}
-        {statsReady && toolCalls > 0 && (
-          <Text size="xs" c="dimmed">
-            {fmtInt(toolCalls)} tool calls · {pct(toolCalls ? toolErrors / toolCalls : 0)} errors
-          </Text>
-        )}
-      </Stack>
+      <Text className="catalog-summary-number tabular">{value}</Text>
+      <Text size="xs" c="dimmed">
+        {hint}
+      </Text>
     </Box>
   )
 }

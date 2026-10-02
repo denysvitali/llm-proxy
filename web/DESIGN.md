@@ -6,24 +6,17 @@ raise it with the lead rather than silently diverging.
 
 ## 1. The direction in one paragraph
 
-A **dark-first, dense operator control room**. Near-black layered surfaces, cards
-one step above the canvas and separated by a **hairline rather than a shadow**,
-one saturated blue accent used sparingly for interaction (never for data), and
-**tabular monospace numerics** everywhere a number can be compared vertically.
-It should feel like a well-made terminal-adjacent ops tool — precise, quiet, and
-dense — not a consumer dashboard. Information density is a feature; every pixel
-should carry signal.
+A compact gateway workspace with a persistent slate sidebar, indigo interaction
+accents, and a clear hierarchy from page title to sections to data. Light and
+dark schemes share the same layouts. Cards use quiet borders and restrained
+rounding; charts and tables keep the emphasis on readable values.
 
-**Feels like:** Linear / Vercel / Grafana-at-midnight. Calm, technical, fast.
-**Does not feel like:** frosted glass, big rounded marketing cards, floating
-blobs, drop shadows, gradients-as-decoration, oversized hero numbers, playful
-illustration, generous whitespace for its own sake.
+Desktop navigation is 232px wide. Mobile uses bottom navigation and shows the
+current page below the brand. Keep the first screen useful: show key statistics,
+primary controls, and the start of the main content before secondary details.
 
-### Two rules that override everything else
-
-1. **Density over decoration.** A screen with more usable signal per scroll wins.
-2. **Hairline over shadow.** On near-black, a shadow is invisible and a border is
-   the only honest separator. Use `1px solid var(--hairline)`.
+Prefer structure over decoration: group related controls, disclose dense detail,
+and preserve complete model IDs. Gradients are limited to the small brand mark.
 
 ## 2. Color tokens
 
@@ -32,23 +25,24 @@ Defined in `web/src/index.css` per color-scheme, and mirrored as Mantine ramps i
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--canvas` | `#f4f5f7` | `#0b0d10` | `body` background |
+| `--canvas` | `#f5f7fb` | `#0c111d` | `body` background |
 | `--card` | `#ffffff` | `#14161a` | Card/Paper surface — **the exact value charts are validated against** |
-| `--sunken` | `#eceef1` | `#101318` | Code blocks, inset wells |
-| `--hairline` | `rgba(0,0,0,.10)` | `rgba(255,255,255,.10)` | All borders/dividers |
-| `--segmented-track` | `rgba(0,0,0,.06)` | `rgba(255,255,255,.07)` | Segmented control track |
-| `--segmented-thumb` | `#ffffff` | `#272d36` | Segmented control selected |
-| `--chart-grid-color` | `rgba(0,0,0,.08)` | `rgba(255,255,255,.09)` | Chart gridlines |
-| `--chart-cursor-fill` | `rgba(0,0,0,.04)` | `rgba(255,255,255,.06)` | Chart crosshair band |
+| `--sunken` | `#eff2f8` | `#1a2539` | Code blocks, inset wells |
+| `--hairline` | `#e2e7f0` | `#26324a` | All borders/dividers |
+| `--segmented-track` | `#edf0f7` | `#1a2539` | Segmented control track |
+| `--segmented-thumb` | `#ffffff` | `#303b53` | Segmented control selected |
+| `--chart-grid-color` | `rgba(37,51,78,.08)` | `rgba(196,210,236,.10)` | Chart gridlines |
+| `--chart-cursor-fill` | `rgba(37,51,78,.04)` | `rgba(196,210,236,.06)` | Chart crosshair band |
 
-**Never hard-code a hex for a surface.** Use `var(--card)`, `var(--hairline)`,
+The sidebar has its own fixed slate surface and foreground tokens in `index.css`.
+Other components must follow the selected scheme. **Do not hard-code surface hexes in components.** Use `var(--card)`, `var(--hairline)`,
 `var(--canvas)`, or Mantine semantic colors (`--mantine-color-text`,
 `-dimmed`, `-default-border`). A hard-coded hex is a bug: it will not follow the
 scheme.
 
 ### Accent (interaction only — never data)
 
-`brand` ramp in `theme.ts`; primary shade is `6` on light, `8` on dark. Use it
+`brand` ramp in `theme.ts`; primary shade is `6` on light, `4` on dark. Use it
 for active nav, primary buttons, focus rings, links. **Never use it as a chart
 series color.**
 
@@ -93,30 +87,20 @@ Never use a chart status color for a UI badge, or vice versa.
 
 ## 3. Type
 
-- UI/body: `-apple-system, "Segoe UI", Roboto, Inter, system-ui, sans-serif`
-- **Everything numeric**: `var(--numeric-font)` (the mono stack) **+**
-  `font-variant-numeric: tabular-nums`.
-- `index.css` already applies tabular figures to all `<Table>` cells. For a stat
-  tile / headline number / bar label, add the `stat-value` class (mono + tnum +
-  slight negative tracking). **A number a human scans vertically must not
-  shimmer in width.**
-- Scale: `xs 11.5 · sm 13 · md 14 · lg 16`; headings `h1 22 → h5 13`, weight
-  600–650. Headings get `letter-spacing: -0.014em` automatically.
-- Line lengths: cap prose at ~70ch. Denseness comes from structure, not from
-  shrinking type below 13px.
-
-**This is the canonical type scale.** `theme.ts` has been updated to match
-exactly: `xs: 11.5, sm: 13, md: 14, lg: 16, h1: 22`. Do not deviate.
+- UI/body: Inter with system fallbacks; monospace for code and identifiers.
+- Use tabular figures for numbers compared in columns (`tabular` or `stat-value`).
+- Scale: `xs 12 · sm 13 · md 14 · lg 16`; page titles are 32px on desktop
+  and 28px on mobile. Section titles remain 15–18px.
+- Keep paragraph line lengths readable. Do not reduce text sizes to fit a layout;
+  let controls wrap or switch to a single column.
 
 ## 4. Spacing / radius / elevation
 
-- **Spacing** is the Mantine scale: `xs 6 · sm 10 · md 16 · lg 24 · xl 32`.
-  Page sections sit at `lg`; a dense row at `xs`/`sm`.
-- **Radius**: `xs 2 · sm 4 · md 6 · lg 10 · xl 14`. Default is `md`. Data-dense
-  surfaces prefer `sm`/`md`; only a large panel earns `lg`. **No pill shapes**,
-  no 20px+ radii.
-- **Elevation**: no `box-shadow` on cards. Use a border. A shadow is only
-  acceptable for a genuinely floating layer (popover/menu).
+- Mantine spacing: `xs 6 · sm 10 · md 16 · lg 24 · xl 32`.
+- Radius: `xs 2 · sm 4 · md 8 · lg 14 · xl 18`; default controls use `md`,
+  cards use `lg`. Badges can be rounded. Avoid nested oversized cards.
+- Borders use `var(--hairline)`. The shared card shadow is subtle; do not add
+  independent shadows or animated lifts to static data cards.
 
 ## 5. Chart rules (hard rules)
 
@@ -130,8 +114,9 @@ exactly: `xs: 11.5, sm: 13, md: 14, lg: 16, h1: 22`. Do not deviate.
   `output`, slot 2 `cache read`, slot 3 `cache write` (`seriesNames`). A filter
   that removes a series must not repaint the survivors. A 5th series folds into
   "Other" or becomes small multiples — never a generated hue.
-- **Legend for ≥2 series**, and ≤4 series are also direct-labeled. One series
-  needs no legend — the title names it.
+- **Persistent named keys for multiple series.** History charts show the latest
+  sampled value beside each key above the plot. Do not place end labels inside
+  narrow plots, where they overlap. Keep tooltips and accessible data tables.
 - **Hover layer is mandatory**: crosshair + tooltip on line/area, per-mark
   tooltip on bar/dot/cell. Hit target ≥ the mark.
 - **Grid and axes are recessive**; never a number on every point. Selectively
@@ -177,8 +162,8 @@ all four pages. Leave that export alone.
 | Do | Don't |
 |---|---|
 | Use `var(--card)`, `var(--hairline)` | Hard-code surface hexes |
-| Tabular mono for every number | Proportional figures in a scanned column |
-| Hairline borders | Drop shadows on cards |
+| Tabular figures for comparable values | Proportional figures in a scanned column |
+| Quiet shared borders and elevation | Per-component shadows or hover lifts |
 | Fixed categorical slot order | Assign colors by rank/sort order |
 | One axis per chart | Dual-axis charts |
 | Icon **or** label with status color | Color-only state |
@@ -252,6 +237,15 @@ cd web && npx tsc -b          # must pass
 cd web && npm run lint        # no new errors
 node scripts/ui-shots.mjs --out /tmp/ui-shots/current   # shoot your pages
 ```
-`lint` has pre-existing `only-export-components` warnings in
-`GrokUsageCard`, `HistoryCharts`, `Overview` — leave those alone; just don't add
-new ones.
+`lint` has two existing `only-export-components` warnings in `HistoryCharts`.
+Do not introduce new warnings. Run the regression harness for behavior changes:
+
+```bash
+node scripts/ui-shots.mjs --base-url http://127.0.0.1:5173 --regression --out /tmp/llm-proxy-review
+```
+
+Page orchestration lives in `pages/`; detailed views and helpers live in
+`components/catalog/`, `components/overview/`, and `components/setup/`. Keep
+page styles in the corresponding CSS file. Usage cards share `UsageCardShell`
+and `UsageMeter`. Setup connection checks must use `GET /healthz`; loading the
+page or checking connectivity must never send inference or claim rewards.

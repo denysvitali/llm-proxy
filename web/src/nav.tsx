@@ -9,6 +9,7 @@ import type { ComponentType } from 'react'
 export interface NavItem {
   path: string
   label: string
+  description: string
   icon: ComponentType<{ size?: number | string; stroke?: number }>
 }
 
@@ -20,13 +21,10 @@ export function isActiveNavPath(pathname: string, path: string): boolean {
   return pathname === path || (path !== '/' && pathname.startsWith(`${path}/`))
 }
 
-// Order defines both the desktop header order and the mobile bottom-bar order.
-// The shell renders this as a segmented in-header console on >= 48em and as a
-// bottom tab bar below it; both views read the same array so the two can never
-// disagree about which route is active.
+// Desktop and mobile navigation share routes, labels and active states.
 export const NAV: NavItem[] = [
-  { path: '/', label: 'Overview', icon: IconActivity },
-  { path: '/models', label: 'Models', icon: IconCube },
-  { path: '/providers', label: 'Providers', icon: IconServer },
-  { path: '/setup', label: 'Setup', icon: IconTerminal2 },
+  { path: '/', label: 'Overview', description: 'Traffic & performance', icon: IconActivity },
+  { path: '/models', label: 'Models', description: 'Explore your catalog', icon: IconCube },
+  { path: '/providers', label: 'Providers', description: 'Connections & usage', icon: IconServer },
+  { path: '/setup', label: 'Setup', description: 'Connect your tools', icon: IconTerminal2 },
 ]

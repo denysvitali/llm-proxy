@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { checkSetupRegressions } from './setup-regressions.mjs';
+import { checkCatalogRegressions } from './catalog-regressions.mjs';
 
 const backend = (name) => ({ name, enabled: true, host: 'example.invalid', hasKey: true,
   authLabel: 'API key', authConfigured: true, catalogOK: true, models: [`${name}/example-model`] });
@@ -44,12 +46,12 @@ export async function checkRegressions(browser, base, outDir) {
       await page.goto(`${base}/providers`);
       await visible(page.getByRole('heading', { level: 1, name: 'Providers' }));
       await visible(page.getByRole('button', { name: 'Inspect zcode', exact: true }));
-      await page.getByRole('textbox', { name: 'Search providers' }).fill('zcode');
+      await page.getByLabel('Search providers', { exact: true }).fill('zcode');
       await visible(page.getByText(/1 of 2 providers/));
       assert.equal(await page.getByRole('button', { name: 'Inspect example', exact: true }).count(), 0);
-      await page.getByRole('textbox', { name: 'Search providers' }).fill('does-not-exist');
+      await page.getByLabel('Search providers', { exact: true }).fill('does-not-exist');
       await visible(page.getByText('No matching providers', { exact: true }));
-      await page.getByRole('textbox', { name: 'Search providers' }).fill('');
+      await page.getByLabel('Search providers', { exact: true }).fill('');
       if (name === 'null') {
         await page.getByRole('combobox', { name: 'Filter provider health' }).click();
         await page.getByRole('option', { name: 'Needs attention', exact: true }).click();
@@ -97,16 +99,20 @@ export async function checkRegressions(browser, base, outDir) {
         await visible(page.getByRole('button', { name: 'Reload page', exact: true }));
         brokenOverview = false;
         await page.getByRole('button', { name: 'Reload page', exact: true }).click();
-        await visible(page.getByRole('heading', { name: '1. Check your connection' }));
+        await visible(page.getByRole('heading', { name: 'Configure your client' }));
         for (const width of [320, 768, 769, 1024]) {
           await page.setViewportSize({ width, height: 900 });
           await page.waitForFunction((mobile) => Boolean(document.querySelector('.bottom-navigation')) === mobile, width <= 768);
-          await page.waitForFunction((left) => Math.abs(document.querySelector('.page-container').getBoundingClientRect().left - left) < 0.1, width <= 768 ? 0 : 216);
+          await page.waitForFunction((mobile) => {
+            const left = mobile ? 0 : document.querySelector('.app-sidebar').getBoundingClientRect().right;
+            return Math.abs(document.querySelector('.page-container').getBoundingClientRect().left - left) < 0.1;
+          }, width <= 768);
           const geometry = await page.evaluate(() => ({
             left: document.querySelector('.page-container').getBoundingClientRect().left,
+            expectedLeft: document.querySelector('.app-sidebar')?.getBoundingClientRect().right ?? 0,
             overflow: document.documentElement.scrollWidth > innerWidth + 1,
           }));
-          assert.equal(geometry.left, width <= 768 ? 0 : 216, `shell offset at ${width}px`);
+          assert.equal(geometry.left, geometry.expectedLeft, `shell offset at ${width}px`);
           assert.equal(geometry.overflow, false, `no horizontal overflow at ${width}px`);
         }
 
@@ -116,6 +122,8 @@ export async function checkRegressions(browser, base, outDir) {
       await context.close();
     }
   }
+  await checkSetupRegressions(browser, base, overview, series);
+  await checkCatalogRegressions(browser, base);
   return checkMiniMaxRegressions(browser, base, outDir);
 }
 
@@ -171,11 +179,14 @@ export async function checkMiniMaxRegressions(browser, base, outDir) {
       let reads = 0;
       let claimed = fixture.claimed ?? false;
       const pendingClaim = new Promise((resolve) => { finishClaim = resolve; });
+      let receiveClaim;
+      const interceptedClaim = new Promise((resolve) => { receiveClaim = resolve; });
       await context.route(/\/(api\/|stats(?:\?|$))/, async (route) => {
         const request = route.request();
         const pathname = new URL(request.url()).pathname;
         if (pathname === '/api/minimax-code/checkin' && request.method() === 'POST') {
           claims++;
+          receiveClaim();
           await pendingClaim;
           if (fixture.claim === 'failure') return route.fulfill({ status: 503, json: { error: 'Check-in temporarily unavailable' } });
           claimed = true;
@@ -304,6 +315,9 @@ export async function checkMiniMaxRegressions(browser, base, outDir) {
         const submitted = page.waitForRequest((request) => request.url().endsWith('/api/minimax-code/checkin') && request.method() === 'POST');
         await claimButton.click();
         await submitted;
+        // The request event can precede the route handler. Wait for the mock
+        // to count the request before checking the single-submission invariant.
+        await interceptedClaim;
         assert.equal(claims, 1, 'explicit claim sends one POST');
         await visible(claimButton.and(page.locator(':disabled')));
         assert.equal(await claimButton.isEnabled(), false, 'pending claim prevents another submission');

@@ -16,35 +16,35 @@ import {
 // Shared typography and controls; chart colors live in palette.ts.
 
 const dark: [string, string, string, string, string, string, string, string, string, string] = [
-  '#f4f6f8', // 0 — primary text on dark
-  '#dfe3e8', // 1
-  '#b8bfc9', // 2 — secondary text
-  '#8b93a1', // 3 — tertiary / disabled
-  '#6b7280', // 4 — muted
-  '#3a414d', // 5 — disabled borders
-  '#272d36', // 6 — raised borders
-  '#171a24', // 7 — raised surface (cards)
-  '#12141c', // 8 — toolbar / drawer surface
-  '#090a10', // 9 — canvas (body background)
+  '#edf1f8', // 0 — primary text on dark
+  '#dce3f0', // 1
+  '#c0cbdc', // 2 — secondary text
+  '#a1adc3', // 3 — tertiary / disabled
+  '#74829a', // 4 — muted
+  '#354159', // 5 — disabled borders
+  '#26324a', // 6 — raised borders
+  '#182237', // 7 — raised surface
+  '#14161a', // 8 — card / drawer surface (chart contrast reference)
+  '#0c111d', // 9 — canvas
 ]
 
-// Accent ramp. Blue carries interaction, not data; charts use palette.ts.
+// Indigo carries interaction; charts use palette.ts.
 const brand: [string, string, string, string, string, string, string, string, string, string] = [
-  '#eef0ff', // 0 tint
-  '#dde1ff',
-  '#c1c8ff',
-  '#a0a9fb',
-  '#8189f5',
-  '#6b6feb',
-  '#5b54e0', // 6 — filled buttons on light
-  '#4d44c9', // 7
-  '#7c7bf2', // 8 — filled buttons on dark
-  '#a5a8fa', // 9
+  '#f0f1ff',
+  '#e1e2ff',
+  '#c6c7ff',
+  '#aeacff',
+  '#9693ff', // 4 — dark-mode accent
+  '#7b73ed',
+  '#5b51df', // 6 — light-mode accent
+  '#4d42c5',
+  '#4036a2',
+  '#352f80',
 ]
 
 export const theme = createTheme({
   primaryColor: 'brand',
-  primaryShade: { light: 6, dark: 8 },
+  primaryShade: { light: 6, dark: 4 },
   autoContrast: true,
   respectReducedMotion: true,
   colors: { brand, dark },
@@ -57,25 +57,25 @@ export const theme = createTheme({
   headings: {
     fontWeight: '650',
     sizes: {
-      h1: { fontSize: rem(22), lineHeight: '1.25', fontWeight: '650' },
+      h1: { fontSize: rem(32), lineHeight: '1.2', fontWeight: '700' },
       h2: { fontSize: rem(18), lineHeight: '1.3', fontWeight: '650' },
       h3: { fontSize: rem(15), lineHeight: '1.35', fontWeight: '650' },
       h4: { fontSize: rem(13), lineHeight: '1.4', fontWeight: '600' },
       h5: { fontSize: rem(12), lineHeight: '1.45', fontWeight: '600' },
     },
   },
-  fontSizes: { xs: rem(11.5), sm: rem(13), md: rem(14), lg: rem(16) },
+  fontSizes: { xs: rem(12), sm: rem(13), md: rem(14), lg: rem(16) },
   spacing: { xs: rem(6), sm: rem(10), md: rem(16), lg: rem(24), xl: rem(32) },
   radius: {
     xs: rem(2),
     sm: rem(4),
-    md: rem(6),
-    lg: rem(12),
+    md: rem(8),
+    lg: rem(14),
     xl: rem(18),
   },
   components: {
     Card: Card.extend({
-      defaultProps: { withBorder: true, radius: 'xl', padding: 'lg' },
+      defaultProps: { withBorder: true, radius: 'lg', padding: 'lg' },
     }),
     Paper: Paper.extend({
       defaultProps: { radius: 'lg' },

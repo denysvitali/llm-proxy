@@ -16,13 +16,14 @@ export function PageSection({
   const titleId = useId()
 
   return (
-    <Box component="section" aria-labelledby={titleId} miw={0}>
+    <Box component="section" className="page-section" aria-labelledby={titleId} miw={0}>
       <Group
         justify="space-between"
         align="flex-end"
         wrap="wrap"
         gap="sm"
         mb="sm"
+        className="page-section-heading"
       >
         <Stack gap={2} style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
           <Title
@@ -36,7 +37,7 @@ export function PageSection({
             {title}
           </Title>
           {description && (
-            <Text size="xs" c="dimmed" lh={1.4} m={0}>
+            <Text size="xs" c="dimmed" lh={1.5} m={0}>
               {description}
             </Text>
           )}

@@ -1,6 +1,7 @@
-import { Alert, Badge, Box, Button, Card, Divider, Group, Loader, Progress, SimpleGrid, Stack, Text, Title } from '@mantine/core'
+import { Alert, Badge, Box, Button, Divider, Group, Progress, SimpleGrid, Stack, Text, Title } from '@mantine/core'
 import { useIsMutating, useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { claimMiniMaxCheckin, type MiniMaxCheckinPanel, type MiniMaxQuotaWindow, type MiniMaxUsage, type MiniMaxVideoQuota } from '../api'
+import UsageCardShell from './UsageCardShell'
 
 export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<MiniMaxUsage, Error> }) {
   const usage = query.data
@@ -22,27 +23,14 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
   const panel = usage?.checkin
   const claimed = claimedToday(panel)
   const claimable = !claimed && !!panel?.days.some((day) => day.status === 2)
-  const updated = dateLabel(usage?.fetchedAt)
 
   return (
-    <Card component="section" aria-label="MiniMax Code account" withBorder radius="lg" p="md" miw={0} style={{ overflowWrap: 'anywhere' }}>
-      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" mb="sm">
-        <Box miw={0}>
-          <Title order={5}>MiniMax Code</Title>
-          <Text size="xs" c="dimmed">{account?.tier || 'Account credits and quotas'}</Text>
-        </Box>
-        {query.isFetching && !query.isPending && <Loader size="xs" aria-label="Refreshing MiniMax usage" style={{ flexShrink: 0 }} />}
-      </Group>
+    <UsageCardShell title="MiniMax Code" ariaLabel="MiniMax Code account" subtitle={account?.tier || 'Account credits and quotas'}
+      isFetching={query.isFetching} isPending={query.isPending} hasData={!!usage} error={query.error} updated={usage?.fetchedAt}>
       <Stack gap="sm">
-        {query.error && <Alert color="red" title={usage ? 'Could not refresh usage' : 'Usage unavailable'}>
-          {query.error.message}
-          {usage && <Text size="sm" mt={4}>Showing the last available data.</Text>}
-        </Alert>}
-        {query.isPending ? (
-          <Group justify="center" py="md" role="status"><Loader size="sm" aria-hidden="true" /><Text size="sm" c="dimmed">Loading MiniMax account…</Text></Group>
-        ) : usage ? <>
+        {usage ? <>
           {usage.accountError && <Alert color="yellow" title="Account unavailable">{usage.accountError}</Alert>}
-          <Box>
+          <Box className="usage-card-balance">
             <Text size="xs" c="dimmed" fw={500}>Credit balance</Text>
             <Text fz={26} fw={700} lh={1.3} style={{ fontVariantNumeric: 'tabular-nums' }}>{creditLabel(account?.credit_balance)}</Text>
             {dateLabel(account?.expires_at_ms) && <Text size="xs" c="dimmed">Plan expires {dateLabel(account?.expires_at_ms)}</Text>}
@@ -74,20 +62,19 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
           </Text>}
           {panel?.days.length ? <SimpleGrid type="container" cols={{ base: 3, '420px': 4, '640px': 7 }} spacing={5} verticalSpacing={5}>
             {[...panel.days].sort((a, b) => a.day_no - b.day_no).map((day) => (
-              <Box key={day.day_no} p={6} style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--mantine-radius-sm)', background: day.is_today ? 'var(--mantine-color-blue-light)' : undefined }}>
+              <Box key={day.day_no} p={8} className="usage-checkin-day" data-today={day.is_today} data-claimed={day.status === 3}>
                 <Text size="xs" fw={day.is_today ? 700 : 500}>Day {day.day_no}</Text>
-                <Text fz={11} fw={600} mt={4}>{Number.isFinite(day.points) ? day.points.toLocaleString() : '—'} credits</Text>
-                {day.bonus_points != null && day.bonus_points > 0 && <Text fz={10} c="dimmed">Includes {day.bonus_points.toLocaleString()} bonus</Text>}
-                <Text fz={10} c={day.status === 3 ? 'teal' : 'dimmed'} mt={4}>{day.status === 3 ? 'Claimed' : day.status === 2 ? 'Available' : day.status === 4 ? 'Unavailable' : 'Upcoming'}</Text>
-                {day.is_today && <Text fz={10} fw={700}>Today</Text>}
+                <Text fz={12} fw={600} mt={4}>{Number.isFinite(day.points) ? day.points.toLocaleString() : '—'} credits</Text>
+                {day.bonus_points != null && day.bonus_points > 0 && <Text fz={11} c="dimmed">Includes {day.bonus_points.toLocaleString()} bonus</Text>}
+                <Text fz={11} c={day.status === 3 ? 'teal' : 'dimmed'} mt={4}>{day.status === 3 ? 'Claimed' : day.status === 2 ? 'Available' : day.status === 4 ? 'Unavailable' : 'Upcoming'}</Text>
+                {day.is_today && <Text fz={11} fw={700}>Today</Text>}
               </Box>
             ))}
           </SimpleGrid> : <Text size="sm" c="dimmed">Check-in schedule is unavailable.</Text>}
           {!claimable && !claimed && !!panel?.days.length && !usage.checkinError && <Text size="xs" c="dimmed">Daily check-in is unavailable right now.</Text>}
-          {updated && <Text size="xs" c="dimmed">Updated <time dateTime={usage.fetchedAt}>{updated}</time></Text>}
         </> : null}
       </Stack>
-    </Card>
+    </UsageCardShell>
   )
 }
 

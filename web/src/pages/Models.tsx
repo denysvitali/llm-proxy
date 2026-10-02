@@ -1,509 +1,263 @@
-import { useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ActionIcon,
   Alert,
+  Badge,
   Box,
   Button,
-  Card,
   Chip,
-  Code,
   Drawer,
   Group,
   Loader,
   Paper,
-  Progress,
-  ScrollArea,
   Select,
   SimpleGrid,
   Stack,
-  Table,
   Text,
-  TextInput,
   Title,
-  UnstyledButton,
 } from '@mantine/core'
-import { useClipboard, useMediaQuery } from '@mantine/hooks'
+import { useMediaQuery } from '@mantine/hooks'
 import {
   IconActivity,
   IconAlertTriangle,
   IconArrowDown,
   IconArrowUp,
-  IconArrowsSort,
   IconClock,
-  IconCopy,
   IconCube,
-  IconChevronRight,
   IconInboxOff,
-  IconSearch,
   IconSearchOff,
-  IconX,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchBackendStatsSeries, fetchOverview, fetchStats } from '../api'
-import type { ModelStat, StatsSeries } from '../api'
-import { clampRate, fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
+import { fetchBackendStatsSeries, fetchStats } from '../api'
+import { fmtInt, fmtSec } from '../format'
 import { useChartPalette } from '../palette'
-import { tpsSeries, tokenMixSeries } from '../lib/chartSeries'
-import { mixSegments } from '../lib/stats'
 import StatTile from '../components/StatTile'
 import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/EmptyState'
-import { TimeRangeControl } from '../components/TimeRangeControl'
+import SearchInput from '../components/SearchInput'
 import UptimeBadge from '../components/UptimeBadge'
-import StatusChips from '../components/StatusChips'
-import PercentileBars from '../components/PercentileBars'
-import TokenMixBar, { TokenLegend } from '../components/TokenMixBar'
+import ModelCatalog from '../components/catalog/ModelCatalog'
+import ModelDetail from '../components/catalog/ModelDetail'
+import ModelTraffic from '../components/catalog/ModelTraffic'
 import {
-  HistoryBarChart,
-  HistoryLineChart,
-  historyData,
-  historyFormatters,
-} from '../components/HistoryCharts'
+  compareModels,
+  hasModelErrors,
+  sortOptions,
+  type ModelSort,
+  type SortKey,
+} from '../components/catalog/modelData'
 import { Fade } from '../App'
-
-type SortKey =
-  | 'model'
-  | 'requests'
-  | 'uptime'
-  | 'ttft'
-  | 'e2e'
-  | 'tps'
-  | 'cache'
-  | 'tools'
-  | 'toolErr'
-  | 'success'
-
-const columns: { key: SortKey; label: string; numeric?: boolean }[] = [
-  { key: 'model', label: 'Backend / model' },
-  { key: 'requests', label: 'Requests', numeric: true },
-  { key: 'uptime', label: 'Uptime' },
-  { key: 'ttft', label: 'TTFT p50', numeric: true },
-  { key: 'e2e', label: 'E2E p50', numeric: true },
-  { key: 'tps', label: 'tok/s p50', numeric: true },
-  { key: 'cache', label: 'Cache hit', numeric: true },
-  { key: 'tools', label: 'Tool calls', numeric: true },
-  { key: 'toolErr', label: 'Tool err', numeric: true },
-  { key: 'success', label: 'Success', numeric: true },
-]
-
-const sortOptions = [
-  { value: 'requests', label: 'Requests' },
-  { value: 'uptime', label: 'Uptime' },
-  { value: 'ttft', label: 'TTFT (p50)' },
-  { value: 'e2e', label: 'E2E latency (p50)' },
-  { value: 'tps', label: 'Throughput (p50)' },
-  { value: 'cache', label: 'Cache hit' },
-  { value: 'tools', label: 'Tool calls' },
-  { value: 'toolErr', label: 'Tool error rate' },
-  { value: 'success', label: 'Success rate' },
-  { value: 'model', label: 'Name' },
-]
-
-// A recorded zero rate is different from a rate with no observations.
-function observedRate(rate: number, observations: number): string {
-  return observations > 0 && Number.isFinite(rate) ? `${(clampRate(rate) * 100).toFixed(1)}%` : '—'
-}
-
-// p90/p99 as a hover title behind the p50 cell; the drawer shows the same
-// percentiles as full bars for keyboard/touch users.
-function percentileTitle(v: { p50: number; p90: number; p99: number }, fmt: (n: number) => string): string {
-  return `p90 ${fmt(v.p90)} · p99 ${fmt(v.p99)}`
-}
-
-function sortValue(m: ModelStat, key: SortKey): string | number {
-  switch (key) {
-    case 'model':
-      return `${m.backend}/${m.model}`
-    case 'requests':
-      return m.requests
-    case 'uptime':
-      return m.uptime
-    case 'ttft':
-      return m.ttft_seconds.p50
-    case 'e2e':
-      return m.e2e_seconds.p50
-    case 'tps':
-      return m.throughput_tps.p50
-    case 'cache':
-      return m.cache_rate
-    case 'tools':
-      return m.tool_calls
-    case 'toolErr':
-      return m.tool_error_rate
-    case 'success':
-      return m.requests > 0 ? m.successes / m.requests : 0
-  }
-}
+import './catalog.css'
 
 export default function ModelsPage() {
-  const q = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
-  const catalogQ = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
-  // Memoized so the rows useMemo below sees a stable identity between fetches.
-  const models = useMemo(() => q.data?.models ?? [], [q.data])
-  const pal = useChartPalette()
+  const query = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
+  const models = useMemo(() => query.data?.models ?? [], [query.data])
+  const palette = useChartPalette()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
-
   const [filter, setFilter] = useState('')
-  const [catalogFilter, setCatalogFilter] = useState('')
   const [errorsOnly, setErrorsOnly] = useState(false)
-  const searchRef = useRef<HTMLInputElement>(null)
-  function clearFilter() {
-    setFilter('')
-    searchRef.current?.focus()
-  }
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'requests', dir: -1 })
-  const [selected, setSelected] = useState<ModelStat | null>(null)
+  const [sort, setSort] = useState<ModelSort>({ key: 'requests', dir: -1 })
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selected = models.find((model) => `${model.backend}/${model.model}` === selectedId) ?? null
   const [historyRange, setHistoryRange] = useState('24h')
-
-  const catalog = useMemo(() => catalogQ.data?.backends
-    .filter((b) => b?.enabled && b.catalogOK)
-    .flatMap((b) => b.models ?? [])
-    .filter((id, index, all) => all.indexOf(id) === index)
-    .sort((a, b) => a.localeCompare(b)) ?? [], [catalogQ.data])
-  const visibleCatalog = useMemo(() => catalog.filter((id) =>
-    id.toLowerCase().includes(catalogFilter.trim().toLowerCase()),
-  ), [catalog, catalogFilter])
-  const failedCatalogs = catalogQ.data?.backends.filter((b) => b?.enabled && !b.catalogOK).length ?? 0
-
-  const selectedSeriesQ = useQuery({
+  const history = useQuery({
     queryKey: ['stats-series', 'model', selected?.backend, selected?.model, historyRange],
     queryFn: () => fetchBackendStatsSeries(selected!.backend, historyRange, selected!.model),
     enabled: !!selected,
   })
-
-  const rows = useMemo(() => {
-    const f = filter.trim().toLowerCase()
-    return models
-      .filter((m) => !f || `${m.backend}/${m.model}`.toLowerCase().includes(f))
-      .filter((m) => !errorsOnly || m.requests - m.successes > 0 || m.tool_errors > 0)
-      .sort((a, b) => {
-        const va = sortValue(a, sort.key)
-        const vb = sortValue(b, sort.key)
-        if (typeof va === 'string' || typeof vb === 'string')
-          return String(va).localeCompare(String(vb)) * sort.dir
-        return (va - vb) * sort.dir
-      })
-  }, [models, filter, sort, errorsOnly])
-
+  const rows = useMemo(
+    () =>
+      models
+        .filter((model) =>
+          `${model.backend}/${model.model}`.toLowerCase().includes(filter.trim().toLowerCase()),
+        )
+        .filter((model) => !errorsOnly || hasModelErrors(model))
+        .sort((a, b) => compareModels(a, b, sort)),
+    [models, filter, errorsOnly, sort],
+  )
   const summary = useMemo(() => {
-    const requests = models.reduce((s, m) => s + m.requests, 0)
-    const ttfts = models.map((m) => m.ttft_seconds.p50).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b)
-    const middle = Math.floor(ttfts.length / 2)
-    const medianTtft = ttfts.length === 0 ? NaN : ttfts.length % 2 === 1
-      ? ttfts[middle]
-      : (ttfts[middle - 1] + ttfts[middle]) / 2
-    const withErrors = models.filter(
-      (m) => m.requests - m.successes > 0 || m.tool_errors > 0,
-    ).length
-    return { requests, medianTtft, withErrors }
+    const latencies = models
+      .map((model) => model.ttft_seconds.p50)
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b)
+    const middle = Math.floor(latencies.length / 2)
+    return {
+      requests: models.reduce((total, model) => total + model.requests, 0),
+      latency:
+        latencies.length === 0
+          ? NaN
+          : latencies.length % 2
+            ? latencies[middle]
+            : (latencies[middle - 1] + latencies[middle]) / 2,
+      errors: models.filter(hasModelErrors).length,
+    }
   }, [models])
-
   function toggleSort(key: SortKey) {
-    setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'model' ? 1 : -1 }))
+    setSort((previous) => ({
+      key,
+      dir: previous.key === key ? (previous.dir === 1 ? -1 : 1) : key === 'model' ? 1 : -1,
+    }))
   }
-
+  function resetFilters() {
+    setFilter('')
+    setErrorsOnly(false)
+  }
   return (
-    <Fade pending={q.isPending}>
-      <style>{`
-        .models-table th button:hover {
-          background: var(--segmented-track);
-          border-radius: 4px;
-        }
-        .models-table th button[aria-sort="ascending"],
-        .models-table th button[aria-sort="descending"] {
-          text-decoration: underline;
-          text-decoration-color: var(--mantine-color-brand-filled, var(--mantine-color-blue-filled));
-          text-underline-offset: 3px;
-        }
-        .models-table tr:hover .models-table-copy {
-          opacity: 1 !important;
-        }
-      `}</style>
+    <Fade pending={query.isPending}>
       <Stack gap="lg" className="models-page">
-        <PageHeader
-          title="Models"
-          subtitle="Browse available models and explore recorded traffic, latency, and reliability."
-        />
-
-        <Card component="section" aria-label="Available model catalog" withBorder radius="lg" p="md">
-          <Stack gap="sm">
-            <Box>
-              <Title order={2} size="h4">Available models</Title>
-              <Text size="sm" c="dimmed">Models advertised by enabled providers. Copy an ID to use it in a request.</Text>
-            </Box>
-            <TextInput
-              leftSection={<IconSearch size={14} />}
-              placeholder="Find an available model…"
-              aria-label="Find an available model"
-              value={catalogFilter}
-              onChange={(e) => setCatalogFilter(e.currentTarget.value)}
-            />
-            {catalogQ.isPending ? (
-              <Group gap="xs" role="status"><Loader size="sm" /><Text size="sm">Loading model catalog…</Text></Group>
-            ) : catalogQ.isError ? (
-              <Alert color="red" title="Model catalog unavailable">
-                <Stack gap="xs" align="flex-start">
-                  <Text size="sm">{catalogQ.error.message}</Text>
-                  <Button size="compact-sm" variant="light" onClick={() => catalogQ.refetch()}>Retry</Button>
-                </Stack>
-              </Alert>
-            ) : (
-              <>
-                {failedCatalogs > 0 && <Text size="sm" c="dimmed">{failedCatalogs} provider catalog{failedCatalogs === 1 ? ' is' : 's are'} unavailable.</Text>}
-                <Text size="xs" c="dimmed" aria-live="polite">
-                  {catalogFilter.trim() ? `${visibleCatalog.length} of ${catalog.length} available models match` : `${catalog.length} available models`}
-                </Text>
-                {visibleCatalog.length === 0 ? (
-                  <Text size="sm" c="dimmed">{catalog.length === 0 ? 'No provider models are available.' : 'No available models match that search.'}</Text>
-                ) : (
-                  <ScrollArea mah={320} type="auto">
-                    <Stack gap={0}>
-                      {visibleCatalog.map((id) => <CatalogModel key={id} id={id} />)}
-                    </Stack>
-                  </ScrollArea>
-                )}
-              </>
-            )}
-          </Stack>
-        </Card>
-
-        {models.length > 0 && (
-          <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
-            <StatTile
-              label="Models tracked"
-              value={fmtInt(models.length)}
-              hint="per-model rows in this table"
-              icon={<IconCube size={16} />}
-              accent="brand"
-            />
-            <StatTile
-              label="Requests"
-              value={fmtInt(summary.requests)}
-              hint="all recorded model traffic"
-              icon={<IconActivity size={16} />}
-              accent="brand"
-            />
-            <StatTile
-              label="Median TTFT p50"
-              value={fmtSec(summary.medianTtft)}
-              hint="p50 across models with data"
-              icon={<IconClock size={16} />}
-              accent="teal"
-            />
-            <StatTile
-              label="Models with errors"
-              value={fmtInt(summary.withErrors)}
-              hint="all time · tool errors count"
-              icon={<IconAlertTriangle size={16} />}
-              accent={summary.withErrors > 0 ? 'red' : 'gray'}
-            />
-          </SimpleGrid>
-        )}
-
-        <Stack gap="xs">
-          {/* Live region announces result-count changes to screen readers as
-              the filter narrows the list. */}
-          <Text size="xs" c="dimmed" aria-live="polite" aria-atomic="true" style={{ overflowWrap: 'anywhere' }}>
-            {q.isPending ? 'Loading tracked models…' : q.isError ? 'Model statistics unavailable.' : (
-              `${filter.trim() ? `${rows.length} of ${models.length} match “${filter.trim()}”` : `Showing all ${models.length} tracked models`}, sorted by ${sortOptions.find((o) => o.value === sort.key)?.label.toLowerCase()} (${sort.dir === 1 ? 'ascending' : 'descending'})`
-            )}
-          </Text>
-          <TextInput
-            ref={searchRef}
-            leftSection={<IconSearch size={14} />}
-            rightSection={filter ? <CloseSearchButton onClear={clearFilter} /> : undefined}
-            rightSectionWidth={44}
-            styles={{ input: { minHeight: 44 } }}
-            placeholder="Filter backend or model…"
-            aria-label="Filter backend or model"
-            value={filter}
-            onChange={(e) => setFilter(e.currentTarget.value)}
+        <PageHeader title="Models" subtitle="Find your next model. Understand the ones you use." />
+        <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+          <StatTile
+            label="Models tracked"
+            value={query.data ? fmtInt(models.length) : '—'}
+            hint="with recorded activity"
+            icon={<IconCube size={17} />}
+            accent="brand"
           />
-          <Chip
-            checked={errorsOnly}
-            onChange={(v) => setErrorsOnly(v)}
-            variant="outline"
-            size="sm"
-          >
-            Errors only
-          </Chip>
-          {isMobile && models.length > 0 && (
-            <Group gap="xs" wrap="nowrap">
-              <Select
-                leftSection={<IconArrowsSort size={14} />}
-                data={sortOptions}
-                value={sort.key}
-                onChange={(v) => v && setSort({ key: v as SortKey, dir: v === 'model' ? 1 : -1 })}
-                aria-label="Sort models by"
-                allowDeselect={false}
-                flex={1}
-                size="sm"
-                styles={{ input: { minHeight: 44 } }}
-              />
-              <Button
-                variant="default"
-                h={44}
-                px="sm"
-                style={{ flexShrink: 0 }}
-                leftSection={sort.dir === 1 ? <IconArrowUp size={16} aria-hidden="true" /> : <IconArrowDown size={16} aria-hidden="true" />}
-                aria-label={`Sort direction: ${sort.dir === 1 ? 'ascending' : 'descending'}. Switch to ${sort.dir === 1 ? 'descending' : 'ascending'}.`}
-                onClick={() => setSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
-              >
-                {sort.dir === 1 ? 'Asc' : 'Desc'}
-              </Button>
-            </Group>
-          )}
-        </Stack>
-
-        {q.isPending ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-          </Group>
-        ) : q.isError ? (
-          <Alert
-            icon={<IconAlertTriangle size={16} stroke={1.8} />}
-            color="red"
-            variant="light"
-            title="Couldn't load model stats"
-          >
-            <Stack gap="xs" align="flex-start">
-              <Text size="sm">
-                Model statistics are temporarily unavailable. {q.error.message}
+          <StatTile
+            label="Requests"
+            value={query.data ? fmtInt(summary.requests) : '—'}
+            hint="across all models"
+            icon={<IconActivity size={17} />}
+            accent="brand"
+          />
+          <StatTile
+            label="First token"
+            value={fmtSec(summary.latency)}
+            hint="median model p50"
+            icon={<IconClock size={17} />}
+            accent="teal"
+          />
+          <StatTile
+            label="With errors"
+            value={query.data ? fmtInt(summary.errors) : '—'}
+            hint="request or tool failures"
+            icon={<IconAlertTriangle size={17} />}
+            accent={summary.errors > 0 ? 'red' : 'gray'}
+          />
+        </SimpleGrid>
+        <ModelCatalog />
+        <Paper
+          component="section"
+          withBorder
+          radius="lg"
+          className="catalog-panel catalog-traffic-panel"
+          aria-label="Recorded model traffic"
+        >
+          <Group justify="space-between" gap="xs" mb="md">
+            <Box>
+              <Title order={2} size="h4">
+                Recorded traffic
+              </Title>
+              <Text size="xs" c="dimmed" mt={3}>
+                All-time totals · latency and throughput show p50
               </Text>
-              <Button size="compact-sm" variant="light" color="red" onClick={() => q.refetch()}>
-                Retry
-              </Button>
-            </Stack>
-          </Alert>
-        ) : rows.length === 0 ? (
-          <Stack gap={0} align="center">
-            <EmptyState
-              icon={
-                models.length === 0 ? (
-                  <IconInboxOff size={20} stroke={1.6} />
-                ) : (
-                  <IconSearchOff size={20} stroke={1.6} />
-                )
-              }
-              title={models.length === 0 ? 'No model traffic yet' : 'No models match that filter'}
-              hint={
-                models.length === 0
-                  ? 'Send a request through the proxy and per-model stats will land here.'
-                  : 'Try a shorter fragment of the backend or model name.'
-              }
+            </Box>
+            <Badge variant="light" color="gray">
+              {query.data ? models.length : '—'} tracked
+            </Badge>
+          </Group>
+          <div className="catalog-traffic-toolbar">
+            <SearchInput
+              label="Filter backend or model"
+              placeholder="Filter backend or model…"
+              value={filter}
+              onChange={setFilter}
             />
-            {filter.trim() && models.length > 0 && (
-              <Button variant="light" mih={44} onClick={clearFilter}>
-                Clear filter
-              </Button>
-            )}
-          </Stack>
-        ) : isMobile ? (
-          <SimpleGrid cols={1} spacing="sm">
-            {rows.map((m) => (
-              <ModelCard
-                key={`${m.backend}/${m.model}`}
-                stat={m}
-                colors={pal.series}
-                onClick={() => setSelected(m)}
+            <div className="catalog-sort-controls">
+              <Select
+                aria-label="Sort models by"
+                value={sort.key}
+                data={sortOptions}
+                allowDeselect={false}
+                onChange={(value) =>
+                  value && setSort({ key: value as SortKey, dir: value === 'model' ? 1 : -1 })
+                }
               />
-            ))}
-          </SimpleGrid>
-        ) : (
-          <ScrollArea>
-            {/* Striped + highlight-on-hover keeps wide rows scannable; the
-                  cursor signals the row opens the detail drawer. */}
-            <Table miw={940} verticalSpacing="sm" horizontalSpacing="md" highlightOnHover striped className="models-table" aria-label="Model traffic and latency">
-              <Table.Thead
-                style={{
-                  position: 'sticky',
-                  top: 0,
-                  background: 'var(--card)',
-                  zIndex: 1,
-                }}
+              <ActionIcon
+                variant="default"
+                size={44}
+                aria-label={`Sort direction: ${sort.dir === 1 ? 'ascending' : 'descending'}. Switch to ${sort.dir === 1 ? 'descending' : 'ascending'}.`}
+                onClick={() => setSort((previous) => ({ ...previous, dir: previous.dir === 1 ? -1 : 1 }))}
               >
-                <Table.Tr>
-                  {columns.map((c) => (
-                    <Table.Th
-                      key={c.key}
-                      scope="col"
-                      ta={c.numeric ? 'right' : undefined}
-                      aria-sort={sort.key === c.key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}
-                    >
-                      <UnstyledButton mih={44} onClick={() => toggleSort(c.key)} aria-label={`Sort by ${c.label}`}>
-                        <Group gap={4} wrap="nowrap" justify={c.numeric ? 'flex-end' : 'flex-start'}>
-                          <Text size="xs" fw={600} c="dimmed">
-                            {c.label}
-                            {sort.key === c.key && (sort.dir === 1 ? ' ↑' : ' ↓')}
-                          </Text>
-                        </Group>
-                      </UnstyledButton>
-                    </Table.Th>
-                  ))}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {rows.map((m) => (
-                  <Table.Tr
-                    key={`${m.backend}/${m.model}`}
-                    onClick={() => setSelected(m)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <Table.Td>
-                      {/* Backend as a muted eyebrow above the model name —
-                            the model is what you scan for. Row click opens
-                            the drawer; no nested button. */}
-                      <Group gap={4} wrap="nowrap">
-                        <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2} style={{ cursor: 'pointer' }}>
-                          {m.backend}
-                        </Text>
-                        <CopyModelName backend={m.backend} model={m.model} />
-                      </Group>
-                      <Code style={{ overflowWrap: 'anywhere', cursor: 'pointer' }}>{m.model}</Code>
-                    </Table.Td>
-                    <Num td={fmtInt(m.requests)} />
-                    <Table.Td>
-                      <Box>
-                        <UptimeBadge uptime={m.uptime} requests={m.requests} />
-                        {Object.keys(m.status_codes ?? {}).length > 0 && (
-                          <Box mt={4} w="fit-content"><StatusChips codes={m.status_codes} limit={1} /></Box>
-                        )}
-                      </Box>
-                    </Table.Td>
-                    <Num td={fmtSec(m.ttft_seconds.p50)} title={percentileTitle(m.ttft_seconds, fmtSec)} />
-                    <Num td={fmtSec(m.e2e_seconds.p50)} title={percentileTitle(m.e2e_seconds, fmtSec)} />
-                    <Num td={fmtTps(m.throughput_tps.p50)} title={percentileTitle(m.throughput_tps, fmtTps)} />
-                    <Num td={fmtPct(m.cache_rate)} />
-                    <Num td={fmtInt(m.tool_calls)} />
-                    <Num td={observedRate(m.tool_error_rate, m.tool_calls)} title={`${fmtInt(m.tool_errors)} errored · ${fmtInt(m.tool_calls)} calls`} />
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        )}
+                {sort.dir === 1 ? <IconArrowUp size={17} /> : <IconArrowDown size={17} />}
+              </ActionIcon>
+            </div>
+          </div>
+          <Group justify="space-between" gap="xs" my="sm">
+            <Text size="xs" c="dimmed" aria-live="polite">
+              {query.isPending
+                ? 'Loading tracked models…'
+                : query.isError
+                  ? 'Model statistics unavailable.'
+                  : `${rows.length} of ${models.length} tracked models`}
+            </Text>
+            <Chip checked={errorsOnly} onChange={setErrorsOnly} size="sm" variant="light">
+              Errors only
+            </Chip>
+          </Group>
+          {query.isPending ? (
+            <Group py="xl" justify="center" role="status">
+              <Loader size="sm" />
+              <Text size="sm">Loading model statistics…</Text>
+            </Group>
+          ) : query.isError ? (
+            <Alert color="red" title="Couldn't load model stats">
+              <Stack gap="xs" align="flex-start">
+                <Text size="sm">Model statistics are temporarily unavailable. {query.error.message}</Text>
+                <Button variant="light" mih={44} onClick={() => query.refetch()}>
+                  Retry
+                </Button>
+              </Stack>
+            </Alert>
+          ) : rows.length === 0 ? (
+            <Stack gap="xs" align="center">
+              <EmptyState
+                icon={models.length ? <IconSearchOff size={24} /> : <IconInboxOff size={24} />}
+                title={models.length ? 'No models match that filter' : 'No model traffic yet'}
+                hint={
+                  models.length
+                    ? 'Try another model name or clear your filters.'
+                    : 'Once requests reach the proxy, their performance appears here.'
+                }
+              />
+              {models.length > 0 && (
+                <Button variant="light" mih={44} onClick={resetFilters}>
+                  Clear filters
+                </Button>
+              )}
+            </Stack>
+          ) : (
+            <ModelTraffic
+              models={rows}
+              mobile={isMobile}
+              sort={sort}
+              onSort={toggleSort}
+              onInspect={(model) => setSelectedId(`${model.backend}/${model.model}`)}
+            />
+          )}
+        </Paper>
       </Stack>
-
       <Drawer
         opened={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={() => setSelectedId(null)}
         position="right"
         size={isMobile ? '100%' : 'lg'}
+        className="catalog-detail-drawer"
+        closeButtonProps={{ ...{ 'data-autofocus': true }, 'aria-label': 'Close model details', size: 44 }}
         styles={{ title: { minWidth: 0, flex: 1 }, close: { flexShrink: 0 } }}
-        closeButtonProps={{ 'aria-label': 'Close model details', size: 44 }}
         title={
           selected && (
-            <Box style={{ minWidth: 0 }}>
-              <Text size="xs" c="dimmed" tt="uppercase" fw={600} lh={1.2}>
-                {selected.backend}
+            <Box miw={0}>
+              <Text size="xs" c="dimmed" fw={600}>
+                {selected.backend} / Model performance
               </Text>
-              <Stack gap="xs">
-                <Text fw={700} style={{ overflowWrap: 'anywhere' }}>
-                  {selected.model}
-                </Text>
+              <Text fw={700} mt={4} className="catalog-model-name">
+                {selected.model}
+              </Text>
+              <Box mt={6}>
                 <UptimeBadge uptime={selected.uptime} requests={selected.requests} />
-              </Stack>
+              </Box>
             </Box>
           )
         }
@@ -511,371 +265,17 @@ export default function ModelsPage() {
         {selected && (
           <ModelDetail
             stat={selected}
-            colors={pal.series}
-            series={selectedSeriesQ.data?.series}
-            historyPending={selectedSeriesQ.isPending}
-            historyError={selectedSeriesQ.isError}
-            historyFetching={selectedSeriesQ.isFetching}
-            onRetryHistory={() => selectedSeriesQ.refetch({ cancelRefetch: false })}
+            colors={palette.series}
+            series={history.data?.series}
+            historyPending={history.isPending}
+            historyError={history.isError}
+            historyFetching={history.isFetching}
+            onRetryHistory={() => history.refetch({ cancelRefetch: false })}
             range={historyRange}
             onRangeChange={setHistoryRange}
           />
         )}
       </Drawer>
     </Fade>
-  )
-}
-
-function CatalogModel({ id }: { id: string }) {
-  const clipboard = useClipboard({ timeout: 2000 })
-  return (
-    <Group justify="space-between" wrap="nowrap" gap="xs" py={6} style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
-      <Code style={{ overflowWrap: 'anywhere', whiteSpace: 'normal' }}>{id}</Code>
-      <ActionIcon
-        variant="subtle"
-        color={clipboard.copied ? 'teal' : 'gray'}
-        size={36}
-        style={{ flexShrink: 0 }}
-        aria-label={`Copy ${id}`}
-        onClick={() => clipboard.copy(id)}
-      >
-        <IconCopy size={16} />
-      </ActionIcon>
-    </Group>
-  )
-}
-
-function CloseSearchButton({ onClear }: { onClear: () => void }) {
-  return (
-    <ActionIcon aria-label="Clear filter" variant="subtle" color="gray" onClick={onClear} size={44}>
-      <IconX size={14} stroke={1.8} />
-    </ActionIcon>
-  )
-}
-
-function ModelCard({
-  stat: m,
-  colors,
-  onClick,
-}: {
-  stat: ModelStat
-  colors: string[]
-  onClick: () => void
-}) {
-  const tokTotal =
-    m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_tokens
-  const segs = mixSegments(m, colors)
-  return (
-    <Card
-      withBorder
-      radius="lg"
-      p="md"
-      data-model-card
-      onClick={onClick}
-      style={{ cursor: 'pointer' }}
-    >
-      <Group justify="space-between" align="flex-start" gap="xs" mb={12}>
-        <Box w="100%" style={{ minWidth: 0 }}>
-          <Text size="xs" c="dimmed" fw={600}>
-            {m.backend}
-          </Text>
-          {/* Wrap, don't truncate: long model IDs are the identity, and clipping
-              them makes two cards indistinguishable. */}
-          <Text fw={600} lh={1.3} style={{ overflowWrap: 'anywhere' }}>
-            {m.model}
-          </Text>
-        </Box>
-        <Group w="100%" justify="space-between" gap={4} wrap="nowrap">
-          <UptimeBadge uptime={m.uptime} requests={m.requests} />
-          {/* Explicit keyboard/touch affordance for the details the whole card
-              also opens; the card tap stays for convenience. */}
-          <ActionIcon
-            aria-label={`Open details for ${m.backend} ${m.model}`}
-            variant="subtle"
-            color="gray"
-            onClick={(e) => {
-              e.stopPropagation()
-              onClick()
-            }}
-            h={44}
-            w={44}
-          >
-            <IconChevronRight size={18} stroke={1.8} />
-          </ActionIcon>
-        </Group>
-      </Group>
-      {/* Short labels: the drawer owns the verbose names; the card is a glance
-            surface. Latency pair kept adjacent (TTFT then E2E). */}
-      <SimpleGrid cols={3} spacing="sm">
-        <Metric label="Requests" value={fmtInt(m.requests)} />
-        <Metric label="TTFT" value={fmtSec(m.ttft_seconds.p50)} />
-        <Metric label="E2E" value={fmtSec(m.e2e_seconds.p50)} />
-        <Metric label="tok/s" value={fmtTps(m.throughput_tps.p50)} />
-        <Metric label="Cache" value={fmtPct(m.cache_rate)} />
-        <Metric label="Tool err" value={observedRate(m.tool_error_rate, m.tool_calls)} />
-      </SimpleGrid>
-      {/* Slim token-mix strip with its own legend: cache share is visible at a
-            glance and the strip is explained rather than silent. Hidden until
-            tokens exist to avoid noise. */}
-      {tokTotal > 0 && (
-        <Box mt={10}>
-          <Text size="xs" c="dimmed" fw={600} mb={4}>
-            Token mix
-          </Text>
-          <TokenMixBar segments={segs} height={8} />
-          <TokenLegend segments={segs} compact />
-        </Box>
-      )}
-    </Card>
-  )
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <Box>
-      <Text size="xs" c="dimmed">
-        {label}
-      </Text>
-      <Text fw={600} style={{ fontVariantNumeric: 'tabular-nums' }}>
-        {value}
-      </Text>
-    </Box>
-  )
-}
-
-function Num({ td, title }: { td: string | number; title?: string }) {
-  return (
-    <Table.Td ta="right" style={{ fontVariantNumeric: 'tabular-nums' }} title={title}>
-      {td}
-    </Table.Td>
-  )
-}
-
-function CopyModelName({ backend, model }: { backend: string; model: string }) {
-  const clipboard = useClipboard({ timeout: 2000 })
-  return (
-    <ActionIcon
-      variant="subtle"
-      color={clipboard.copied ? 'teal' : 'gray'}
-      size="sm"
-      h={20}
-      w={20}
-      aria-label={`Copy ${backend}/${model}`}
-      onClick={(e) => {
-        e.stopPropagation()
-        clipboard.copy(`${backend}/${model}`)
-      }}
-      style={{ opacity: 0 }}
-      className="models-table-copy"
-    >
-      <IconCopy size={12} />
-    </ActionIcon>
-  )
-}
-
-function ModelDetail({
-  stat,
-  colors,
-  series,
-  historyPending,
-  historyError,
-  historyFetching,
-  onRetryHistory,
-  range,
-  onRangeChange,
-}: {
-  stat: ModelStat
-  colors: string[]
-  series?: StatsSeries
-  historyPending?: boolean
-  historyError?: boolean
-  historyFetching?: boolean
-  onRetryHistory?: () => void
-  range: string
-  onRangeChange: (value: string) => void
-}) {
-  const segs = mixSegments(stat, colors)
-  const totalTok = segs.reduce((s, x) => s + x.value, 0)
-  // TTFT and E2E share one time scale so their bar lengths are directly
-  // comparable; throughput keeps its own scale (different unit).
-  const latMax = Math.max(0, ...[stat.ttft_seconds.p99, stat.e2e_seconds.p99].filter(Number.isFinite))
-  const successRate = stat.requests > 0 && Number.isFinite(stat.successes) ? clampRate(stat.successes / stat.requests) : NaN
-
-  return (
-    <Stack gap="lg">
-      <DetailSection title="All recorded traffic">
-        <SimpleGrid cols={2} spacing="md">
-          <DetailStat label="Requests" value={fmtInt(stat.requests)} hint={`${observedRate(successRate, stat.requests)} succeeded`} />
-          <DetailStat label="Latency p50" value={fmtSec(stat.e2e_seconds.p50)} hint={`TTFT ${fmtSec(stat.ttft_seconds.p50)}`} />
-          <DetailStat label="Throughput" value={fmtTps(stat.throughput_tps.p50)} hint={`p90 ${fmtTps(stat.throughput_tps.p90)}`} />
-          <DetailStat label="Tool error rate" value={observedRate(stat.tool_error_rate, stat.tool_calls)} hint={`${fmtInt(stat.tool_errors)} errored · ${fmtInt(stat.tool_calls)} calls`} />
-        </SimpleGrid>
-      </DetailSection>
-      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
-        <Text size="xs" tt="uppercase" fw={700} c="dimmed" style={{ letterSpacing: '0.04em' }}>
-          History range
-        </Text>
-        <TimeRangeControl value={range} onChange={onRangeChange} disabled={historyPending} />
-      </Group>
-      <Text size="xs" c="dimmed">
-        The range applies to history charts only. Summary stats and percentile bars use all recorded traffic.
-      </Text>
-
-      {historyPending ? (
-        <Group justify="center" gap="xs" py="xl" role="status">
-          <Loader size="sm" />
-          <Text size="sm" c="dimmed">Loading history charts…</Text>
-        </Group>
-      ) : historyError ? (
-        <Alert
-          icon={<IconAlertTriangle size={16} stroke={1.8} />}
-          color="red"
-          variant="light"
-          title="History charts unavailable"
-        >
-          <Stack gap="xs" align="flex-start">
-            <Text size="sm">Per-model history could not be loaded. All-time statistics are unaffected.</Text>
-            <Button mih={44} variant="light" color="red" onClick={onRetryHistory} loading={historyFetching}>
-              Retry
-            </Button>
-          </Stack>
-        </Alert>
-      ) : (
-        <>
-          <DetailSection title="Performance history">
-            <HistoryLineChart
-              title="First byte"
-              description="Median time to first token"
-              data={historyData([series?.ttft_p50])}
-              series={[{ name: 'series0', label: 'First byte', formatter: historyFormatters.seconds }]}
-            />
-            <HistoryLineChart
-              title="Full response"
-              description="Median end-to-end latency"
-              data={historyData([series?.e2e_p50])}
-              series={[{ name: 'series0', label: 'Full response', formatter: historyFormatters.seconds }]}
-            />
-            <HistoryLineChart
-              title="Throughput"
-              description="Median output rate"
-              data={historyData([series?.throughput_p50])}
-              series={tpsSeries(historyFormatters)}
-            />
-          </DetailSection>
-
-          <DetailSection title="Traffic">
-            <HistoryBarChart
-              title="Requests"
-              description="Upstream calls per interval"
-              points={series?.requests ?? []}
-            />
-            <HistoryLineChart
-              title="Success rate"
-              description="Share of requests that succeeded"
-              data={historyData([series?.success_rate])}
-              series={[{ name: 'series0', label: 'Success rate', formatter: historyFormatters.percent }]}
-            />
-            <HistoryLineChart
-              title="Tool calls"
-              description="Tool calls issued per interval"
-              data={historyData([series?.tool_calls])}
-              series={[{ name: 'series0', label: 'Calls', formatter: historyFormatters.count }]}
-            />
-            <HistoryLineChart
-              title="Tool error rate"
-              description="Share of tool calls that errored"
-              data={historyData([series?.tool_errors])}
-              series={[{ name: 'series0', label: 'Errors', formatter: historyFormatters.percent }]}
-            />
-            <HistoryLineChart
-              title="Token volume"
-              description="Input and output tokens per interval"
-              data={historyData([series?.tokens_in, series?.tokens_out])}
-              series={tokenMixSeries(historyFormatters)}
-            />
-          </DetailSection>
-        </>
-      )}
-
-      <DetailSection title="Latency">
-        <Text size="xs" fw={600} c="dimmed" mb={4}>
-          Time to first token
-        </Text>
-        <PercentileBars values={stat.ttft_seconds} unit="s" max={latMax} />
-        <Text size="xs" fw={600} c="dimmed" mt="xs" mb={4}>
-          End-to-end
-        </Text>
-        <PercentileBars values={stat.e2e_seconds} unit="s" max={latMax} />
-        <Text size="xs" c="dimmed" mt={6}>
-          Both share one time scale — bar lengths compare directly.
-        </Text>
-      </DetailSection>
-      <DetailSection title="Throughput (tokens/sec)">
-        <PercentileBars values={stat.throughput_tps} unit="tok/s" />
-      </DetailSection>
-      <DetailSection
-        title={`Tokens · ${fmtInt(totalTok)} total · cache hit ${fmtPct(stat.cache_rate)}`}
-      >
-        <TokenMixBar segments={segs} height={20} />
-        <TokenLegend segments={segs} showPercent />
-      </DetailSection>
-      <DetailSection title="Reliability">
-        <DetailStat label="Success rate" value={observedRate(successRate, stat.requests)} />
-        {Number.isFinite(successRate) ? (
-          <Progress aria-label="Request success rate" value={successRate * 100} radius="sm" size="sm" color={successRate >= 0.99 ? 'teal' : successRate >= 0.9 ? 'yellow' : 'red'} />
-        ) : <Text size="sm" c="dimmed">No request success observations yet.</Text>}
-        <SimpleGrid cols={2} spacing="md">
-          <DetailStat label="Successful" value={fmtInt(stat.successes)} />
-          <DetailStat label="Failed" value={fmtInt(stat.requests - stat.successes)} />
-        </SimpleGrid>
-        {Object.keys(stat.status_codes ?? {}).length > 0 && (
-          <Box>
-            <Text size="xs" c="dimmed" fw={600} mb={6}>
-              Upstream errors by status
-            </Text>
-            <StatusChips codes={stat.status_codes} limit={8} />
-          </Box>
-        )}
-      </DetailSection>
-    </Stack>
-  )
-}
-
-function DetailStat({
-  label,
-  value,
-  hint,
-}: {
-  label: string
-  value: string
-  hint?: string
-}) {
-  return (
-    <Box miw={0} style={{ overflowWrap: 'anywhere' }}>
-      <Text size="xs" c="dimmed" fw={600} style={{ letterSpacing: '0.03em' }}>{label}</Text>
-      <Text
-        fz={22}
-        fw={700}
-        lh={1.15}
-        mt={2}
-        style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}
-      >
-        {value}
-      </Text>
-      {hint && (
-        <Text size="xs" c="dimmed" mt={1}>{hint}</Text>
-      )}
-    </Box>
-  )
-}
-
-function DetailSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Paper withBorder radius="lg" p="md" miw={0}>
-      <Title order={3} size="h5" mb="md" style={{ overflowWrap: 'anywhere' }}>
-        {title}
-      </Title>
-      <Stack gap="sm" miw={0}>{children}</Stack>
-    </Paper>
   )
 }
