@@ -53,7 +53,7 @@ func (m *Manager) ClaimPlan(ctx context.Context, planID string) (ClaimOutcome, e
 	if err != nil {
 		return ClaimOutcome{}, err
 	}
-	captcha, err := m.CaptchaVerifyParam(ctx)
+	captcha, err := m.TakeCaptchaVerifyParam(ctx)
 	if err != nil {
 		return ClaimOutcome{}, err
 	}

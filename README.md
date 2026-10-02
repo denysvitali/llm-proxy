@@ -235,6 +235,9 @@ The browser verification UI remains available only for the optional legacy plan
 claim endpoint; it is not part of model authentication.
 `GET /api/zcode/offers` lists available offers; `POST /api/zcode/claim`
 accepts a JSON body with `plan_id` and sends one upstream claim attempt.
+Cached browser proofs are consumed before that attempt, including attempts
+that fail: a second claim requires a fresh verification. The shared Valkey
+store prevents concurrent replicas from submitting the same cached proof.
 The claim response reports `ok: true` only for a successful HTTP response
 with an explicit zero result code. Code 3012 is reported as
 `failure_kind: "risk_blocked"` with HTTP 409; it is not a CAPTCHA failure

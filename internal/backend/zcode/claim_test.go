@@ -3,6 +3,11 @@ package zcode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
+	"sync/atomic"
+
+	"github.com/alicebob/miniredis/v2"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -235,5 +240,93 @@ func TestClaimPlanDoesNotReportRejectedOrMalformedResponsesAsSuccess(t *testing.
 				t.Fatalf("upstream calls = %d, want exactly one", calls)
 			}
 		})
+	}
+}
+
+func TestClaimPlanConsumesBrowserProofAcrossConcurrentReplicas(t *testing.T) {
+	mini := miniredis.RunT(t)
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get(aliyunCaptchaHeader) != "single-use-proof" {
+			t.Error("wrong proof")
+		}
+		// A risk rejection must also spend the proof; no later request may replay it.
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":3012,"msg":"request has been blocked due to unusual activity."}`))
+	}))
+	defer upstream.Close()
+	managers := make([]*Manager, 2)
+	for i := range managers {
+		store, err := NewValkeyCaptchaStore(fmt.Sprintf("redis://%s", mini.Addr()), "claim-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = store.Close() }()
+		manager := NewManagerWithCaptchaStore(filepath.Join(t.TempDir(), "auth.json"), store)
+		manager.CaptchaSolverURL = ""
+		manager.Issuer = upstream.URL
+		manager.HTTPClient = upstream.Client()
+		if err := manager.Store.Save(&Credentials{AccessToken: "test-jwt"}); err != nil {
+			t.Fatal(err)
+		}
+		managers[i] = manager
+	}
+	if err := managers[0].SetCaptchaVerifyParam("single-use-proof"); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var rejections, missingProof atomic.Int32
+	start := make(chan struct{})
+	for _, manager := range managers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			outcome, err := manager.ClaimPlan(context.Background(), "current-plan")
+			if err != nil {
+				if !strings.Contains(err.Error(), "CAPTCHA verification is required") {
+					t.Errorf("unexpected error: %v", err)
+				}
+				missingProof.Add(1)
+			} else if !outcome.OK && outcome.FailureKind == "risk_blocked" {
+				rejections.Add(1)
+			} else {
+				t.Errorf("unexpected outcome: %+v", outcome)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if calls.Load() != 1 || rejections.Load() != 1 || missingProof.Load() != 1 {
+		t.Fatalf("calls=%d, rejections=%d, missingProof=%d; want one each", calls.Load(), rejections.Load(), missingProof.Load())
+	}
+}
+
+func TestClaimPlanDoesNotReuseProofAfterSuccess(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer upstream.Close()
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"))
+	manager.CaptchaSolverURL = ""
+	manager.Issuer = upstream.URL
+	manager.HTTPClient = upstream.Client()
+	if err := manager.Store.Save(&Credentials{AccessToken: "test-jwt"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetCaptchaVerifyParam("single-use-proof"); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := manager.ClaimPlan(context.Background(), "current-plan"); err != nil || !result.OK {
+		t.Fatalf("first claim: %+v, %v", result, err)
+	}
+	if _, err := manager.ClaimPlan(context.Background(), "current-plan"); err == nil || !strings.Contains(err.Error(), "CAPTCHA verification is required") {
+		t.Fatalf("second claim error = %v, want fresh-proof requirement", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want one", calls)
 	}
 }
