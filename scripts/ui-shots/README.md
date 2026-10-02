@@ -14,7 +14,8 @@ ports, waits for `/healthz`, seeds traffic, shoots, prints one absolute path per
 line to stdout, and tears down its own processes.
 
 - default output `/tmp/ui-shots/current`; `--only home-light,models-drawer` for a
-  subset; `--list` prints ids; `--skip-build` reuses the existing `web/dist`.
+  subset; `--list` prints ids; `--skip-build` reuses the existing embedded
+  `internal/server/web/webdist/` without overwriting it.
 - **After a real `web/` change the lead must still commit the rebuilt
   `internal/server/web/webdist/`** — the harness only overwrites it locally.
 

@@ -15,7 +15,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks'
 import { IconCircleCheck, IconSearchOff, IconServerOff } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage, fetchOverview, fetchStats } from '../api'
+import { dashboardQueries } from '../queries'
 import { fmtInt } from '../format'
 import { useChartPalette } from '../palette'
 import UptimeBadge from '../components/UptimeBadge'
@@ -30,23 +30,11 @@ import { Fade } from '../App'
 import './catalog.css'
 
 export default function ProvidersPage() {
-  const overview = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
-  const stats = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
-  const grokUsage = useQuery({
-    queryKey: ['grok-usage'],
-    queryFn: fetchGrokUsage,
-    enabled: overview.data?.grokUsage.configured ?? false,
-    refetchInterval: 60_000,
-    retry: 1,
-  })
+  const overview = useQuery(dashboardQueries.overview())
+  const stats = useQuery(dashboardQueries.stats())
+  const grokUsage = useQuery(dashboardQueries.grokUsage(overview.data?.grokUsage.configured ?? false))
   const minimaxEnabled = overview.data?.minimaxUsage?.configured ?? false
-  const minimaxUsage = useQuery({
-    queryKey: ['minimax-usage'],
-    queryFn: fetchMiniMaxUsage,
-    enabled: minimaxEnabled,
-    refetchInterval: 60_000,
-    retry: 1,
-  })
+  const minimaxUsage = useQuery(dashboardQueries.minimaxUsage(minimaxEnabled))
   const palette = useChartPalette()
   const mobile = useMediaQuery('(max-width: 48em)') ?? false
   const [search, setSearch] = useState('')
@@ -104,11 +92,7 @@ export default function ProvidersPage() {
     [providers, search, healthFilter, sort, statsState],
   )
   const selected = providers.find(({ backend }) => backend.name === selectedName) ?? null
-  const history = useQuery({
-    queryKey: ['stats-series', 'backend', selectedName, historyRange],
-    queryFn: () => fetchBackendStatsSeries(selectedName!, historyRange),
-    enabled: !!selected,
-  })
+  const history = useQuery(dashboardQueries.backendSeries(selected?.backend.name ?? null, historyRange))
   const configured = backends.length
   const enabled = backends.filter((backend) => backend.enabled).length
   const healthy = providers.filter((provider) => provider.health === 'healthy').length

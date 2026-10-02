@@ -1,1 +1,0 @@
-import{_ as e}from"./Fade-ZlL1dkLN.js";var t=e(`outline`,`check`,`Check`,[[`path`,{d:`M5 12l5 5l10 -10`,key:`svg-0`}]]);export{t};

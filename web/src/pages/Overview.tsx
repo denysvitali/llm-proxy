@@ -4,9 +4,8 @@ import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, Icon
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { fetchGrokUsage, fetchMiniMaxUsage, fetchOverview, fetchRequests, fetchStats, fetchStatsSeries, fetchUpstreamErrors, fetchZcodeUsage } from '../api'
+import { dashboardQueries } from '../queries'
 import type { ModelStat } from '../api'
-import { useLiveStatsUpdates } from '../useLiveUpdates'
 import GrokUsageCard from '../components/GrokUsageCard'
 import ZcodeUsageCard from '../components/ZcodeUsageCard'
 import MiniMaxUsageCard from '../components/MiniMaxUsageCard'
@@ -25,20 +24,19 @@ import './overview.css'
 const NO_MODELS: ModelStat[] = []
 
 export default function OverviewPage() {
-  useLiveStatsUpdates()
-  const statsQ = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
-  const ovQ = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const statsQ = useQuery(dashboardQueries.stats())
+  const ovQ = useQuery(dashboardQueries.overview())
   const ov = ovQ.data
   const grokUsageEnabled = ov?.grokUsage.configured ?? false
   const zcodeUsageEnabled = ov?.zcodeUsage.configured ?? false
   const minimaxUsageEnabled = ov?.minimaxUsage?.configured ?? false
-  const grokUsageQ = useQuery({ queryKey: ['grok-usage'], queryFn: fetchGrokUsage, enabled: grokUsageEnabled, refetchInterval: 60_000, retry: 1 })
-  const zcodeUsageQ = useQuery({ queryKey: ['zcode-usage'], queryFn: fetchZcodeUsage, enabled: zcodeUsageEnabled, refetchInterval: 60_000, retry: 1 })
-  const minimaxUsageQ = useQuery({ queryKey: ['minimax-usage'], queryFn: fetchMiniMaxUsage, enabled: minimaxUsageEnabled, refetchInterval: 60_000, retry: 1 })
+  const grokUsageQ = useQuery(dashboardQueries.grokUsage(grokUsageEnabled))
+  const zcodeUsageQ = useQuery(dashboardQueries.zcodeUsage(zcodeUsageEnabled))
+  const minimaxUsageQ = useQuery(dashboardQueries.minimaxUsage(minimaxUsageEnabled))
   const [range, setRange] = useState('24h')
-  const seriesQ = useQuery({ queryKey: ['stats-series', range], queryFn: () => fetchStatsSeries(range) })
-  const errorsQ = useQuery({ queryKey: ['upstream-errors'], queryFn: fetchUpstreamErrors, refetchInterval: 30_000, retry: 1 })
-  const requestsQ = useQuery({ queryKey: ['recent-requests'], queryFn: fetchRequests, refetchInterval: 30_000 })
+  const seriesQ = useQuery(dashboardQueries.series(range))
+  const errorsQ = useQuery(dashboardQueries.errors())
+  const requestsQ = useQuery(dashboardQueries.requests())
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const models = statsQ.data?.models ?? NO_MODELS
   const totals = useMemo(() => {

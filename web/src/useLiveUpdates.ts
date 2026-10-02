@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { refreshLiveQueries } from './queries'
+import { createLiveRefreshScheduler } from './liveRefresh'
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000
 const MAX_RECONNECT_DELAY_MS = 15_000
@@ -9,7 +11,15 @@ const MAX_RECONNECT_DELAY_MS = 15_000
 // over every transport.
 const WS_ATTEMPTS_BEFORE_SSE = 2
 
+const LiveStatsContext = createContext(false)
+
+// Consumers only read status. The root provider owns the single connection,
+// independent of route, layout, or the number of visible status badges.
 export function useLiveStatsUpdates() {
+  return useContext(LiveStatsContext)
+}
+
+export function LiveStatsProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const [connected, setConnected] = useState(false)
 
@@ -21,33 +31,14 @@ export function useLiveStatsUpdates() {
     let wsFailures = 0
     let stopped = false
 
-    // Every completed upstream request triggers a stats-updated event. On a
-    // busy proxy those arrive several times a second; refetching on each one
-    // makes the dashboard visibly pulse. Coalesce bursts into one refetch.
-    let invalidateTimer: number | undefined
-    const invalidateAll = () => {
-      void queryClient.invalidateQueries({ queryKey: ['stats'], exact: true })
-      void queryClient.invalidateQueries({ queryKey: ['stats-series'] })
-      void queryClient.invalidateQueries({ queryKey: ['upstream-errors'] })
-      void queryClient.invalidateQueries({ queryKey: ['recent-requests'] })
-      void queryClient.invalidateQueries({ queryKey: ['grok-usage'] })
-      void queryClient.invalidateQueries({ queryKey: ['zcode-usage'] })
-    }
-
-    const scheduleInvalidate = () => {
-      window.clearTimeout(invalidateTimer)
-      invalidateTimer = window.setTimeout(() => {
-        invalidateTimer = undefined
-        invalidateAll()
-      }, 500)
-    }
+    const refresh = createLiveRefreshScheduler(() => { void refreshLiveQueries(queryClient) })
 
     const onEvent = (data: unknown) => {
-      if (typeof data !== 'string') return
+      if (stopped || typeof data !== 'string') return
       try {
         const parsed = JSON.parse(data)
         if (parsed?.type === 'stats-updated') {
-          scheduleInvalidate()
+          refresh.schedule()
         }
       } catch {
         // not JSON, ignore
@@ -57,11 +48,14 @@ export function useLiveStatsUpdates() {
     const connectSSE = () => {
       eventSource = new EventSource('/api/updates/sse')
       eventSource.addEventListener('open', () => {
+        if (stopped) return
         retryDelay = INITIAL_RECONNECT_DELAY_MS
         setConnected(true)
+        refresh.schedule()
       })
       eventSource.addEventListener('message', (event) => onEvent(event.data))
       eventSource.addEventListener('error', () => {
+        if (stopped) return
         setConnected(false)
         // EventSource reconnects on its own; only surface the state.
       })
@@ -72,6 +66,8 @@ export function useLiveStatsUpdates() {
       socket = new WebSocket(`${protocol}//${window.location.host}/api/updates/ws`)
 
       socket.addEventListener('open', () => {
+        if (stopped) return
+        refresh.schedule()
         retryDelay = INITIAL_RECONNECT_DELAY_MS
         wsFailures = 0
         setConnected(true)
@@ -80,8 +76,8 @@ export function useLiveStatsUpdates() {
       socket.addEventListener('message', (event) => onEvent(event.data))
 
       socket.addEventListener('close', () => {
-        setConnected(false)
         if (stopped) return
+        setConnected(false)
         if (eventSource) return
         wsFailures += 1
         if (wsFailures > WS_ATTEMPTS_BEFORE_SSE) {
@@ -95,7 +91,7 @@ export function useLiveStatsUpdates() {
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        invalidateAll()
+        refresh.flush()
       }
     }
 
@@ -106,12 +102,12 @@ export function useLiveStatsUpdates() {
     return () => {
       stopped = true
       window.clearTimeout(reconnectTimer)
-      window.clearTimeout(invalidateTimer)
+      refresh.cancel()
       document.removeEventListener('visibilitychange', onVisibilityChange)
       socket?.close()
       eventSource?.close()
     }
   }, [queryClient])
 
-  return connected
+  return createElement(LiveStatsContext.Provider, { value: connected }, children)
 }

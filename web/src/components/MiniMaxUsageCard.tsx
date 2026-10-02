@@ -2,6 +2,7 @@ import { Alert, Badge, Box, Button, Divider, Group, Progress, SimpleGrid, Stack,
 import { useIsMutating, useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { claimMiniMaxCheckin, type MiniMaxCheckinPanel, type MiniMaxQuotaWindow, type MiniMaxUsage, type MiniMaxVideoQuota } from '../api'
 import UsageCardShell from './UsageCardShell'
+import { queryKeys } from '../queries'
 
 export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<MiniMaxUsage, Error> }) {
   const usage = query.data
@@ -12,13 +13,13 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
     mutationKey: ['minimax-checkin'],
     mutationFn: claimMiniMaxCheckin,
     retry: false,
-    onMutate: () => queryClient.cancelQueries({ queryKey: ['minimax-usage'] }),
+    onMutate: () => queryClient.cancelQueries({ queryKey: queryKeys.minimaxUsage }),
     onSuccess: (result) => {
-      queryClient.setQueryData<MiniMaxUsage>(['minimax-usage'], (current) => current ? {
+      queryClient.setQueryData<MiniMaxUsage>(queryKeys.minimaxUsage, (current) => current ? {
         ...current, checkin: result.panel, checkinError: undefined,
       } : current)
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['minimax-usage'] }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.minimaxUsage }),
   })
   const panel = usage?.checkin
   const claimed = claimedToday(panel)

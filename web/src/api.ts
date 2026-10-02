@@ -85,13 +85,22 @@ export async function fetchBackendStatsSeries(
   backend: string,
   range: string,
   model?: string,
+  signal?: AbortSignal,
 ): Promise<ScopedStatsSeriesResponse> {
   const path = model
     ? `/api/stats/backends/${encodeURIComponent(backend)}/${encodeURIComponent(model)}`
     : `/api/stats/backends/${encodeURIComponent(backend)}`
-  const data = await getJSON<ScopedStatsSeriesResponse>(`${path}?range=${encodeURIComponent(range)}`)
+  const data = await getJSON<NullableStatsSeriesResponse>(`${path}?range=${encodeURIComponent(range)}`, 'GET', signal)
+  return normalizeStatsSeries(data)
+}
+
+type NullableStatsSeriesResponse = {
+  models?: string[] | null
+  series?: { [Key in keyof StatsSeries]?: StatsSeries[Key] | null } | null
+}
+
+function normalizeStatsSeries(data: NullableStatsSeriesResponse): StatsSeriesResponse {
   return {
-    ...data,
     models: data.models ?? [],
     series: {
       requests: data.series?.requests ?? [],
@@ -257,101 +266,93 @@ export class ApiError extends Error {
   }
 }
 
-async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET'): Promise<T> {
-  const doFetch = async (): Promise<T> => {
-    let res: Response
-    try {
-      res = await fetch(url, {
-        method,
-        signal: AbortSignal.timeout(method === 'POST' ? 60_000 : 10_000),
-        ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}),
-      })
-    } catch (e) {
-      if (e instanceof DOMException && e.name === 'TimeoutError') {
-        throw new ApiError(`${url}: request timed out`, 0, 'timeout')
-      }
-      throw new ApiError(`${url}: ${e instanceof Error ? e.message : 'network error'}`, 0, 'network')
-    }
+async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET', signal?: AbortSignal): Promise<T> {
+  const timeout = AbortSignal.timeout(method === 'POST' ? 60_000 : 10_000)
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
+  const checkAborted = () => {
+    // Preserve query cancellation instead of turning it into a retryable error.
+    signal?.throwIfAborted()
+    if (timeout.aborted) throw new ApiError(`${url}: request timed out`, 0, 'timeout')
+  }
 
-    if (!res.ok) {
-      let message = `${url}: HTTP ${res.status}`
-      try {
-        const text = await res.text()
-        if (text) {
-          message = text
-          try {
-            const body = JSON.parse(text)
-            const detail = typeof body.error === 'string' ? body.error : body.error?.message
-            if (typeof detail === 'string') message = detail
-            else if (url.startsWith('/api/minimax-code/')) {
-              message = [body.accountError, body.checkinError].filter((part) => typeof part === 'string').join(' ') || 'MiniMax account information is temporarily unavailable.'
-            }
-          } catch {
-            // Plain-text error responses are already readable.
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method,
+      signal: requestSignal,
+      ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}),
+    })
+  } catch (e) {
+    checkAborted()
+    throw new ApiError(`${url}: ${e instanceof Error ? e.message : 'network error'}`, 0, 'network')
+  }
+
+  if (!res.ok) {
+    let message = `${url}: HTTP ${res.status}`
+    try {
+      const text = await res.text()
+      if (text) {
+        message = text
+        try {
+          const body = JSON.parse(text)
+          const detail = typeof body.error === 'string' ? body.error : body.error?.message
+          if (typeof detail === 'string') message = detail
+          else if (url.startsWith('/api/minimax-code/')) {
+            message = [body.accountError, body.checkinError].filter((part) => typeof part === 'string').join(' ') || 'MiniMax account information is temporarily unavailable.'
           }
+        } catch {
+          // Plain-text error responses are already readable.
         }
-      } catch {
-        // ignore body read errors
       }
-      throw new ApiError(message, res.status, 'http')
+    } catch {
+      checkAborted()
+      // An unreadable error body still has a useful HTTP status.
     }
-
-    const contentType = res.headers.get('content-type') ?? ''
-    if (!contentType.includes('application/json')) {
-      throw new ApiError(`${url}: expected JSON, got ${contentType || 'unknown content-type'}`, res.status, 'parse')
-    }
-
-    try {
-      return (await res.json()) as T
-    } catch (e) {
-      throw new ApiError(`${url}: ${e instanceof Error ? e.message : 'parse error'}`, res.status, 'parse')
-    }
+    throw new ApiError(message, res.status, 'http')
   }
 
-  let lastError: unknown
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      return await doFetch()
-    } catch (e) {
-      lastError = e
-      if (method === 'GET' && e instanceof ApiError && (e.kind === 'network' || e.status >= 500) && attempt < 1) {
-        await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
-        continue
-      }
-      throw e
-    }
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) {
+    throw new ApiError(`${url}: expected JSON, got ${contentType || 'unknown content-type'}`, res.status, 'parse')
   }
-  throw lastError
+
+  try {
+    return (await res.json()) as T
+  } catch (e) {
+    checkAborted()
+    throw new ApiError(`${url}: ${e instanceof Error ? e.message : 'parse error'}`, res.status, 'parse')
+  }
 }
 
-export async function fetchStats(): Promise<StatsResponse> {
-  const data = await getJSON<StatsResponse>('/stats')
+export async function fetchStats(signal?: AbortSignal): Promise<StatsResponse> {
+  const data = await getJSON<StatsResponse>('/stats', 'GET', signal)
   return { ...data, models: data.models ?? [] }
 }
 
-export function fetchStatsSeries(range: string): Promise<StatsSeriesResponse> {
-  return getJSON<StatsSeriesResponse>(`/api/stats?range=${encodeURIComponent(range)}`)
+export async function fetchStatsSeries(range: string, signal?: AbortSignal): Promise<StatsSeriesResponse> {
+  const data = await getJSON<NullableStatsSeriesResponse>(`/api/stats?range=${encodeURIComponent(range)}`, 'GET', signal)
+  return normalizeStatsSeries(data)
 }
 
-export async function fetchOverview(): Promise<Overview> {
-  const data = await getJSON<Overview>('/api/overview')
+export async function fetchOverview(signal?: AbortSignal): Promise<Overview> {
+  const data = await getJSON<Overview>('/api/overview', 'GET', signal)
   return { ...data, backends: data.backends ?? [], routes: data.routes ?? [] }
 }
 
-export async function fetchGrokUsage(): Promise<GrokUsage> {
-  const data = await getJSON<GrokUsage>('/api/grok/usage')
+export async function fetchGrokUsage(signal?: AbortSignal): Promise<GrokUsage> {
+  const data = await getJSON<GrokUsage>('/api/grok/usage', 'GET', signal)
   return { ...data }
 }
 
-export async function fetchZcodeUsage(): Promise<ZcodeUsage> {
+export async function fetchZcodeUsage(signal?: AbortSignal): Promise<ZcodeUsage> {
   // Go encodes an uninitialized slice as null. Normalize at the API boundary
   // so every consumer sees a collection, including during background refresh.
-  const usage = await getJSON<Omit<ZcodeUsage, 'plans'> & { plans?: ZcodePlanUsage[] | null }>('/api/zcode/usage')
+  const usage = await getJSON<Omit<ZcodeUsage, 'plans'> & { plans?: ZcodePlanUsage[] | null }>('/api/zcode/usage', 'GET', signal)
   return { ...usage, plans: usage.plans ?? [] }
 }
 
-export async function fetchMiniMaxUsage(): Promise<MiniMaxUsage> {
-  const usage = await getJSON<MiniMaxUsage>('/api/minimax-code/usage')
+export async function fetchMiniMaxUsage(signal?: AbortSignal): Promise<MiniMaxUsage> {
+  const usage = await getJSON<MiniMaxUsage>('/api/minimax-code/usage', 'GET', signal)
   return {
     ...usage,
     checkin: usage.checkin ? { ...usage.checkin, days: usage.checkin.days ?? [] } : undefined,
@@ -365,16 +366,16 @@ export async function claimMiniMaxCheckin(): Promise<MiniMaxCheckinResult> {
   return { ...claim, panel: { ...claim.panel, days: claim.panel?.days ?? [] } }
 }
 
-export async function fetchUpstreamErrors(): Promise<UpstreamErrorsResponse> {
-  const data = await getJSON<UpstreamErrorsResponse>('/api/stats/errors')
+export async function fetchUpstreamErrors(signal?: AbortSignal): Promise<UpstreamErrorsResponse> {
+  const data = await getJSON<UpstreamErrorsResponse>('/api/stats/errors', 'GET', signal)
   return { ...data, errors: data.errors ?? [] }
 }
 
-export async function fetchRequests(): Promise<RequestsResponse> {
-  const data = await getJSON<RequestsResponse>('/api/requests')
+export async function fetchRequests(signal?: AbortSignal): Promise<RequestsResponse> {
+  const data = await getJSON<RequestsResponse>('/api/requests', 'GET', signal)
   return { ...data, requests: data.requests ?? [] }
 }
 
-export function fetchRequest(id: string): Promise<InspectedRequest> {
-  return getJSON<InspectedRequest>(`/api/requests/${encodeURIComponent(id)}`)
+export function fetchRequest(id: string, signal?: AbortSignal): Promise<InspectedRequest> {
+  return getJSON<InspectedRequest>(`/api/requests/${encodeURIComponent(id)}`, 'GET', signal)
 }

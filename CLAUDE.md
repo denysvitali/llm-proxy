@@ -50,9 +50,9 @@ Tests are table-driven with `httptest` fake upstreams — the translation matrix
 
 ## CI (`.github/workflows/`)
 
-- `test.yml`: gofmt + `go vet` + `go test -race`.
+- `test.yml`: gofmt + `go vet` + `go test -race`; dashboard build, lint, data-flow tests, and committed-asset consistency.
 - `lint.yml`: golangci-lint (installed from source — release binaries lag the module's Go version).
-- `e2e.yml`: builds the proxy, points real Claude Code and Codex at it, runs against live Venice/OpenRouter/OpenCode when secrets exist; skips gracefully otherwise. Note: proxy keys must be created **before** starting `serve` — the keystore is loaded once at startup and not watched.
+- `e2e.yml`: builds the proxy, points real Claude Code and Codex at it, runs against live Venice/OpenRouter/OpenCode when secrets exist; skips gracefully otherwise. The running server reloads the key store every two seconds.
 - `container.yml`: distroless image → `ghcr.io/denysvitali/llm-proxy`.
 
 Commits follow conventional style (`feat(stats):`, `fix(translate):`, …) — match it.

@@ -16,11 +16,11 @@ import {
 import { useClipboard, useMediaQuery } from '@mantine/hooks'
 import { IconCheck, IconChevronLeft, IconChevronRight, IconCopy, IconCube } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchOverview } from '../../api'
+import { dashboardQueries } from '../../queries'
 import SearchInput from '../SearchInput'
 
 export default function ModelCatalog() {
-  const query = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const query = useQuery(dashboardQueries.overview())
   const [filter, setFilter] = useState('')
   const [provider, setProvider] = useState('all')
   const [page, setPage] = useState(0)

@@ -8,7 +8,7 @@ import { IconArrowUpRight, IconDeviceDesktop, IconKeyboard, IconMoonStars, IconS
 import { useQuery } from '@tanstack/react-query'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { fetchOverview } from './api'
+import { dashboardQueries } from './queries'
 import { useLiveStatsUpdates } from './useLiveUpdates'
 import { NAV, isActiveNavPath } from './nav'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
@@ -174,7 +174,7 @@ export default function App() {
 }
 
 function HeaderBrand({ subtitle }: { subtitle?: string }) {
-  const { data } = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const { data } = useQuery(dashboardQueries.overview())
   return (
     <UnstyledButton component={NavLink} to="/" className="brand-link" aria-label="llm-proxy home">
       <span className="brand-mark" aria-hidden>λ</span>

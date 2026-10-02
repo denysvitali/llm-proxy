@@ -28,7 +28,7 @@ import {
   IconSearchOff,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchBackendStatsSeries, fetchStats } from '../api'
+import { dashboardQueries } from '../queries'
 import { fmtInt, fmtSec } from '../format'
 import { useChartPalette } from '../palette'
 import StatTile from '../components/StatTile'
@@ -50,7 +50,7 @@ import { Fade } from '../App'
 import './catalog.css'
 
 export default function ModelsPage() {
-  const query = useQuery({ queryKey: ['stats'], queryFn: fetchStats })
+  const query = useQuery(dashboardQueries.stats())
   const models = useMemo(() => query.data?.models ?? [], [query.data])
   const palette = useChartPalette()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
@@ -60,11 +60,7 @@ export default function ModelsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selected = models.find((model) => `${model.backend}/${model.model}` === selectedId) ?? null
   const [historyRange, setHistoryRange] = useState('24h')
-  const history = useQuery({
-    queryKey: ['stats-series', 'model', selected?.backend, selected?.model, historyRange],
-    queryFn: () => fetchBackendStatsSeries(selected!.backend, historyRange, selected!.model),
-    enabled: !!selected,
-  })
+  const history = useQuery(dashboardQueries.modelSeries(selected?.backend, selected?.model, historyRange))
   const rows = useMemo(
     () =>
       models

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { checkSetupRegressions } from './setup-regressions.mjs';
 import { checkCatalogRegressions } from './catalog-regressions.mjs';
+import { checkLiveRegressions } from './live-regressions.mjs';
 
 const backend = (name) => ({ name, enabled: true, host: 'example.invalid', hasKey: true,
   authLabel: 'API key', authConfigured: true, catalogOK: true, models: [`${name}/example-model`] });
@@ -124,6 +125,7 @@ export async function checkRegressions(browser, base, outDir) {
   }
   await checkSetupRegressions(browser, base, overview, series);
   await checkCatalogRegressions(browser, base);
+  await checkLiveRegressions(browser, base, overview);
   return checkMiniMaxRegressions(browser, base, outDir);
 }
 

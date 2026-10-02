@@ -9,7 +9,8 @@ import {
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { fetchOverview, type Overview } from '../api'
+import type { Overview } from '../api'
+import { dashboardQueries } from '../queries'
 import { Fade } from '../App'
 import { PageHeader } from '../components/PageHeader'
 import { Snippet } from '../components/setup/Snippet'
@@ -24,7 +25,7 @@ const accountProviders = [
 ]
 
 export default function SetupPage() {
-  const q = useQuery({ queryKey: ['overview'], queryFn: fetchOverview })
+  const q = useQuery(dashboardQueries.overview())
   const ov = q.data
   const [wrapLines, setWrapLines] = useState(true)
   const curlSnippet = ov

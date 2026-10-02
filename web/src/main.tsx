@@ -8,16 +8,12 @@ import '@mantine/charts/styles.css'
 import './index.css'
 import { theme } from './theme'
 import App from './App'
+import { dashboardQueryDefaults } from './queries'
+import { LiveStatsProvider } from './useLiveUpdates'
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      gcTime: 5 * 60_000,
-      retry: 2,
-      refetchOnWindowFocus: false,
-      placeholderData: (prev: unknown) => prev,
-    },
+    queries: dashboardQueryDefaults,
   },
 })
 
@@ -25,9 +21,11 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <MantineProvider theme={theme} defaultColorScheme="auto">
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <LiveStatsProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </LiveStatsProvider>
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,
