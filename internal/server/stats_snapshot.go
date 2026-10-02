@@ -43,9 +43,9 @@ type Percentiles struct {
 	P99 float64 `json:"p99"`
 }
 
-// snapshot aggregates the per-model summary. With persistence enabled it
-// sums all retained buckets ("all recorded history"); otherwise it falls back
-// to the Prometheus-backed counters (current behavior, no regression).
+// snapshot aggregates the per-model summary. Redis and JSON preserve lifetime
+// counters with retained latency windows; otherwise Prometheus supplies this
+// process's counters and latency observations.
 func (st *Stats) snapshot() []ModelStat {
 	if st.redis != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -161,20 +161,13 @@ func (st *Stats) snapshotFromPrometheus() []ModelStat {
 		} else {
 			s.Successes = 0
 		}
-		s.Uptime = ratio(s.Successes, s.Requests)
 		s.TTFT = percentilesOf(r.ttft)
 		s.E2E = percentilesOf(r.e2e)
 		s.Throughput = percentilesOf(r.through)
-		s.CacheRate = ratio(s.CacheReadTokens, s.InputTokens)
-		s.ToolErrorRate = ratio(s.ToolErrors, s.ToolCalls)
+		finishModelStat(&s)
 		out = append(out, s)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Backend != out[j].Backend {
-			return out[i].Backend < out[j].Backend
-		}
-		return out[i].Model < out[j].Model
-	})
+	sortModelStats(out)
 	return out
 }
 
@@ -281,77 +274,88 @@ func percentilesFromCounts(counts []uint64, edges []float64) Percentiles {
 }
 
 func (st *Stats) snapshotFromBuckets() []ModelStat {
-	type row struct {
-		stat           ModelStat
-		ttft, e2e, tps []uint64
-		statuses       map[string]uint64
+	models := st.snapshotModels()
+	out := make([]ModelStat, 0, len(models))
+	now := time.Now()
+	for key, model := range models {
+		if stat, ok := summarizeModel(key, model, st.cfg.RetentionDays, now); ok {
+			out = append(out, stat)
+		}
 	}
-	rows := map[string]*row{}
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	for key, ms := range st.models {
-		backend, model, ok := strings.Cut(key, "\x00")
-		if !ok {
-			continue
-		}
-		r := &row{
-			stat:     ModelStat{Backend: backend, Model: model},
-			ttft:     make([]uint64, len(ttftEdges)),
-			e2e:      make([]uint64, len(e2eEdges)),
-			tps:      make([]uint64, len(tpsEdges)),
-			statuses: map[string]uint64{},
-		}
-		ms.mu.Lock()
-		// Lifetime counters already cover every event the buckets hold —
-		// record() folds each request into both — so the summary reads them
-		// directly. Buckets contribute only the latency/throughput histograms
-		// (they are not kept as lifetime fields); adding their counters too
-		// would double every total.
-		r.stat.Requests = ms.requests
-		r.stat.Successes = ms.successes
-		r.stat.InputTokens = ms.tokensIn
-		r.stat.OutputTokens = ms.tokensOut
-		r.stat.CacheReadTokens = ms.cacheRead
-		r.stat.ToolCalls = ms.toolCalls
-		r.stat.ToolErrors = ms.toolErrors
-		for _, b := range ms.buckets {
-			for i := range b.TTFTBuckets {
-				r.ttft[i] += b.TTFTBuckets[i]
-			}
-			for i := range b.E2EBuckets {
-				r.e2e[i] += b.E2EBuckets[i]
-			}
-			for i := range b.ThroughputBuckets {
-				r.tps[i] += b.ThroughputBuckets[i]
-			}
-			for status, n := range b.StatusCodes {
-				if n > 0 {
-					r.statuses[status] += n
-				}
-			}
-		}
-		ms.mu.Unlock()
-		rows[key] = r
-	}
-	out := make([]ModelStat, 0, len(rows))
-	for _, r := range rows {
-		s := r.stat
-		s.Uptime = ratio(s.Successes, s.Requests)
-		s.TTFT = percentilesFromCounts(r.ttft, ttftEdges)
-		s.E2E = percentilesFromCounts(r.e2e, e2eEdges)
-		s.Throughput = percentilesFromCounts(r.tps, tpsEdges)
-		s.CacheRate = ratio(s.CacheReadTokens, s.InputTokens)
-		s.ToolErrorRate = ratio(s.ToolErrors, s.ToolCalls)
-		s.StatusCodes = nonEmpty(r.statuses)
-		out = append(out, s)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Backend != out[j].Backend {
-			return out[i].Backend < out[j].Backend
-		}
-		return out[i].Model < out[j].Model
-	})
+	sortModelStats(out)
 	return out
+}
+
+// summarizeModel is shared by JSON/memory and Redis. Lifetime counters remain
+// lifetime totals; retention applies only to the latency observations.
+func summarizeModel(key string, model modelSnapshot, retentionDays int, now time.Time) (ModelStat, bool) {
+	backend, name, ok := strings.Cut(key, "\x00")
+	if !ok {
+		return ModelStat{}, false
+	}
+	stat := ModelStat{
+		Backend: backend, Model: name, Requests: model.Requests, Successes: model.Successes,
+		InputTokens: model.TokensIn, OutputTokens: model.TokensOut,
+		CacheReadTokens: model.CacheRead, CacheWriteTokens: model.CacheWrite,
+		ToolCalls: model.ToolCalls, ToolErrors: model.ToolErrors,
+		StatusCodes: nonEmpty(model.Statuses),
+	}
+	aggregate := newBucketAggregate()
+	cutoff := retentionCutoff(now, retentionDays)
+	for _, b := range model.Buckets {
+		if b.WindowStart.Unix()/300 >= cutoff {
+			aggregate.add(b)
+		}
+	}
+	stat.TTFT = percentilesFromCounts(aggregate.TTFTBuckets, ttftEdges)
+	stat.E2E = percentilesFromCounts(aggregate.E2EBuckets, e2eEdges)
+	stat.Throughput = percentilesFromCounts(aggregate.ThroughputBuckets, tpsEdges)
+	finishModelStat(&stat)
+	return stat, true
+}
+
+func finishModelStat(stat *ModelStat) {
+	stat.Uptime = ratio(stat.Successes, stat.Requests)
+	stat.CacheRate = ratio(stat.CacheReadTokens, stat.InputTokens)
+	stat.ToolErrorRate = ratio(stat.ToolErrors, stat.ToolCalls)
+}
+
+func retentionCutoff(now time.Time, days int) int64 {
+	if days <= 0 {
+		return 0
+	}
+	return now.Unix()/300 - int64(days)*24*12
+}
+
+// bucketAggregate folds retained buckets identically for summaries and series.
+type bucketAggregate struct{ bucket }
+
+func newBucketAggregate() bucketAggregate {
+	return bucketAggregate{bucket: bucket{
+		TTFTBuckets:       make([]uint64, len(ttftEdges)),
+		E2EBuckets:        make([]uint64, len(e2eEdges)),
+		ThroughputBuckets: make([]uint64, len(tpsEdges)),
+	}}
+}
+
+func (a *bucketAggregate) add(b bucket) {
+	a.Requests += b.Requests
+	a.Successes += b.Successes
+	a.TokensIn += b.TokensIn
+	a.TokensOut += b.TokensOut
+	a.CacheRead += b.CacheRead
+	a.CacheWrite += b.CacheWrite
+	a.ToolCalls += b.ToolCalls
+	a.ToolErrors += b.ToolErrors
+	addHistogram(a.TTFTBuckets, b.TTFTBuckets)
+	addHistogram(a.E2EBuckets, b.E2EBuckets)
+	addHistogram(a.ThroughputBuckets, b.ThroughputBuckets)
+}
+
+func addHistogram(dst, src []uint64) {
+	for i := 0; i < len(dst) && i < len(src); i++ {
+		dst[i] += src[i]
+	}
 }
 
 // nonEmpty returns the map as-is when it holds entries, nil otherwise, so
@@ -361,4 +365,13 @@ func nonEmpty(m map[string]uint64) map[string]uint64 {
 		return nil
 	}
 	return m
+}
+
+func sortModelStats(stats []ModelStat) {
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].Backend != stats[j].Backend {
+			return stats[i].Backend < stats[j].Backend
+		}
+		return stats[i].Model < stats[j].Model
+	})
 }

@@ -75,6 +75,10 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 			return series, models, nil
 		}
 	}
+	return seriesFromModels(st.snapshotModels(), rng, now, backendName, modelName, st.cfg.RetentionDays)
+}
+
+func seriesFromModels(models map[string]modelSnapshot, rng string, now time.Time, backendName, modelName string, retentionDays int) (scopedSeriesSet, []string, error) {
 	dur, ok := seriesRangeBuckets[rng]
 	if !ok {
 		return scopedSeriesSet{}, nil, fmt.Errorf("unknown range %q; supported ranges: 1h, 6h, 24h, 7d", rng)
@@ -84,24 +88,14 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 	end := current.Add(dur)
 	start := end.Add(-time.Duration(n) * dur)
 
-	type agg struct {
-		requests, successes, tokensIn, tokensOut, cacheRead, toolCalls uint64
-		toolErrors                                                     uint64
-		ttft, e2e, tps                                                 []uint64
-	}
-	aggs := make([]*agg, n)
+	aggs := make([]bucketAggregate, n)
 	for i := range aggs {
-		aggs[i] = &agg{
-			ttft: make([]uint64, len(ttftEdges)),
-			e2e:  make([]uint64, len(e2eEdges)),
-			tps:  make([]uint64, len(tpsEdges)),
-		}
+		aggs[i] = newBucketAggregate()
 	}
 	modelSet := make(map[string]struct{})
 
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	for key, ms := range st.models {
+	cutoff := retentionCutoff(now, retentionDays)
+	for key, model := range models {
 		rowBackend, rowModel, ok := strings.Cut(key, "\x00")
 		if !ok {
 			continue
@@ -110,9 +104,13 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 			(modelName != "" && rowModel != modelName) {
 			continue
 		}
-		ms.mu.Lock()
-		for win, b := range ms.buckets {
-			bStart := time.Unix(win*300, 0).UTC()
+		retained := false
+		for _, b := range model.Buckets {
+			if b.WindowStart.Unix()/300 < cutoff {
+				continue
+			}
+			retained = true
+			bStart := b.WindowStart
 			if bStart.Before(start) || !bStart.Before(end) {
 				continue
 			}
@@ -120,28 +118,11 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 			if idx < 0 || idx >= n {
 				continue
 			}
-			a := aggs[idx]
-			a.requests += b.Requests
-			a.successes += b.Successes
-			a.tokensIn += b.TokensIn
-			a.tokensOut += b.TokensOut
-			a.cacheRead += b.CacheRead
-			a.toolCalls += b.ToolCalls
-			a.toolErrors += b.ToolErrors
-			for i := range b.TTFTBuckets {
-				a.ttft[i] += b.TTFTBuckets[i]
-			}
-			for i := range b.E2EBuckets {
-				a.e2e[i] += b.E2EBuckets[i]
-			}
-			for i := range b.ThroughputBuckets {
-				a.tps[i] += b.ThroughputBuckets[i]
-			}
+			aggs[idx].add(b)
 		}
-		if len(ms.buckets) > 0 {
+		if retained {
 			modelSet[rowModel] = struct{}{}
 		}
-		ms.mu.Unlock()
 	}
 
 	scopedModels := make([]string, 0, len(modelSet))
@@ -164,15 +145,15 @@ func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName
 	for i := 0; i < n; i++ {
 		ts := start.Add(time.Duration(i) * dur).Format(time.RFC3339)
 		a := aggs[i]
-		series.Requests = append(series.Requests, point{TS: ts, Value: float64(a.requests)})
-		series.SuccessRate = append(series.SuccessRate, point{TS: ts, Value: ratio(a.successes, a.requests)})
-		series.TokensIn = append(series.TokensIn, point{TS: ts, Value: float64(a.tokensIn)})
-		series.TokensOut = append(series.TokensOut, point{TS: ts, Value: float64(a.tokensOut)})
-		series.ToolCalls = append(series.ToolCalls, point{TS: ts, Value: float64(a.toolCalls)})
-		series.ToolErrors = append(series.ToolErrors, point{TS: ts, Value: float64(a.toolErrors)})
-		series.TTFTP50 = append(series.TTFTP50, point{TS: ts, Value: histogramQuantile(0.5, ttftEdges, a.ttft, 0)})
-		series.E2EP50 = append(series.E2EP50, point{TS: ts, Value: histogramQuantile(0.5, e2eEdges, a.e2e, 0)})
-		series.ThroughputP50 = append(series.ThroughputP50, point{TS: ts, Value: histogramQuantile(0.5, tpsEdges, a.tps, 0)})
+		series.Requests = append(series.Requests, point{TS: ts, Value: float64(a.Requests)})
+		series.SuccessRate = append(series.SuccessRate, point{TS: ts, Value: ratio(a.Successes, a.Requests)})
+		series.TokensIn = append(series.TokensIn, point{TS: ts, Value: float64(a.TokensIn)})
+		series.TokensOut = append(series.TokensOut, point{TS: ts, Value: float64(a.TokensOut)})
+		series.ToolCalls = append(series.ToolCalls, point{TS: ts, Value: float64(a.ToolCalls)})
+		series.ToolErrors = append(series.ToolErrors, point{TS: ts, Value: float64(a.ToolErrors)})
+		series.TTFTP50 = append(series.TTFTP50, point{TS: ts, Value: histogramQuantile(0.5, ttftEdges, a.TTFTBuckets, 0)})
+		series.E2EP50 = append(series.E2EP50, point{TS: ts, Value: histogramQuantile(0.5, e2eEdges, a.E2EBuckets, 0)})
+		series.ThroughputP50 = append(series.ThroughputP50, point{TS: ts, Value: histogramQuantile(0.5, tpsEdges, a.ThroughputBuckets, 0)})
 	}
 	return scopedSeriesSet{Series: series, Models: scopedModels}, scopedModels, nil
 }

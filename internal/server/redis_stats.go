@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,53 +73,32 @@ func (r *redisStats) close() {
 	})
 }
 
-// record atomically adds one completed upstream attempt and its latency
-// observations to the shared model hash. success is whether the request
-// actually served the client (2xx without an error body).
-func (r *redisStats) record(ctx context.Context, backend, model string, success bool, ttft, e2e, throughput float64, rep usageReport, retentionDays int) error {
-	modelName := backend + "\x00" + model
-	win := time.Now().Unix() / 300
-	bucket := fmt.Sprintf("bucket:%d:", win)
+// record writes counters, failure status, and histograms in one transaction.
+// Using the attempt timestamp keeps all adapters in the same five-minute bucket.
+func (r *redisStats) record(ctx context.Context, a completedAttempt, retentionDays int) error {
+	modelName := a.backend + "\x00" + a.model
+	bucketPrefix := fmt.Sprintf("bucket:%d:", a.at.Unix()/300)
 	pipe := r.client.TxPipeline()
 	pipe.SAdd(ctx, r.modelsKey(), modelName)
-	for field, value := range map[string]int64{
-		"requests":    1,
-		"tokens_in":   rep.input,
-		"tokens_out":  rep.output,
-		"cache_read":  rep.cacheRead,
-		"cache_write": rep.cacheWrite,
-		"tool_calls":  rep.toolCalls,
-	} {
-		if value != 0 || field == "requests" {
-			pipe.HIncrBy(ctx, r.modelKey(modelName), field, value)
-		}
-	}
-	if success {
-		pipe.HIncrBy(ctx, r.modelKey(modelName), "successes", 1)
-	}
-	pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"requests", 1)
-	if success {
-		pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"successes", 1)
-	}
-	for field, value := range map[string]int64{
-		bucket + "tokens_in":  rep.input,
-		bucket + "tokens_out": rep.output,
-		bucket + "cache_read": rep.cacheRead,
-		bucket + "tool_calls": rep.toolCalls,
-	} {
+	for field, value := range a.counters() {
 		if value != 0 {
 			pipe.HIncrBy(ctx, r.modelKey(modelName), field, value)
+			pipe.HIncrBy(ctx, r.modelKey(modelName), bucketPrefix+field, value)
 		}
 	}
-	if ttft > 0 {
-		pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"ttft:"+strconv.Itoa(histIndex(ttftEdges, ttft)), 1)
+	if a.ttft > 0 {
+		pipe.HIncrBy(ctx, r.modelKey(modelName), bucketPrefix+"ttft:"+strconv.Itoa(histIndex(ttftEdges, a.ttft)), 1)
 	}
-	if e2e > 0 {
-		pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"e2e:"+strconv.Itoa(histIndex(e2eEdges, e2e)), 1)
+	if a.e2e > 0 {
+		pipe.HIncrBy(ctx, r.modelKey(modelName), bucketPrefix+"e2e:"+strconv.Itoa(histIndex(e2eEdges, a.e2e)), 1)
 	}
-	if throughput > 0 {
-		pipe.HIncrBy(ctx, r.modelKey(modelName), bucket+"tps:"+strconv.Itoa(histIndex(tpsEdges, throughput)), 1)
+	if a.throughput > 0 {
+		pipe.HIncrBy(ctx, r.modelKey(modelName), bucketPrefix+"tps:"+strconv.Itoa(histIndex(tpsEdges, a.throughput)), 1)
 	}
+	return r.commit(ctx, pipe, modelName, retentionDays)
+}
+
+func (r *redisStats) commit(ctx context.Context, pipe redis.Pipeliner, modelName string, retentionDays int) error {
 	if retentionDays > 0 {
 		pipe.Expire(ctx, r.modelKey(modelName), time.Duration(retentionDays+1)*24*time.Hour)
 	}
@@ -131,44 +109,17 @@ func (r *redisStats) record(ctx context.Context, backend, model string, success 
 	return err
 }
 
-// recordStatus adds one non-2xx upstream reply to the shared model hash:
-// a lifetime counter per HTTP status plus the same counter in the current
-// 5-minute bucket so both /stats and the time series can report it.
-func (r *redisStats) recordStatus(ctx context.Context, backend, model, status string, retentionDays int) error {
-	modelName := backend + "\x00" + model
-	win := time.Now().Unix() / 300
-	pipe := r.client.TxPipeline()
-	pipe.SAdd(ctx, r.modelsKey(), modelName)
-	pipe.HIncrBy(ctx, r.modelKey(modelName), "status:"+status, 1)
-	pipe.HIncrBy(ctx, r.modelKey(modelName), fmt.Sprintf("bucket:%d:status:%s", win, status), 1)
-	if retentionDays > 0 {
-		pipe.Expire(ctx, r.modelKey(modelName), time.Duration(retentionDays+1)*24*time.Hour)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return err
-	}
-	_, err := r.client.Publish(ctx, r.updatesKey(), "stats-updated").Result()
-	return err
-}
-
-func (r *redisStats) recordToolErrors(ctx context.Context, backend, model string, n int64, retentionDays int) error {
+func (r *redisStats) recordToolErrors(ctx context.Context, backend, model string, n int64, at time.Time, retentionDays int) error {
 	if n <= 0 {
 		return nil
 	}
 	modelName := backend + "\x00" + model
-	field := fmt.Sprintf("bucket:%d:tool_errors", time.Now().Unix()/300)
+	field := fmt.Sprintf("bucket:%d:tool_errors", at.Unix()/300)
 	pipe := r.client.TxPipeline()
 	pipe.SAdd(ctx, r.modelsKey(), modelName)
 	pipe.HIncrBy(ctx, r.modelKey(modelName), "tool_errors", n)
 	pipe.HIncrBy(ctx, r.modelKey(modelName), field, n)
-	if retentionDays > 0 {
-		pipe.Expire(ctx, r.modelKey(modelName), time.Duration(retentionDays+1)*24*time.Hour)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return err
-	}
-	_, err := r.client.Publish(ctx, r.updatesKey(), "stats-updated").Result()
-	return err
+	return r.commit(ctx, pipe, modelName, retentionDays)
 }
 
 type redisModel struct {
@@ -229,6 +180,8 @@ func redisBuckets(fields map[string]string) map[int64]*bucket {
 			b.TokensOut = n
 		case "cache_read":
 			b.CacheRead = n
+		case "cache_write":
+			b.CacheWrite = n
 		case "tool_calls":
 			b.ToolCalls = n
 		case "tool_errors":
@@ -273,62 +226,29 @@ func redisUint(value string) uint64 {
 	return n
 }
 
-func redisModelStat(model redisModel, retentionDays int) (ModelStat, bool) {
-	backend, name, ok := strings.Cut(model.name, "\x00")
-	if !ok {
-		return ModelStat{}, false
+func (model redisModel) snapshot() modelSnapshot {
+	snapshot := modelSnapshot{
+		Requests: redisUint(model.fields["requests"]), Successes: redisUint(model.fields["successes"]),
+		TokensIn: redisUint(model.fields["tokens_in"]), TokensOut: redisUint(model.fields["tokens_out"]),
+		CacheRead: redisUint(model.fields["cache_read"]), CacheWrite: redisUint(model.fields["cache_write"]),
+		ToolCalls: redisUint(model.fields["tool_calls"]), ToolErrors: redisUint(model.fields["tool_errors"]),
+		Statuses: map[string]uint64{}, Buckets: make([]bucket, 0, len(model.buckets)),
 	}
-	stat := ModelStat{
-		Backend:          backend,
-		Model:            name,
-		Requests:         redisUint(model.fields["requests"]),
-		Successes:        redisUint(model.fields["successes"]),
-		InputTokens:      redisUint(model.fields["tokens_in"]),
-		OutputTokens:     redisUint(model.fields["tokens_out"]),
-		CacheReadTokens:  redisUint(model.fields["cache_read"]),
-		CacheWriteTokens: redisUint(model.fields["cache_write"]),
-		ToolCalls:        redisUint(model.fields["tool_calls"]),
-		ToolErrors:       redisUint(model.fields["tool_errors"]),
-	}
-	statuses := map[string]uint64{}
-	// Status counters are read from their lifetime fields only: recordStatus
-	// mirrors every failure into both a lifetime and a bucket field, so
-	// folding the buckets here would double each count. Bucket copies exist
-	// for the time-series views.
 	for field, value := range model.fields {
 		if status, ok := strings.CutPrefix(field, "status:"); ok {
 			if n := redisUint(value); n > 0 {
-				statuses[status] += n
+				snapshot.Statuses[status] = n
 			}
 		}
 	}
-	ttft := make([]uint64, len(ttftEdges))
-	e2e := make([]uint64, len(e2eEdges))
-	tps := make([]uint64, len(tpsEdges))
-	cutoff := int64(0)
-	if retentionDays > 0 {
-		cutoff = time.Now().Unix()/300 - int64(retentionDays)*24*12
+	for _, b := range model.buckets {
+		snapshot.Buckets = append(snapshot.Buckets, *b)
 	}
-	for win, b := range model.buckets {
-		if cutoff > 0 && win < cutoff {
-			continue
-		}
-		for i := range ttft {
-			ttft[i] += b.TTFTBuckets[i]
-			e2e[i] += b.E2EBuckets[i]
-		}
-		for i := range tps {
-			tps[i] += b.ThroughputBuckets[i]
-		}
-	}
-	stat.StatusCodes = nonEmpty(statuses)
-	stat.Uptime = ratio(stat.Successes, stat.Requests)
-	stat.TTFT = percentilesFromCounts(ttft, ttftEdges)
-	stat.E2E = percentilesFromCounts(e2e, e2eEdges)
-	stat.Throughput = percentilesFromCounts(tps, tpsEdges)
-	stat.CacheRate = ratio(stat.CacheReadTokens, stat.InputTokens)
-	stat.ToolErrorRate = ratio(stat.ToolErrors, stat.ToolCalls)
-	return stat, true
+	return snapshot
+}
+
+func redisModelStat(model redisModel, retentionDays int) (ModelStat, bool) {
+	return summarizeModel(model.name, model.snapshot(), retentionDays, time.Now())
 }
 
 func (r *redisStats) snapshot(ctx context.Context, retentionDays int) ([]ModelStat, error) {
@@ -346,112 +266,14 @@ func (r *redisStats) snapshot(ctx context.Context, retentionDays int) ([]ModelSt
 	return out, nil
 }
 
-func sortModelStats(stats []ModelStat) {
-	sort.Slice(stats, func(i, j int) bool {
-		if stats[i].Backend != stats[j].Backend {
-			return stats[i].Backend < stats[j].Backend
-		}
-		return stats[i].Model < stats[j].Model
-	})
-}
-
 func (st *Stats) seriesAtScopeRedis(ctx context.Context, rng string, now time.Time, backendName, modelName string) (scopedSeriesSet, []string, error) {
-	dur, ok := seriesRangeBuckets[rng]
-	if !ok {
-		return scopedSeriesSet{}, nil, fmt.Errorf("unknown range %q; supported ranges: 1h, 6h, 24h, 7d", rng)
-	}
-	n := seriesRangePoints[rng]
-	current := now.Truncate(5 * time.Minute)
-	end := current.Add(dur)
-	start := end.Add(-time.Duration(n) * dur)
-
-	type aggregate struct {
-		requests, successes, tokensIn, tokensOut, toolCalls, toolErrors uint64
-		ttft, e2e, tps                                                  []uint64
-	}
-	aggs := make([]*aggregate, n)
-	for i := range aggs {
-		aggs[i] = &aggregate{
-			ttft: make([]uint64, len(ttftEdges)),
-			e2e:  make([]uint64, len(e2eEdges)),
-			tps:  make([]uint64, len(tpsEdges)),
-		}
-	}
-
 	models, err := st.redis.loadModels(ctx)
 	if err != nil {
 		return scopedSeriesSet{}, nil, err
 	}
-	modelSet := make(map[string]struct{})
-	cutoff := int64(0)
-	if st.cfg.RetentionDays > 0 {
-		cutoff = now.Unix()/300 - int64(st.cfg.RetentionDays)*24*12
-	}
+	snapshots := make(map[string]modelSnapshot, len(models))
 	for _, model := range models {
-		rowBackend, rowModel, ok := strings.Cut(model.name, "\x00")
-		if !ok || (backendName != "" && rowBackend != backendName) || (modelName != "" && rowModel != modelName) {
-			continue
-		}
-		for win, b := range model.buckets {
-			if cutoff > 0 && win < cutoff {
-				continue
-			}
-			bStart := time.Unix(win*300, 0).UTC()
-			if bStart.Before(start) || !bStart.Before(end) {
-				continue
-			}
-			idx := int(bStart.Sub(start) / dur)
-			if idx < 0 || idx >= n {
-				continue
-			}
-			a := aggs[idx]
-			a.requests += b.Requests
-			a.successes += b.Successes
-			a.tokensIn += b.TokensIn
-			a.tokensOut += b.TokensOut
-			a.toolCalls += b.ToolCalls
-			a.toolErrors += b.ToolErrors
-			for i := range b.TTFTBuckets {
-				a.ttft[i] += b.TTFTBuckets[i]
-				a.e2e[i] += b.E2EBuckets[i]
-			}
-			for i := range b.ThroughputBuckets {
-				a.tps[i] += b.ThroughputBuckets[i]
-			}
-		}
-		if len(model.buckets) > 0 {
-			modelSet[rowModel] = struct{}{}
-		}
+		snapshots[model.name] = model.snapshot()
 	}
-
-	scopedModels := make([]string, 0, len(modelSet))
-	for model := range modelSet {
-		scopedModels = append(scopedModels, model)
-	}
-	sort.Strings(scopedModels)
-	series := seriesSet{
-		Requests:      make([]point, 0, n),
-		SuccessRate:   make([]point, 0, n),
-		TTFTP50:       make([]point, 0, n),
-		E2EP50:        make([]point, 0, n),
-		ThroughputP50: make([]point, 0, n),
-		TokensIn:      make([]point, 0, n),
-		TokensOut:     make([]point, 0, n),
-		ToolCalls:     make([]point, 0, n),
-		ToolErrors:    make([]point, 0, n),
-	}
-	for i := range aggs {
-		ts := start.Add(time.Duration(i) * dur).Format(time.RFC3339)
-		a := aggs[i]
-		series.Requests = append(series.Requests, point{TS: ts, Value: float64(a.requests)})
-		series.SuccessRate = append(series.SuccessRate, point{TS: ts, Value: ratio(a.successes, a.requests)})
-		series.TokensIn = append(series.TokensIn, point{TS: ts, Value: float64(a.tokensIn)})
-		series.TokensOut = append(series.TokensOut, point{TS: ts, Value: float64(a.tokensOut)})
-		series.ToolCalls = append(series.ToolCalls, point{TS: ts, Value: float64(a.toolCalls)})
-		series.ToolErrors = append(series.ToolErrors, point{TS: ts, Value: float64(a.toolErrors)})
-		series.TTFTP50 = append(series.TTFTP50, point{TS: ts, Value: histogramQuantile(0.5, ttftEdges, a.ttft, 0)})
-		series.E2EP50 = append(series.E2EP50, point{TS: ts, Value: histogramQuantile(0.5, e2eEdges, a.e2e, 0)})
-		series.ThroughputP50 = append(series.ThroughputP50, point{TS: ts, Value: histogramQuantile(0.5, tpsEdges, a.tps, 0)})
-	}
-	return scopedSeriesSet{Series: series, Models: scopedModels}, scopedModels, nil
+	return seriesFromModels(snapshots, rng, now, backendName, modelName, st.cfg.RetentionDays)
 }
