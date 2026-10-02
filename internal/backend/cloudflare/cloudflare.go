@@ -3,7 +3,6 @@
 package cloudflare
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/backend/upstream"
 )
 
 type Client struct {
@@ -28,15 +28,7 @@ func New(baseURL, key string) (*Client, error) {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Key:     key,
-		HTTP: &http.Client{
-			Timeout: 0,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				MaxIdleConns:          100,
-				IdleConnTimeout:       90 * time.Second,
-				ResponseHeaderTimeout: 15 * time.Minute,
-			},
-		},
+		HTTP:    upstream.NewClient(15 * time.Minute),
 	}, nil
 }
 
@@ -82,19 +74,10 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if !ok {
 		return nil, backend.Terminal(fmt.Errorf("cloudflare backend does not support kind %q", req.Kind))
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(req.RawBody))
+	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+path, req.RawBody, req.Streaming)
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-	if req.Streaming {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request to Cloudflare failed: %w", err)
-	}
-	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+	return upstream.Send(c.HTTP, httpReq, "Cloudflare")
 }

@@ -6,7 +6,6 @@
 package apodex
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/backend/upstream"
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
@@ -39,19 +39,9 @@ func New(baseURL, key string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Key:     key,
-		HTTP: &http.Client{
-			Timeout: 0,
-			Transport: &http.Transport{
-				Proxy:           http.ProxyFromEnvironment,
-				MaxIdleConns:    100,
-				IdleConnTimeout: 90 * time.Second,
-				// Apodex allows a non-streaming request roughly 600 seconds of
-				// wall clock before it gives up; the deep-research models
-				// routinely use it, so wait past that rather than cutting a
-				// live answer short.
-				ResponseHeaderTimeout: 15 * time.Minute,
-			},
-		},
+		// Deep-research responses can take roughly 600 seconds, so wait
+		// beyond that without imposing an overall streaming deadline.
+		HTTP: upstream.NewClient(15 * time.Minute),
 	}
 }
 
@@ -114,24 +104,15 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		body = withExplicitStream(body, req.Streaming)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+path, body, req.Streaming)
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	httpReq.Header.Set("Content-Type", "application/json")
 	if req.Kind == backend.KindAnthropic {
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	}
-	httpReq.Header.Set("Accept", "application/json")
-	if req.Streaming {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request to Apodex failed: %w", err)
-	}
-	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+	return upstream.Send(c.HTTP, httpReq, "Apodex")
 }
 
 // withExplicitStream pins the "stream" field to what the proxy decided the
@@ -157,41 +138,21 @@ func withExplicitStream(body []byte, streaming bool) []byte {
 	return out
 }
 
-type modelList struct {
-	Data []struct {
-		ID string `json:"id"`
-	} `json:"data"`
-}
-
 func (c *Client) Models(ctx context.Context) ([]string, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
+	httpReq, err := upstream.CatalogRequest(ctx, c.BaseURL+"/models", c.Key)
 	if err != nil {
 		return nil, err
 	}
-	if c.Key != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	}
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request to Apodex failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	resp, err := upstream.ReadCatalog(c.HTTP, httpReq, "Apodex")
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &HTTPError{Status: resp.StatusCode, Body: data}
+	if resp.Status < 200 || resp.Status >= 300 {
+		return nil, &HTTPError{Status: resp.Status, Body: resp.Body}
 	}
-	var list modelList
-	if err := json.Unmarshal(data, &list); err != nil {
+	models, err := upstream.ModelIDs(resp.Body)
+	if err != nil {
 		return nil, fmt.Errorf("decode models: %w", err)
-	}
-	models := make([]string, 0, len(list.Data))
-	for _, m := range list.Data {
-		if m.ID != "" {
-			models = append(models, m.ID)
-		}
 	}
 	return models, nil
 }

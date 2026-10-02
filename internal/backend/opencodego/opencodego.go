@@ -5,11 +5,9 @@
 package opencodego
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/backend/upstream"
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
@@ -57,15 +56,7 @@ func New(baseURL, key string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Key:     key,
-		HTTP: &http.Client{
-			Timeout: 0,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				MaxIdleConns:          100,
-				IdleConnTimeout:       90 * time.Second,
-				ResponseHeaderTimeout: 10 * time.Minute,
-			},
-		},
+		HTTP:    upstream.NewClient(10 * time.Minute),
 	}
 }
 
@@ -138,73 +129,39 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		}
 		body = normalized
 	}
-	var reader io.Reader
-	if body != nil {
-		reader = bytes.NewReader(body)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, reader)
+	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+path, body, req.Streaming)
 	if err != nil {
 		return nil, err
 	}
 	if c.Key != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("User-Agent", userAgent)
 	httpReq.Header.Set("x-opencode-session", session)
-	accept := "application/json"
-	if req.Streaming {
-		accept = "text/event-stream"
-	}
-	httpReq.Header.Set("Accept", accept)
 	if req.Kind == backend.KindAnthropic {
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	}
 
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request to OpenCode Go failed: %w", err)
-	}
-	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
-}
-
-type modelList struct {
-	Data []struct {
-		ID string `json:"id"`
-	} `json:"data"`
+	return upstream.Send(c.HTTP, httpReq, "OpenCode Go")
 }
 
 // Models lists the models currently available through OpenCode Go.
 func (c *Client) Models(ctx context.Context) ([]string, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
+	httpReq, err := upstream.CatalogRequest(ctx, c.BaseURL+"/models", c.Key)
 	if err != nil {
 		return nil, err
-	}
-	if c.Key != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	}
 	httpReq.Header.Set("User-Agent", userAgent)
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request to OpenCode Go failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	resp, err := upstream.ReadCatalog(c.HTTP, httpReq, "OpenCode Go")
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &HTTPError{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: data}
+	if resp.Status < 200 || resp.Status >= 300 {
+		return nil, &HTTPError{Status: resp.Status, Header: resp.Header.Clone(), Body: resp.Body}
 	}
-	var list modelList
-	if err := json.Unmarshal(data, &list); err != nil {
+	models, err := upstream.ModelIDs(resp.Body)
+	if err != nil {
 		return nil, fmt.Errorf("decode OpenCode Go models: %w", err)
-	}
-	models := make([]string, 0, len(list.Data))
-	for _, model := range list.Data {
-		if model.ID != "" {
-			models = append(models, model.ID)
-		}
 	}
 	return models, nil
 }
