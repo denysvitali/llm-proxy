@@ -243,6 +243,9 @@ with an explicit zero result code. Code 3012 is reported as
 `failure_kind: "risk_blocked"` with HTTP 409; it is not a CAPTCHA failure
 and the claim is not retried automatically. Confirm the resulting entitlement
 with `GET /api/zcode/usage` before treating an offer as activated.
+Successful or already-claimed responses invalidate the handling replica's
+usage and quota caches. Other replicas can retain their previous billing
+snapshot for up to one minute.
 Client-supplied session correlation values are one-way derived into opaque
 proxy UUIDs before they are used in the ZCode headers or metadata, preserving
 affinity without forwarding the client's identifier. The inbound client system

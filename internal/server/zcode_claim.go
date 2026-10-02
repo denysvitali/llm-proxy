@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +35,14 @@ func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusConflict
 	if outcome.OK || outcome.FailureKind == "already_claimed" {
 		status = http.StatusOK
+		// A claim changes billing state. Do not serve the pre-claim snapshot
+		// when the operator checks whether the entitlement was activated.
+		s.zcodeUsageMu.Lock()
+		s.zcodeUsageAt = time.Time{}
+		s.zcodeUsageMu.Unlock()
+		s.zcodeQuotaMu.Lock()
+		s.zcodeQuotaAt = time.Time{}
+		s.zcodeQuotaMu.Unlock()
 	} else if outcome.FailureKind == "captcha" || outcome.FailureKind == "invalid_request" {
 		status = http.StatusBadRequest
 	} else if outcome.FailureKind == "login_required" {
