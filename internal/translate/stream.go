@@ -1,15 +1,11 @@
 package translate
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
-
-const maxStreamLine = 8 << 20
 
 type openAIChunk struct {
 	ID      string `json:"id"`
@@ -53,35 +49,32 @@ func NewStreamWriter(writer io.Writer, flush func(), model string, includeThinki
 // the caller can end it with an explicit failure instead of a completion
 // that hides the truncation.
 func (s *StreamWriter) Consume(body io.Reader) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		if payload == "[DONE]" {
+	terminal := false
+	err := scanSSE(body, func(payload []byte) (bool, error) {
+		if string(payload) == "[DONE]" {
 			s.Finish()
-			return nil
+			terminal = true
+			return true, nil
 		}
 		var chunk openAIChunk
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue
+		if err := json.Unmarshal(payload, &chunk); err != nil {
+			return false, nil
 		}
 		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
 			s.emit("error", map[string]any{"type": "error", "error": json.RawMessage(chunk.Error)})
-			return nil
+			terminal = true
+			return true, nil
 		}
 		s.consumeChunk(chunk)
-	}
-	if err := scanner.Err(); err != nil {
+		return false, nil
+	})
+	if err != nil {
 		// The upstream broke mid-stream; leave the message unfinished so the
 		// caller can end it with an explicit error instead of a completion.
 		return err
+	}
+	if terminal {
+		return nil
 	}
 	if s.started {
 		// The upstream hung up without [DONE]. Ending the message here would

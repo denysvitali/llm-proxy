@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -395,35 +394,6 @@ type anthropicEvent struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
-}
-
-// scanSSE hands each data payload of an SSE body to handle until handle
-// reports terminal (true) or the body ends. Undecodable payloads are skipped
-// silently — translation must never fail because of one bad frame. The
-// [DONE] sentinel is handed through so chat-upstream adapters can recognize
-// their completion marker; Anthropic-upstream adapters simply fail to decode
-// it and skip it as before.
-func scanSSE(body io.Reader, decode func([]byte) (bool, error)) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		stop, err := decode([]byte(payload))
-		if err != nil {
-			return err
-		}
-		if stop {
-			return nil
-		}
-	}
-	return scanner.Err()
 }
 
 // ChatStreamFromAnthropic converts an upstream Anthropic SSE stream into

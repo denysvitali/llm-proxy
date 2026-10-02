@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,30 +69,18 @@ func NewResponsesStreamWriter(writer io.Writer, flush func(), model string, incl
 // Consume reads the upstream SSE stream to completion, emitting Anthropic
 // events as it goes.
 func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		if payload == "[DONE]" {
+	err := scanSSE(body, func(payload []byte) (bool, error) {
+		if string(payload) == "[DONE]" {
 			s.Finish()
-			return nil
+			return true, nil
 		}
 		var event responsesEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			continue
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return false, nil
 		}
-		if s.consumeEvent(event) {
-			break
-		}
-	}
-	if err := scanner.Err(); err != nil {
+		return s.consumeEvent(event), nil
+	})
+	if err != nil {
 		// The upstream broke mid-stream; leave the response unfinished so the
 		// caller can end it with an explicit failure instead of a
 		// "completed" envelope that hides the truncation.
@@ -446,30 +433,18 @@ func ChatStreamFromResponses(writer io.Writer, flush func(), model string) *Chat
 // Consume reads the upstream Responses SSE stream to completion, emitting
 // chat chunks as it goes.
 func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		if payload == "[DONE]" {
+	err := scanSSE(body, func(payload []byte) (bool, error) {
+		if string(payload) == "[DONE]" {
 			c.Finish()
-			return nil
+			return true, nil
 		}
 		var event responsesEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			continue
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return false, nil
 		}
-		if c.consumeEvent(event) {
-			break
-		}
-	}
-	if err := scanner.Err(); err != nil {
+		return c.consumeEvent(event), nil
+	})
+	if err != nil {
 		// The upstream broke mid-stream; leave the stream unfinished so the
 		// caller can end it with an explicit failure instead of a finished
 		// turn that hides the truncation.
