@@ -22,6 +22,7 @@ not upstream API keys.
 | Backend   | Upstream                          | Native APIs                              | Notes                                                        |
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
 | `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
+| `anyrouter` | [AnyRouter](https://docs.anyrouter.dev/api-reference/overview) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live model catalog, including `stealth/fledge-alpha`. |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
 | `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
@@ -302,6 +303,37 @@ the translation layer's supported mappings, not arbitrary passthrough. Select
 your account can reach, configure an explicit route with a non-qualified alias
 and the upstream model ID, or send a qualified ID directly. Catalogs are
 discovery hints, not an allowlist.
+
+### AnyRouter
+
+[AnyRouter](https://docs.anyrouter.dev/api-reference/overview) provides Chat
+Completions, Anthropic Messages, and OpenAI Responses at
+`https://anyrouter.dev/api/v1`. Configure an **LLM API key** (`sk-ar-v1-...`)
+from the [AnyRouter dashboard](https://dash.anyrouter.dev/keys); management
+keys (`ak_...`) cannot be used for inference:
+
+```yaml
+backends:
+  - type: anyrouter
+    api_key_env: ANYROUTER_API_KEY
+
+# Optional shorter model name for clients:
+routes:
+  fledge-alpha:
+    backend: anyrouter
+    model: stealth/fledge-alpha
+```
+
+Select `anyrouter/stealth/fledge-alpha` in clients, or use the `fledge-alpha`
+alias above. The backend fetches the live authenticated `GET /models` catalog;
+model availability depends on the key and account's routes. `base_url` can
+replace the default API root, including its `/api/v1` suffix.
+
+All three request formats use their matching AnyRouter endpoints, including
+Messages for non-Anthropic models. Request JSON (apart from the proxy's model
+rewrite), response bodies, and SSE events pass through unchanged, preserving
+provider routing, reasoning, tools, and AnyRouter metadata. The proxy supplies
+upstream credentials and forwards Anthropic version/beta headers for Messages.
 
 ### OpenRouter
 
@@ -659,7 +691,7 @@ flags are applied afterwards.
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
 | `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
