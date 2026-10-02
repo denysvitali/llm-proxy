@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Server) zcodeLoginPage(w http.ResponseWriter, _ *http.Request) {
-	if s.zcodeAuth == nil {
+	if s.accounts.ZCode == nil {
 		http.Error(w, "ZCode account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -73,7 +73,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.w
 // zcodeCaptcha accepts the short-lived verification parameter produced by the
 // browser SDK on the ZCode login page. It deliberately does not persist it.
 func (s *Server) zcodeCaptcha(w http.ResponseWriter, r *http.Request) {
-	if s.zcodeAuth == nil {
+	if s.accounts.ZCode == nil {
 		http.Error(w, "ZCode account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Server) zcodeCaptcha(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid CAPTCHA verification request"})
 		return
 	}
-	if err := s.zcodeAuth.SetCaptchaVerifyParamContext(r.Context(), request.VerifyParam); err != nil {
+	if err := s.accounts.ZCode.SetCaptchaVerifyParamContext(r.Context(), request.VerifyParam); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -104,11 +104,11 @@ const zcodeCaptchaDisabledExplanation = "automatic CAPTCHA solving is configured
 // zcodeCaptchaAllowed reports whether browser-minted proofs may be stored at
 // all for this deployment. Model requests do not use this state.
 func (s *Server) zcodeCaptchaAllowed() bool {
-	return s.zcodeAuth != nil && !s.zcodeAuth.CaptchaSolverConfigured()
+	return s.accounts.ZCode != nil && !s.accounts.ZCode.CaptchaSolverConfigured()
 }
 
 func (s *Server) zcodeLogin(w http.ResponseWriter, r *http.Request) {
-	if s.zcodeAuth == nil {
+	if s.accounts.ZCode == nil {
 		http.Error(w, "ZCode account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -121,7 +121,7 @@ func (s *Server) zcodeLogin(w http.ResponseWriter, r *http.Request) {
 	messages := make(chan string, 8)
 	result := make(chan error, 1)
 	go func() {
-		result <- s.zcodeAuth.LoginDevice(r.Context(), func(message string) {
+		result <- s.accounts.ZCode.LoginDevice(r.Context(), func(message string) {
 			select {
 			case messages <- message:
 			case <-r.Context().Done():

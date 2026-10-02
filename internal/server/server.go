@@ -16,10 +16,7 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/auth"
 	"github.com/denysvitali/llm-proxy/internal/backend"
-	codexbackend "github.com/denysvitali/llm-proxy/internal/backend/codex"
 	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
-	minimaxcodebackend "github.com/denysvitali/llm-proxy/internal/backend/minimaxcode"
-	workbuddybackend "github.com/denysvitali/llm-proxy/internal/backend/workbuddy"
 	zcodebackend "github.com/denysvitali/llm-proxy/internal/backend/zcode"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/sirupsen/logrus"
@@ -28,28 +25,25 @@ import (
 // Server wires configuration, authentication, and backends into the proxy
 // HTTP handler. Safe for concurrent use.
 type Server struct {
-	cfg             *config.Config
-	log             logrus.FieldLogger
-	auth            *auth.Store // nil disables client authentication
-	backends        []backend.Backend
-	byName          map[string]backend.Backend
-	updates         *updateHub
-	metrics         *Metrics
-	stats           *Stats
-	grokAuth        *grokbackend.Manager
-	workBuddyAuth   *workbuddybackend.Manager
-	codexAuth       *codexbackend.Manager
-	zcodeAuth       *zcodebackend.Manager
-	minimaxCodeAuth *minimaxcodebackend.Manager
-	catalogs        catalogCache
-	grokUsageMu     sync.Mutex
-	grokUsageValue  *grokbackend.UsageView
-	zcodeUsageMu    sync.Mutex
-	zcodeUsagePlans []zcodebackend.PlanUsage
-	zcodeUsageAt    time.Time
-	zcodeQuotaMu    sync.Mutex
-	zcodeQuotaValue zcodebackend.PlanQuota
-	zcodeQuotaAt    time.Time
+	cfg              *config.Config
+	log              logrus.FieldLogger
+	auth             *auth.Store // nil disables client authentication
+	backends         []backend.Backend
+	byName           map[string]backend.Backend
+	updates          *updateHub
+	metrics          *Metrics
+	stats            *Stats
+	accounts         AccountProviders
+	accountProviders map[string]*accountProvider
+	catalogs         catalogCache
+	grokUsageMu      sync.Mutex
+	grokUsageValue   *grokbackend.UsageView
+	zcodeUsageMu     sync.Mutex
+	zcodeUsagePlans  []zcodebackend.PlanUsage
+	zcodeUsageAt     time.Time
+	zcodeQuotaMu     sync.Mutex
+	zcodeQuotaValue  zcodebackend.PlanQuota
+	zcodeQuotaAt     time.Time
 }
 
 const (
@@ -59,38 +53,33 @@ const (
 	zcodeUsageTTL         = time.Minute
 )
 
-// New builds a Server. backends must already be constructed from cfg entries
-// in config order; auth may be nil for unauthenticated loopback deployments.
+// Dependencies names the components required to assemble a Server. Backends
+// must already be constructed in configuration order; Auth may be nil for
+// unauthenticated loopback deployments.
+type Dependencies struct {
+	Config   *config.Config
+	Logger   logrus.FieldLogger
+	Auth     *auth.Store
+	Backends []backend.Backend
+	Accounts AccountProviders
+}
+
+// New builds a Server without subscription account integrations.
 func New(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend) *Server {
-	return newServer(cfg, log, store, backends, nil, nil, nil, nil)
+	return NewWithDependencies(Dependencies{Config: cfg, Logger: log, Auth: store, Backends: backends})
 }
 
-// NewWithGrokAuth wires the xAI account session into the browser-only sign-in
-// page as well as the Grok backend.
-func NewWithGrokAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager) *Server {
-	return newServer(cfg, log, store, backends, grokAuth, nil, nil, nil)
-}
-
-// NewWithAccountAuth wires browser sign-in for subscription backends.
-func NewWithAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager) *Server {
-	return newServer(cfg, log, store, backends, grokAuth, workBuddyAuth, nil, nil)
-}
-
-// NewWithAllAccountAuth wires browser sign-in for every subscription backend.
-func NewWithAllAccountAuth(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager, codexAuth *codexbackend.Manager, zcodeAuth *zcodebackend.Manager, minimaxAuth ...*minimaxcodebackend.Manager) *Server {
-	s := newServer(cfg, log, store, backends, grokAuth, workBuddyAuth, codexAuth, zcodeAuth)
-	if len(minimaxAuth) > 0 {
-		s.minimaxCodeAuth = minimaxAuth[0]
+// NewWithDependencies builds a Server with named account integrations.
+func NewWithDependencies(deps Dependencies) *Server {
+	cfg, log := deps.Config, deps.Logger
+	if cfg == nil {
+		cfg = &config.Config{}
 	}
-	return s
-}
-
-func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, backends []backend.Backend, grokAuth *grokbackend.Manager, workBuddyAuth *workbuddybackend.Manager, codexAuth *codexbackend.Manager, zcodeAuth *zcodebackend.Manager) *Server {
 	if log == nil {
 		log = logrus.StandardLogger()
 	}
-	byName := make(map[string]backend.Backend, len(backends))
-	for _, b := range backends {
+	byName := make(map[string]backend.Backend, len(deps.Backends))
+	for _, b := range deps.Backends {
 		byName[b.Name()] = b
 	}
 	cfg.Defaults()
@@ -106,19 +95,17 @@ func newServer(cfg *config.Config, log logrus.FieldLogger, store *auth.Store, ba
 		log.WithError(err).Warn("stats persistence load failed; starting with empty stats")
 	}
 	return &Server{
-		cfg:           cfg,
-		log:           log,
-		auth:          store,
-		backends:      backends,
-		byName:        byName,
-		updates:       updates,
-		metrics:       metrics,
-		stats:         stats,
-		grokAuth:      grokAuth,
-		workBuddyAuth: workBuddyAuth,
-		codexAuth:     codexAuth,
-		zcodeAuth:     zcodeAuth,
-		catalogs:      newCatalogCache(),
+		cfg:              cfg,
+		log:              log,
+		auth:             deps.Auth,
+		backends:         deps.Backends,
+		byName:           byName,
+		updates:          updates,
+		metrics:          metrics,
+		stats:            stats,
+		accounts:         deps.Accounts,
+		accountProviders: deps.Accounts.providers(),
+		catalogs:         newCatalogCache(),
 	}
 }
 
@@ -138,27 +125,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats/backends/{backend}", s.handleStatsBackendSeries)
 	mux.HandleFunc("GET /api/stats/backends/{backend}/{model}", s.handleStatsBackendSeries)
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
-	mux.HandleFunc("GET /api/grok/usage", s.handleGrokUsage)
-	mux.HandleFunc("GET /api/zcode/usage", s.handleZcodeUsage)
-	mux.HandleFunc("GET /api/zcode/quota", s.handleZcodeQuota)
-	mux.HandleFunc("GET /api/zcode/balance", s.handleZcodeQuota)
-	mux.HandleFunc("GET /api/minimax-code/usage", s.handleMiniMaxCodeUsage)
-	mux.Handle("POST /api/minimax-code/checkin", http.NewCrossOriginProtection().Handler(http.HandlerFunc(s.handleMiniMaxCodeCheckin)))
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
 	mux.HandleFunc("GET /api/updates/sse", s.handleUpdatesSSE)
-	mux.HandleFunc("GET /login", s.grokLoginPage)
-	mux.HandleFunc("POST /login", s.grokLogin)
-	mux.HandleFunc("GET /login/workbuddy", s.workBuddyLoginPage)
-	mux.HandleFunc("POST /login/workbuddy", s.workBuddyLogin)
-	mux.HandleFunc("GET /login/codex", s.codexLoginPage)
-	mux.HandleFunc("POST /login/codex", s.codexLogin)
-	mux.HandleFunc("GET /login/zcode", s.zcodeLoginPage)
-	mux.HandleFunc("POST /login/zcode", s.zcodeLogin)
-	mux.HandleFunc("GET /login/minimax-code", s.minimaxCodeLoginPage)
-	mux.HandleFunc("POST /login/minimax-code", s.minimaxCodeLogin)
-	mux.HandleFunc("POST /login/zcode/captcha", s.zcodeCaptcha)
-	mux.HandleFunc("POST /api/zcode/claim", s.zcodeClaim)
-	mux.HandleFunc("GET /api/zcode/offers", s.zcodeOffers)
+	for _, provider := range s.accountProviders {
+		provider.registerRoutes(s, mux)
+	}
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics.handler())

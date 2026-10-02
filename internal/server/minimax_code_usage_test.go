@@ -70,7 +70,7 @@ func TestMiniMaxAccountEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Backends: []config.BackendConfig{{Type: "minimax-code"}}}
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, []backend.Backend{minimaxcodebackend.New("", "")}, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Backends: []backend.Backend{minimaxcodebackend.New("", "")}, Accounts: AccountProviders{MiniMaxCode: manager}})
 	handler := s.Handler()
 	request := func(method, path string) *httptest.ResponseRecorder {
 		t.Helper()

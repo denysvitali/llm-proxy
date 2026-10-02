@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
-	if s.zcodeAuth == nil {
+	if s.accounts.ZCode == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ZCode account management is unavailable"})
 		return
 	}
@@ -26,7 +26,7 @@ func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid ZCode plan_id is required"})
 		return
 	}
-	outcome, err := s.zcodeAuth.ClaimPlan(r.Context(), request.PlanID)
+	outcome, err := s.accounts.ZCode.ClaimPlan(r.Context(), request.PlanID)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -45,11 +45,11 @@ func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
 // zcodeOffers lists the claimable offers ZCode advertises for the signed-in
 // account, so a plan_id can be picked before POSTing /api/zcode/claim.
 func (s *Server) zcodeOffers(w http.ResponseWriter, r *http.Request) {
-	if s.zcodeAuth == nil {
+	if s.accounts.ZCode == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ZCode account management is unavailable"})
 		return
 	}
-	plans, err := s.zcodeAuth.PreviewPlans(r.Context())
+	plans, err := s.accounts.ZCode.PreviewPlans(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

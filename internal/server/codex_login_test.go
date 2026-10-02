@@ -15,7 +15,7 @@ func TestCodexLoginPageIsWebOnly(t *testing.T) {
 	isolatePrometheus(t)
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 	manager := codexbackend.NewManager(filepath.Join(t.TempDir(), "codex-auth.json"))
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, manager, nil)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{Codex: manager}})
 	req := httptest.NewRequest(http.MethodGet, "/login/codex", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)

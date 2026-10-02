@@ -15,7 +15,7 @@ func TestWorkBuddyLoginPage(t *testing.T) {
 	isolatePrometheus(t)
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 	manager := workbuddybackend.NewManager(filepath.Join(t.TempDir(), "workbuddy-auth.json"))
-	s := NewWithAccountAuth(cfg, quietLogger(), nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{WorkBuddy: manager}})
 	req := httptest.NewRequest(http.MethodGet, "/login/workbuddy", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)

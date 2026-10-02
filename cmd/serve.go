@@ -57,16 +57,29 @@ func init() {
 // buildBackends constructs the enabled backends in configuration order via
 // the backend registry.
 func buildBackends(cfg *config.Config) ([]backend.Backend, error) {
-	return buildBackendsWithTokenSources(cfg, grokbackend.NewManager(cfg.GrokAuthFile), workbuddybackend.NewSession(cfg.WorkBuddyAuthFile), codexbackend.NewManager(cfg.CodexAuthFile), zcodebackend.NewManager(cfg.ZCodeAuthFile), minimaxcodebackend.NewManager(cfg.MiniMaxCodeAuthFile))
+	return buildBackendsWithAccounts(cfg, accountProviders(cfg, nil))
 }
 
-func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyTokens, codexTokens, zcodeTokens backend.TokenSource, minimaxTokens ...backend.TokenSource) ([]backend.Backend, error) {
+// accountProviders creates one manager per provider. The same instances supply
+// backend tokens and browser account routes when running the server.
+func accountProviders(cfg *config.Config, captchaStore *zcodebackend.ValkeyCaptchaStore) server.AccountProviders {
+	return server.AccountProviders{
+		Grok:        grokbackend.NewManager(cfg.GrokAuthFile),
+		WorkBuddy:   workbuddybackend.NewManager(cfg.WorkBuddyAuthFile),
+		Codex:       codexbackend.NewManager(cfg.CodexAuthFile),
+		ZCode:       zcodebackend.NewManagerWithCaptchaStore(cfg.ZCodeAuthFile, captchaStore),
+		MiniMaxCode: minimaxcodebackend.NewManager(cfg.MiniMaxCodeAuthFile),
+	}
+}
+
+func buildBackendsWithAccounts(cfg *config.Config, accounts server.AccountProviders) ([]backend.Backend, error) {
+	tokenSources := accounts.TokenSources()
 	out := make([]backend.Backend, 0, len(cfg.Backends))
 	for _, bc := range cfg.EnabledBackends() {
 		b, err := backend.New(bc.Type, backend.Options{
 			BaseURL:     bc.BaseURL,
 			APIKey:      bc.ResolveKey(os.Getenv),
-			TokenSource: tokensForBackend(bc.Type, grokTokens, workBuddyTokens, codexTokens, zcodeTokens, minimaxTokens...),
+			TokenSource: tokenSources[bc.Type],
 			FreeOnly:    bc.FreeOnly,
 		})
 		if err != nil {
@@ -75,25 +88,6 @@ func buildBackendsWithTokenSources(cfg *config.Config, grokTokens, workBuddyToke
 		out = append(out, b)
 	}
 	return out, nil
-}
-
-func tokensForBackend(name string, grokTokens, workBuddyTokens, codexTokens, zcodeTokens backend.TokenSource, minimaxTokens ...backend.TokenSource) backend.TokenSource {
-	if name == "grok" {
-		return grokTokens
-	}
-	if name == "workbuddy" {
-		return workBuddyTokens
-	}
-	if name == "codex" {
-		return codexTokens
-	}
-	if name == "zcode" {
-		return zcodeTokens
-	}
-	if name == "minimax-code" && len(minimaxTokens) > 0 {
-		return minimaxTokens[0]
-	}
-	return nil
 }
 
 func runServe(cfg *config.Config) error {
@@ -124,9 +118,6 @@ func runServe(cfg *config.Config) error {
 		defer stopReload()
 	}
 
-	grokTokens := grokbackend.NewManager(cfg.GrokAuthFile)
-	workBuddyTokens := workbuddybackend.NewManager(cfg.WorkBuddyAuthFile)
-	codexTokens := codexbackend.NewManager(cfg.CodexAuthFile)
 	var zcodeCaptchaStore *zcodebackend.ValkeyCaptchaStore
 	if cfg.Stats.RedisURL != "" && zcodeEnabled(cfg) {
 		zcodeCaptchaStore, err = zcodebackend.NewValkeyCaptchaStore(cfg.Stats.RedisURL, cfg.Stats.RedisKeyPrefix)
@@ -135,9 +126,8 @@ func runServe(cfg *config.Config) error {
 		}
 		defer func() { _ = zcodeCaptchaStore.Close() }()
 	}
-	zcodeTokens := zcodebackend.NewManagerWithCaptchaStore(cfg.ZCodeAuthFile, zcodeCaptchaStore)
-	minimaxTokens := minimaxcodebackend.NewManager(cfg.MiniMaxCodeAuthFile)
-	backends, err := buildBackendsWithTokenSources(cfg, grokTokens, workBuddyTokens, codexTokens, zcodeTokens, minimaxTokens)
+	accounts := accountProviders(cfg, zcodeCaptchaStore)
+	backends, err := buildBackendsWithAccounts(cfg, accounts)
 	if err != nil {
 		return err
 	}
@@ -158,7 +148,9 @@ func runServe(cfg *config.Config) error {
 		}()
 	}
 
-	srv := server.NewWithAllAccountAuth(cfg, log, store, backends, grokTokens, workBuddyTokens, codexTokens, zcodeTokens, minimaxTokens)
+	srv := server.NewWithDependencies(server.Dependencies{
+		Config: cfg, Logger: log, Auth: store, Backends: backends, Accounts: accounts,
+	})
 	defer func() { _ = srv.Close() }()
 
 	httpServer := &http.Server{

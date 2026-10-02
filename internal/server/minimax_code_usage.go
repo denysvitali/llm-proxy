@@ -22,7 +22,7 @@ type minimaxUsageView struct {
 func (s *Server) minimaxUsageMetadata() usageMetadata {
 	for _, bc := range s.cfg.Backends {
 		if bc.Type == "minimax-code" && bc.IsEnabled() {
-			return usageMetadata{Configured: true, Available: s.minimaxCodeAuth != nil && s.minimaxCodeAuth.HasSession()}
+			return usageMetadata{Configured: true, Available: s.accounts.MiniMaxCode != nil && s.accounts.MiniMaxCode.HasSession()}
 		}
 	}
 	return usageMetadata{}
@@ -48,7 +48,7 @@ func (s *Server) handleMiniMaxCodeUsage(w http.ResponseWriter, r *http.Request) 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		account, err := s.minimaxCodeAuth.Account(ctx)
+		account, err := s.accounts.MiniMaxCode.Account(ctx)
 		if err != nil {
 			view.AccountError = "MiniMax credits and Token Plan information are temporarily unavailable."
 			return
@@ -57,7 +57,7 @@ func (s *Server) handleMiniMaxCodeUsage(w http.ResponseWriter, r *http.Request) 
 	}()
 	go func() {
 		defer wg.Done()
-		panel, err := s.minimaxCodeAuth.CheckinStatus(ctx)
+		panel, err := s.accounts.MiniMaxCode.CheckinStatus(ctx)
 		if err != nil {
 			view.CheckinError = "MiniMax check-in status is temporarily unavailable."
 			return
@@ -80,7 +80,7 @@ func (s *Server) handleMiniMaxCodeCheckin(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	claim, err := s.minimaxCodeAuth.ClaimCheckin(ctx)
+	claim, err := s.accounts.MiniMaxCode.ClaimCheckin(ctx)
 	if err != nil {
 		status := http.StatusBadGateway
 		message := "MiniMax check-in could not be confirmed. Refresh the status before trying again."

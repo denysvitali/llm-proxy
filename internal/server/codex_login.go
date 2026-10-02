@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) codexLoginPage(w http.ResponseWriter, _ *http.Request) {
-	if s.codexAuth == nil {
+	if s.accounts.Codex == nil {
 		http.Error(w, "Codex account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -18,7 +18,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.w
 }
 
 func (s *Server) codexLogin(w http.ResponseWriter, r *http.Request) {
-	if s.codexAuth == nil {
+	if s.accounts.Codex == nil {
 		http.Error(w, "Codex account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -30,7 +30,9 @@ func (s *Server) codexLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	messages := make(chan string, 8)
 	result := make(chan error, 1)
-	go func() { result <- s.codexAuth.LoginDevice(r.Context(), func(message string) { messages <- message }) }()
+	go func() {
+		result <- s.accounts.Codex.LoginDevice(r.Context(), func(message string) { messages <- message })
+	}()
 	heartbeat := time.NewTicker(10 * time.Second)
 	defer heartbeat.Stop()
 	for {

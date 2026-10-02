@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) workBuddyLoginPage(w http.ResponseWriter, _ *http.Request) {
-	if s.workBuddyAuth == nil {
+	if s.accounts.WorkBuddy == nil {
 		http.Error(w, "WorkBuddy account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -17,7 +17,7 @@ func (s *Server) workBuddyLoginPage(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) workBuddyLogin(w http.ResponseWriter, r *http.Request) {
-	if s.workBuddyAuth == nil {
+	if s.accounts.WorkBuddy == nil {
 		http.Error(w, "WorkBuddy account sign-in is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -27,7 +27,7 @@ func (s *Server) workBuddyLogin(w http.ResponseWriter, r *http.Request) {
 	if canFlush {
 		flusher.Flush()
 	}
-	state, target, err := s.workBuddyAuth.StartLogin(r.Context())
+	state, target, err := s.accounts.WorkBuddy.StartLogin(r.Context())
 	if err != nil {
 		_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p></section></main></body></html>`, html.EscapeString(err.Error()))
 		return
@@ -43,7 +43,7 @@ func (s *Server) workBuddyLogin(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ticker.C:
-			done, pollErr := s.workBuddyAuth.PollLogin(r.Context(), state)
+			done, pollErr := s.accounts.WorkBuddy.PollLogin(r.Context(), state)
 			if pollErr != nil {
 				_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p><p><a href="/login/workbuddy">Try again</a></p></section></main></body></html>`, html.EscapeString(pollErr.Error()))
 				return

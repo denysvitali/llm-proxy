@@ -15,7 +15,7 @@ func TestGrokLoginPageIsWebOnly(t *testing.T) {
 	isolatePrometheus(t)
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 	manager := grokbackend.NewManager(filepath.Join(t.TempDir(), "grok-auth.json"))
-	s := NewWithGrokAuth(cfg, quietLogger(), nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{Grok: manager}})
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)

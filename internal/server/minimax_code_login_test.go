@@ -16,7 +16,7 @@ func TestMiniMaxCodeLoginAndOverview(t *testing.T) {
 	isolatePrometheus(t)
 	manager := minimaxcodebackend.NewManager(filepath.Join(t.TempDir(), "minimax-code-auth.json"))
 	cfg := &config.Config{Backends: []config.BackendConfig{{Type: "minimax-code"}}}
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, []backend.Backend{minimaxcodebackend.New("", "")}, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Backends: []backend.Backend{minimaxcodebackend.New("", "")}, Accounts: AccountProviders{MiniMaxCode: manager}})
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login/minimax-code", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Sign in with MiniMax") {

@@ -27,9 +27,10 @@ func TestZcodeUsageEndpoint(t *testing.T) {
 	if err := manager.Store.Save(&zcodebackend.Credentials{AccessToken: "test-token"}); err != nil {
 		t.Fatal(err)
 	}
-	s := NewWithAllAccountAuth(&config.Config{
-		Backends: []config.BackendConfig{{Type: "zcode"}},
-	}, quietLogger(), nil, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{
+		Config: &config.Config{Backends: []config.BackendConfig{{Type: "zcode"}}},
+		Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager},
+	})
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/zcode/usage", nil))
@@ -85,9 +86,10 @@ func TestZcodeQuotaEndpoints(t *testing.T) {
 	if err := manager.Store.Save(&zcodebackend.Credentials{AccessToken: "test-token"}); err != nil {
 		t.Fatal(err)
 	}
-	s := NewWithAllAccountAuth(&config.Config{
-		Backends: []config.BackendConfig{{Type: "zcode"}},
-	}, quietLogger(), nil, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{
+		Config: &config.Config{Backends: []config.BackendConfig{{Type: "zcode"}}},
+		Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager},
+	})
 
 	for _, path := range []string{"/api/zcode/quota", "/api/zcode/balance"} {
 		rec := httptest.NewRecorder()

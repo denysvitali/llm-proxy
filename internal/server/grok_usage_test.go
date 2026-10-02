@@ -26,9 +26,10 @@ func TestGrokUsageEndpoint(t *testing.T) {
 	if err := grokAuth.Store.Save(&grokbackend.Token{AccessToken: "test-token"}); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	server := NewWithGrokAuth(&config.Config{
-		Backends: []config.BackendConfig{{Type: "grok", BaseURL: upstream.URL}},
-	}, quietLogger(), nil, nil, grokAuth)
+	server := NewWithDependencies(Dependencies{
+		Config: &config.Config{Backends: []config.BackendConfig{{Type: "grok", BaseURL: upstream.URL}}},
+		Logger: quietLogger(), Accounts: AccountProviders{Grok: grokAuth},
+	})
 	server.cfg.Defaults()
 
 	rec := httptest.NewRecorder()
@@ -57,9 +58,10 @@ func TestGrokUsageEndpointWeeklyPercentOnly(t *testing.T) {
 	if err := grokAuth.Store.Save(&grokbackend.Token{AccessToken: "test-token"}); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	server := NewWithGrokAuth(&config.Config{
-		Backends: []config.BackendConfig{{Type: "grok", BaseURL: upstream.URL}},
-	}, quietLogger(), nil, nil, grokAuth)
+	server := NewWithDependencies(Dependencies{
+		Config: &config.Config{Backends: []config.BackendConfig{{Type: "grok", BaseURL: upstream.URL}}},
+		Logger: quietLogger(), Accounts: AccountProviders{Grok: grokAuth},
+	})
 
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/grok/usage", nil))

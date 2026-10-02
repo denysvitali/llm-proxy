@@ -90,29 +90,12 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 			Name:    bc.Type,
 			Enabled: bc.IsEnabled(),
 			Host:    baseURLHost(bc.BaseURL),
-			HasKey:  bc.Type != "grok" && bc.Type != "codex" && bc.Type != "zcode" && bc.Type != "minimax-code" && bc.ResolveKey(os.Getenv) != "",
 		}
-		switch bc.Type {
-		case "grok":
-			entry.AuthLabel = "xAI account"
-			entry.AuthConfigured = s.grokAuth != nil && s.grokAuth.HasSession()
-		case "workbuddy":
-			entry.AuthLabel = "WorkBuddy account"
-			entry.AuthConfigured = s.workBuddyAuth != nil && s.workBuddyAuth.HasSession()
-			entry.HasKey = false
-		case "codex":
-			entry.AuthLabel = "ChatGPT account"
-			entry.AuthConfigured = s.codexAuth != nil && s.codexAuth.HasSession()
-			entry.HasKey = false
-		case "zcode":
-			entry.AuthLabel = "ZCode account"
-			entry.AuthConfigured = s.zcodeAuth != nil && s.zcodeAuth.HasSession()
-			entry.HasKey = false
-		case "minimax-code":
-			entry.AuthLabel = "MiniMax Code account"
-			entry.AuthConfigured = s.minimaxCodeAuth != nil && s.minimaxCodeAuth.HasSession()
-			entry.HasKey = false
-		default:
+		if provider, ok := s.accountProviders[bc.Type]; ok {
+			entry.AuthLabel = provider.label
+			entry.AuthConfigured = provider.configured()
+		} else {
+			entry.HasKey = bc.ResolveKey(os.Getenv) != ""
 			entry.AuthLabel = "API key"
 			entry.AuthConfigured = entry.HasKey
 		}
@@ -197,7 +180,7 @@ func (s *Server) grokUsageMetadata(r *http.Request) usageMetadata {
 	if !configured {
 		return usageMetadata{}
 	}
-	if s.grokAuth == nil || !s.grokAuth.HasSession() {
+	if s.accounts.Grok == nil || !s.accounts.Grok.HasSession() {
 		return usageMetadata{Configured: true}
 	}
 	usage, err := s.grokUsage(r.Context(), false)
@@ -222,7 +205,7 @@ func (s *Server) zcodeUsageMetadata(r *http.Request) usageMetadata {
 	if !configured {
 		return usageMetadata{}
 	}
-	if s.zcodeAuth == nil || !s.zcodeAuth.HasSession() {
+	if s.accounts.ZCode == nil || !s.accounts.ZCode.HasSession() {
 		return usageMetadata{Configured: true}
 	}
 	if _, err := s.zcodeUsage(r.Context()); err != nil {
@@ -232,7 +215,7 @@ func (s *Server) zcodeUsageMetadata(r *http.Request) usageMetadata {
 }
 
 func (s *Server) zcodeUsage(ctx context.Context) ([]zcodebackend.PlanUsage, error) {
-	if s.zcodeAuth == nil {
+	if s.accounts.ZCode == nil {
 		return nil, errZcodeUsageUnavailable
 	}
 
@@ -243,7 +226,7 @@ func (s *Server) zcodeUsage(ctx context.Context) ([]zcodebackend.PlanUsage, erro
 		return append([]zcodebackend.PlanUsage(nil), s.zcodeUsagePlans...), nil
 	}
 
-	plans, err := s.zcodeAuth.PlanUsage(ctx)
+	plans, err := s.accounts.ZCode.PlanUsage(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +236,7 @@ func (s *Server) zcodeUsage(ctx context.Context) ([]zcodebackend.PlanUsage, erro
 }
 
 func (s *Server) zcodeQuota(ctx context.Context) (zcodebackend.PlanQuota, error) {
-	if s.zcodeAuth == nil {
+	if s.accounts.ZCode == nil {
 		return zcodebackend.PlanQuota{}, errZcodeQuotaUnavailable
 	}
 
@@ -264,7 +247,7 @@ func (s *Server) zcodeQuota(ctx context.Context) (zcodebackend.PlanQuota, error)
 		return cloneZcodeQuota(s.zcodeQuotaValue), nil
 	}
 
-	quota, err := s.zcodeAuth.PlanQuota(ctx)
+	quota, err := s.accounts.ZCode.PlanQuota(ctx)
 	if err != nil {
 		return zcodebackend.PlanQuota{}, err
 	}
@@ -286,7 +269,7 @@ func cloneZcodeQuota(quota zcodebackend.PlanQuota) zcodebackend.PlanQuota {
 }
 
 func (s *Server) grokUsage(ctx context.Context, refresh bool) (grokbackend.UsageView, error) {
-	if s.grokAuth == nil {
+	if s.accounts.Grok == nil {
 		return grokbackend.UsageView{}, errUsageUnavailable
 	}
 	if !refresh {
@@ -302,7 +285,7 @@ func (s *Server) grokUsage(ctx context.Context, refresh bool) (grokbackend.Usage
 		}
 	}
 	baseURL := s.grokUsageBaseURL()
-	usage, err := s.grokAuth.Usage(ctx, baseURL)
+	usage, err := s.accounts.Grok.Usage(ctx, baseURL)
 	if err != nil {
 		s.grokUsageMu.Unlock()
 		return grokbackend.UsageView{}, err

@@ -17,7 +17,7 @@ func TestZCodeLoginPageIsWebOnly(t *testing.T) {
 	isolatePrometheus(t)
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager}})
 	req := httptest.NewRequest(http.MethodGet, "/login/zcode", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -43,7 +43,7 @@ func TestZCodeCaptchaEndpointStoresParameter(t *testing.T) {
 	isolatePrometheus(t)
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager}})
 	req := httptest.NewRequest(http.MethodPost, "/login/zcode/captcha", bytes.NewBufferString(`{"verify_param":"fresh-param"}`))
 	req = req.WithContext(context.Background())
 	rec := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestZCodeCaptchaEndpointRejectsBrowserProofWhenSolverConfigured(t *testing.
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
 	manager.CaptchaSolverURL = "http://127.0.0.1:1/token"
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager}})
 	req := httptest.NewRequest(http.MethodPost, "/login/zcode/captcha", bytes.NewBufferString(`{"verify_param":"browser-proof"}`))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -85,7 +85,7 @@ func TestZCodeLoginPageWarnsOffBrowserVerificationWhenSolverConfigured(t *testin
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
 	manager.CaptchaSolverURL = "http://127.0.0.1:1/token"
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager}})
 	req := httptest.NewRequest(http.MethodGet, "/login/zcode", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)

@@ -26,7 +26,7 @@ func TestZCodeOffersEndpointListsPlans(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
-	s := NewWithAllAccountAuth(cfg, quietLogger(), nil, nil, nil, nil, nil, manager)
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager}})
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/zcode/offers", nil))
 	if rec.Code != http.StatusOK {
