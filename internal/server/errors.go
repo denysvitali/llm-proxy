@@ -9,6 +9,14 @@ import (
 // maxErrorRelay caps how much of an upstream error body is forwarded.
 const maxErrorRelay = 1 << 20
 
+// copyUpstreamRetryAfter keeps the provider's retry window intact, including
+// day-long quota resets and HTTP dates. It must also survive empty error bodies.
+func copyUpstreamRetryAfter(dst, src http.Header) {
+	if value := src.Get("Retry-After"); value != "" {
+		dst.Set("Retry-After", value)
+	}
+}
+
 func readAll(r io.Reader, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r, limit+1))
 }

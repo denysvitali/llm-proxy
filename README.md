@@ -391,6 +391,18 @@ The public `/models` catalog is discovery information, not proof that your
 account or client can call every listed model. OpenCode Go subscribers should
 use the separate `opencode-go` backend below.
 
+An HTTP 429 with `error.type: FreeUsageLimitError` means Zen's daily free
+quota for the proxy's public IP has been exhausted. This can affect
+`opencode/fledge-alpha-free` even when other free models remain available;
+traffic sharing the same egress IP also shares the applicable quota. Zen
+resets this quota at midnight UTC. The proxy preserves `Retry-After` on
+upstream errors across all three client APIs and remembers this specific
+quota rejection per model until the reset, returning the same error with
+the remaining wait instead of repeatedly calling Zen. The cooldown is
+process-local; each replica discovers the limit independently and restarts
+clear the remembered state. Unknown 429 errors are relayed immediately.
+Qualified model IDs remain pinned to the selected provider and model.
+
 ### OpenCode Go
 
 [OpenCode Go](https://opencode.ai/docs/go/) is a low-cost subscription with

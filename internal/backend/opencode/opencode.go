@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,6 +50,9 @@ type Client struct {
 	BaseURL string
 	Key     string
 	HTTP    *http.Client
+
+	quotaMu sync.Mutex
+	quotas  map[string]freeQuota
 }
 
 func New(baseURL, key string) *Client {
@@ -193,6 +197,12 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	default:
 		return nil, fmt.Errorf("opencode backend does not support kind %q", req.Kind)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if resp := c.freeQuotaResponse(req.Model); resp != nil {
+		return resp, nil
+	}
 
 	// Free tier (no API key): rewrite the body for Zen's gates (force
 	// stream, inject the bash/glob/grep/read tool quartet) and always
@@ -217,6 +227,9 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	}
 	resp, err := c.do(ctx, http.MethodPost, path, body, accept, session)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.rememberFreeQuota(req.Model, resp); err != nil {
 		return nil, err
 	}
 	if freeTier && !req.Streaming {

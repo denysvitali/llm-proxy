@@ -100,6 +100,7 @@ func wantsThinking(request *translate.Request) bool {
 // upstream body verbatim (capped at maxErrorRelay) when there is one, an
 // Anthropic-shaped error derived from the status otherwise.
 func (s *Server) relayUpstreamError(w http.ResponseWriter, log logrus.FieldLogger, resp *backend.Response) {
+	copyUpstreamRetryAfter(w.Header(), resp.Header)
 	data, _ := readAll(resp.Body, maxErrorRelay)
 	log.WithFields(logrus.Fields{
 		"upstream_status": resp.Status,

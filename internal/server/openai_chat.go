@@ -76,6 +76,7 @@ func copyCodexResponseHeaders(dst, src http.Header) {
 // is one, otherwise synthesize an OpenAI error with the mapped type.
 func relayOpenAIUpstreamError(w http.ResponseWriter, resp *backend.Response) {
 	defer func() { _ = resp.Body.Close() }()
+	copyUpstreamRetryAfter(w.Header(), resp.Header)
 	data, _ := readAll(resp.Body, maxErrorRelay)
 	copyUpstreamRequestID(w.Header(), resp.Header)
 	if len(bytes.TrimSpace(data)) > 0 {
