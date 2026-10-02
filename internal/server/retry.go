@@ -140,7 +140,7 @@ func retryAfter(header http.Header, maxBackoff time.Duration) (time.Duration, bo
 
 // sendWithRetry runs the connection phase: a transient failure gets up to the
 // backend's configured number of extra attempts (backends[].retry_attempts,
-// default 10) before its status reaches the client. Every attempt — including
+// default 3) before its status reaches the client. Every attempt — including
 // the discarded ones — is recorded as its own upstream request so uptime
 // denominators stay honest.
 func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt route, fetch upstreamFetch) (*backend.Response, error) {
@@ -289,21 +289,21 @@ func responsesStreamDone(window []byte) bool {
 // pipeSSE relays a server-sent-events body to the client, flushing after
 // every read. It reports how many bytes reached the client and whether the
 // stream carried its completion marker (checked by done against a rolling
-// window of the tail). A failing client write ends the relay as complete:
-// with the consumer gone there is nothing left to relay or report.
+// window of the tail). A failing client write ends the relay immediately.
 func pipeSSE(w io.Writer, flush func(), body io.Reader, done func([]byte) bool) (relayed int64, complete bool, err error) {
 	buffer := make([]byte, passthroughCopyBufferSize)
 	var window []byte
 	for {
 		read, readErr := body.Read(buffer)
 		if read > 0 {
-			if _, writeErr := w.Write(buffer[:read]); writeErr != nil {
-				return relayed, true, nil
+			written, writeErr := w.Write(buffer[:read])
+			relayed += int64(written)
+			if writeErr != nil {
+				return relayed, complete, writeErr
 			}
 			if flush != nil {
 				flush()
 			}
-			relayed += int64(read)
 			window = append(window, buffer[:read]...)
 			// Inspect the newly extended window before trimming it. A terminal
 			// Responses event can be much larger than retryCompletionWindow (its
@@ -330,14 +330,26 @@ type gatedWriter struct {
 	open  func() io.Writer
 	w     io.Writer
 	wrote int64
+	err   error
 }
 
 func (g *gatedWriter) Write(payload []byte) (int, error) {
-	g.wrote += int64(len(payload))
+	if g.err != nil {
+		return 0, g.err
+	}
+	if len(payload) == 0 {
+		return 0, nil
+	}
 	if g.w == nil {
 		g.w = g.open()
 	}
-	return g.w.Write(payload)
+	n, err := g.w.Write(payload)
+	if err == nil && n < len(payload) {
+		err = io.ErrShortWrite
+	}
+	g.wrote += int64(n)
+	g.err = err
+	return n, err
 }
 
 // streamFailer is implemented by translated-stream writers that can end with
@@ -360,10 +372,8 @@ func failTranslatedStream(writer streamTranslator, message string) {
 // relayNativeStreaming streams a successful native response to the client
 // byte-for-byte under the common retry contract. done recognizes the wire
 // format's completion marker; surface writes the in-band failure in the
-// client's dialect once content has flowed; giveUp answers a spent retry
-// budget with a clean 502. It reports whether an in-band failure was
-// surfaced (content had already reached the client, so no other backend may
-// take the request over).
+// client's dialect once content has flowed. A spent retry budget returns an
+// uncommitted failure for exchange to finish or hand to the fallback chain.
 func (s *Server) relayNativeStreaming(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -373,8 +383,7 @@ func (s *Server) relayNativeStreaming(
 	fetch upstreamFetch,
 	done func([]byte) bool,
 	surface func(w http.ResponseWriter, message string),
-	giveUp func(w http.ResponseWriter, message string),
-) bool {
+) exchangeResult {
 	copyCodexResponseHeaders(w.Header(), resp.Header)
 	contentType := resp.Header.Get("Content-Type")
 	status := resp.Status
@@ -394,23 +403,26 @@ func (s *Server) relayNativeStreaming(
 				flusher.Flush()
 			}
 		}
-		relayed, complete, streamErr := pipeSSE(gate, flush, body, done)
+		_, complete, streamErr := pipeSSE(gate, flush, body, done)
 		closeBody(body)
 
+		if gate.err != nil {
+			return exchangeResult{outcome: exchangeFailed, committed: gate.w != nil, message: gate.err.Error()}
+		}
 		if complete {
 			if attempt > 0 {
 				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
 			}
-			return false
+			return exchangeResult{outcome: exchangeOK, committed: gate.w != nil}
 		}
-		if relayed > 0 {
+		if gate.w != nil {
 			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced, rt.backend.Name(), rt.model)
 			log.WithError(streamErr).Warn("upstream stream broke after content was forwarded; surfacing an in-stream error")
 			surface(w, midstreamFailureMessage)
-			return true
+			return exchangeResult{outcome: exchangeSurfaced, committed: true}
 		}
-		if !s.retryOrGiveUp(ctx, w, log, rt, streamErr, attempt, giveUp) {
-			return false
+		if !s.retryStream(ctx, log, rt, streamErr, attempt) {
+			return failedStream(streamErr)
 		}
 		body = s.retryReader(fetch)
 	}
@@ -429,20 +441,17 @@ func (s *Server) relayNativeBuffered(
 	rt route,
 	resp *backend.Response,
 	fetch upstreamFetch,
-	giveUp func(w http.ResponseWriter, message string),
-) {
+) exchangeResult {
 	copyCodexResponseHeaders(w.Header(), resp.Header)
 	data, err := s.fetchResponseBody(ctx, rt, resp, fetch, maxTranslatedResponseBody)
 	if err != nil {
 		message := fmt.Sprintf("upstream response could not be read: %v", err)
 		log.WithError(err).Warn("reading upstream response body failed")
-		giveUp(w, message)
-		return
+		return failedExchange(message)
 	}
 	if upstreamErr := errorShapedBody(data); upstreamErr != nil {
 		log.WithError(upstreamErr).Warn("upstream answered HTTP 200 with an error body")
-		giveUp(w, fmt.Sprintf("upstream returned an error: %v", upstreamErr))
-		return
+		return failedExchange(fmt.Sprintf("upstream returned an error: %v", upstreamErr))
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
@@ -450,7 +459,14 @@ func (s *Server) relayNativeBuffered(
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(resp.Status)
-	_, _ = w.Write(data)
+	n, err := w.Write(data)
+	if err == nil && n < len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return exchangeResult{outcome: exchangeFailed, committed: true, message: err.Error()}
+	}
+	return exchangeResult{outcome: exchangeOK, committed: true}
 }
 
 // errorShapedBody reports whether a buffered 200 body is a JSON object with a
@@ -476,7 +492,7 @@ func errorShapedBody(data []byte) error {
 // nothing has reached the client — the request only ever looks slower. Once
 // content has flowed, restarting upstream would duplicate it, so the break is
 // surfaced as the protocol's in-band failure instead of a silent truncation.
-// It reports whether such an in-band failure was surfaced.
+// It reports delivery and replay eligibility without writing a final HTTP error.
 func (s *Server) relayTranslatedStreaming(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -486,8 +502,7 @@ func (s *Server) relayTranslatedStreaming(
 	fetch upstreamFetch,
 	env translateEnv,
 	stream func(env translateEnv, client io.Writer, flush func()) streamTranslator,
-	giveUp func(w http.ResponseWriter, message string),
-) bool {
+) exchangeResult {
 	var body io.Reader = resp.Body
 	for attempt := 0; ; attempt++ {
 		gate := &gatedWriter{open: func() io.Writer {
@@ -500,12 +515,19 @@ func (s *Server) relayTranslatedStreaming(
 		}}
 		var flush func()
 		if flusher, ok := w.(http.Flusher); ok {
-			flush = flusher.Flush
+			flush = func() {
+				if gate.w != nil {
+					flusher.Flush()
+				}
+			}
 		}
 		writer := stream(env, gate, flush)
 		consumeErr := writer.Consume(body)
 		closeBody(body)
 
+		if gate.err != nil {
+			return exchangeResult{outcome: exchangeFailed, committed: gate.w != nil, message: gate.err.Error()}
+		}
 		streamErr := consumeErr
 		if streamErr == nil && gate.wrote == 0 {
 			// A 200 whose translation emitted nothing is the "clean empty
@@ -516,32 +538,29 @@ func (s *Server) relayTranslatedStreaming(
 			if attempt > 0 {
 				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
 			}
-			return false
+			return exchangeResult{outcome: exchangeOK, committed: gate.w != nil}
 		}
-		if gate.wrote > 0 {
+		if gate.w != nil {
 			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced, rt.backend.Name(), rt.model)
 			log.WithError(streamErr).Warn("upstream stream broke after content was forwarded; surfacing an in-stream error")
 			failTranslatedStream(writer, midstreamFailureMessage)
-			return true
+			return exchangeResult{outcome: exchangeSurfaced, committed: true}
 		}
-		if !s.retryOrGiveUp(ctx, w, log, rt, streamErr, attempt, giveUp) {
-			return false
+		if !s.retryStream(ctx, log, rt, streamErr, attempt) {
+			return failedStream(streamErr)
 		}
 		body = s.retryReader(fetch)
 	}
 }
 
-// retryOrGiveUp decides whether another body-phase attempt may start. It
-// returns false when the loop must end: either the retry budget is spent and
-// the client gets a clean 502, or the client stopped waiting.
-func (s *Server) retryOrGiveUp(
+// retryStream decides whether another body-phase attempt may start. It does
+// not write a response: exchange owns the final error and fallback policy.
+func (s *Server) retryStream(
 	ctx context.Context,
-	w http.ResponseWriter,
 	log logrus.FieldLogger,
 	rt route,
 	streamErr error,
 	attempt int,
-	giveUp func(w http.ResponseWriter, message string),
 ) bool {
 	budget := s.retryBudgetFor(rt.backend.Name())
 	if attempt < midstreamRetries && retryPause(ctx, attempt, budget.maxBackoff) {
@@ -551,12 +570,15 @@ func (s *Server) retryOrGiveUp(
 	}
 	s.metrics.noteRetryOutcome(retryPhaseBody, retryExhausted, rt.backend.Name(), rt.model)
 	log.WithError(streamErr).Warn("upstream stream failed before any output")
+	return false
+}
+
+func failedStream(streamErr error) exchangeResult {
 	message := midstreamFailureMessage
 	if streamErr != nil {
 		message = fmt.Sprintf("upstream stream failed: %v", streamErr)
 	}
-	giveUp(w, message)
-	return false
+	return failedExchange(message)
 }
 
 // closeBody closes a reader when it also is a closer; upstream bodies and
