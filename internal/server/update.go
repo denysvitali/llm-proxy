@@ -85,10 +85,15 @@ func (h *updateHub) close() {
 // hijack (HTTP/2 and friends) fail in websocket.Accept; those clients are
 // expected on the SSE twin below.
 func (s *Server) handleUpdatesWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Subscribe before accepting: a completed handshake promises the client
+	// that subsequent notifications will be observed.
+	events, unsub := s.updates.subscribe()
+	defer unsub()
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
 		return
 	}
+	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(1)
 
 	// Reading detects client-side disconnects; nothing is ever sent upstream.
@@ -103,17 +108,23 @@ func (s *Server) handleUpdatesWebSocket(w http.ResponseWriter, r *http.Request) 
 		}
 	}()
 
-	events, unsub := s.updates.subscribe()
-	defer unsub()
-	for event := range events {
-		writeCtx, cancel := context.WithTimeout(r.Context(), updateWriteTimeout)
-		err := conn.Write(writeCtx, websocket.MessageText, event)
-		cancel()
-		if err != nil {
+	for {
+		select {
+		case event, open := <-events:
+			if !open {
+				_ = conn.Close(websocket.StatusNormalClosure, "connection closed")
+				return
+			}
+			writeCtx, cancel := context.WithTimeout(readCtx, updateWriteTimeout)
+			err := conn.Write(writeCtx, websocket.MessageText, event)
+			cancel()
+			if err != nil {
+				return
+			}
+		case <-readCtx.Done():
 			return
 		}
 	}
-	_ = conn.Close(websocket.StatusNormalClosure, "connection closed")
 }
 
 // handleUpdatesSSE serves the same live-update channel as Server-Sent
@@ -125,14 +136,16 @@ func (s *Server) handleUpdatesSSE(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "api_error", "streaming unsupported")
 		return
 	}
+	// Register before flushing headers so a ready client cannot lose its
+	// first notification while this handler is still subscribing.
+	events, unsub := s.updates.subscribe()
+	defer unsub()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	events, unsub := s.updates.subscribe()
-	defer unsub()
 	for {
 		select {
 		case event, open := <-events:

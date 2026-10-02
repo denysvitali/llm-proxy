@@ -16,7 +16,67 @@ import (
 // live-update endpoints are exercised.
 func newUpdateTestServer(t *testing.T) *Server {
 	t.Helper()
-	return New(&config.Config{}, quietLogger(), nil, nil)
+	s := New(&config.Config{}, quietLogger(), nil, nil)
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func TestUpdateSSESubscribedBeforeReady(t *testing.T) {
+	s := newUpdateTestServer(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	w := &updateReadyRecorder{ResponseRecorder: httptest.NewRecorder(), ready: func() {
+		s.updates.mu.Lock()
+		subscribers := len(s.updates.subs)
+		s.updates.mu.Unlock()
+		if subscribers != 1 {
+			t.Errorf("ready stream has %d subscribers, want 1", subscribers)
+		}
+		cancel()
+	}}
+	s.handleUpdatesSSE(w, httptest.NewRequest(http.MethodGet, "/api/updates/sse", nil).WithContext(ctx))
+	s.updates.mu.Lock()
+	defer s.updates.mu.Unlock()
+	if len(s.updates.subs) != 0 {
+		t.Fatal("disconnected SSE client retained its subscription")
+	}
+}
+
+type updateReadyRecorder struct {
+	*httptest.ResponseRecorder
+	ready func()
+}
+
+func (r *updateReadyRecorder) Flush() {
+	r.ResponseRecorder.Flush()
+	r.ready()
+}
+
+func TestUpdateWebSocketDisconnectReleasesSubscription(t *testing.T) {
+	s := newUpdateTestServer(t)
+	finished := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(finished)
+		s.handleUpdatesWebSocket(w, r)
+	}))
+	t.Cleanup(server.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	conn, _, err := dialWebSocket(t, ctx, "ws"+strings.TrimPrefix(server.URL, "http"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.CloseNow()
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		t.Fatal("idle websocket handler did not stop after client disconnect")
+	}
+	s.updates.mu.Lock()
+	defer s.updates.mu.Unlock()
+	if len(s.updates.subs) != 0 {
+		t.Fatal("disconnected websocket client retained its subscription")
+	}
 }
 
 func TestUpdateHubNotifiesWebSocketClient(t *testing.T) {

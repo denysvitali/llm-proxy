@@ -55,7 +55,12 @@ func TestImportGrokChoosesLatestSession(t *testing.T) {
 }
 
 func TestManagerWithoutSessionExplainsWebLogin(t *testing.T) {
-	m := NewManager(filepath.Join(t.TempDir(), "auth.json"))
+	dir := t.TempDir()
+	m := NewManager(filepath.Join(dir, "auth.json"))
+	// A missing primary store must not import the developer's real legacy
+	// credentials and accidentally refresh them against the live token endpoint.
+	m.LegacyPath = filepath.Join(dir, "legacy.json")
+	m.GrokPath = filepath.Join(dir, "grok.json")
 	_, err := m.AccessToken(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "dashboard") {
 		t.Fatalf("AccessToken error = %v, want dashboard sign-in guidance", err)
