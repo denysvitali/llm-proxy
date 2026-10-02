@@ -13,9 +13,11 @@ func TestValidateAcceptsRegisteredBackends(t *testing.T) {
 		Backends: []BackendConfig{
 			{Type: "venice"},
 			{Type: "nous", APIKeyEnv: "NOUS_KEY"},
+			{Type: "opencode-zen", APIKeyEnv: "OPENCODE_API_KEY"},
 		},
 		Routes: map[string]ModelRoute{
 			"stealth/ox-alpha": {Backend: "nous"},
+			"zen-gpt":          {Backend: "opencode-zen", Model: "gpt-6-sol"},
 		},
 		DefaultRoute: ModelRoute{Backend: "venice"},
 	}

@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -42,7 +43,7 @@ func TestSupports(t *testing.T) {
 	}{
 		{backend.KindAnthropic, true},
 		{backend.KindOpenAIChat, true},
-		{backend.KindOpenAIResponses, false},
+		{backend.KindOpenAIResponses, true},
 		{backend.Kind("carrier-pigeon"), false},
 	}
 	for _, tt := range tests {
@@ -58,22 +59,29 @@ func TestSupportsModel(t *testing.T) {
 		model string
 		want  bool
 	}{
-		// Zen's Anthropic /messages endpoint only serves Claude models;
-		// everything else 500s there and must be translated to Chat.
 		{backend.KindAnthropic, "claude-sonnet-5", true},
-		{backend.KindAnthropic, "claude-opus-4-8", true},
 		{backend.KindAnthropic, "opencode/claude-haiku-4-5", true},
+		{backend.KindAnthropic, "opencode-zen/qwen3.8-flash", true},
+		{backend.KindAnthropic, "qwen3.7-max", true},
+		{backend.KindAnthropic, "qwen3.7-plus", true},
+		{backend.KindAnthropic, "qwen3.6-plus", true},
+		{backend.KindAnthropic, "qwen3.5-plus", true},
+		{backend.KindAnthropic, "minimax-m3", false},
 		{backend.KindAnthropic, "x-preview-f-free", false},
-		{backend.KindAnthropic, "opencode/x-preview-f-free", false},
-		{backend.KindAnthropic, "gpt-5.4-nano", false},
-		{backend.KindAnthropic, "deepseek-v4-flash-free", false},
-		{backend.KindAnthropic, "big-pickle", false},
-		// Chat Completions is served for every model.
-		{backend.KindOpenAIChat, "claude-sonnet-5", true},
+		{backend.KindOpenAIChat, "claude-sonnet-5", false},
+		{backend.KindOpenAIChat, "qwen3.8-max", true},
 		{backend.KindOpenAIChat, "x-preview-f-free", true},
-		{backend.KindOpenAIChat, "gpt-5.4-nano", true},
-		// Responses is never native.
-		{backend.KindOpenAIResponses, "gpt-5.4-nano", false},
+		{backend.KindOpenAIChat, "opencode-zen/kimi-k3", true},
+		{backend.KindOpenAIChat, "gpt-5.4-nano", false},
+		{backend.KindOpenAIResponses, "gpt-5.4-nano", true},
+		{backend.KindOpenAIResponses, "opencode/grok-4.7", true},
+		{backend.KindOpenAIResponses, "opencode-zen/muse-spark-1.3-contributor-free", true},
+		{backend.KindOpenAIResponses, "kimi-k3", false},
+		{backend.KindAnthropic, "gemini-3.8-flash", false},
+		{backend.KindOpenAIChat, "gemini-3.8-flash", false},
+		{backend.KindOpenAIResponses, "gemini-3.8-flash", false},
+		{backend.KindOpenAIChat, "jev-1.13-free", false},
+		{backend.Kind("unknown"), "unknown-model", false},
 	}
 	for _, tt := range tests {
 		if got := (&Client{}).SupportsModel(tt.kind, tt.model); got != tt.want {
@@ -84,6 +92,79 @@ func TestSupportsModel(t *testing.T) {
 
 // Client must satisfy the optional per-model wire override.
 var _ backend.ModelWireOverrider = (*Client)(nil)
+
+func TestZenRegistration(t *testing.T) {
+	for _, name := range []string{"opencode", "opencode-zen"} {
+		b, err := backend.New(name, backend.Options{BaseURL: "https://example.com/v1/", APIKey: "test-key"})
+		if err != nil || b.Name() != name {
+			t.Fatalf("New(%q) = %v, %v", name, b, err)
+		}
+		if mo, ok := b.(backend.ModelWireOverrider); !ok || !mo.SupportsModel(backend.KindOpenAIResponses, name+"/gpt-6-sol") {
+			t.Fatalf("%s does not retain model wire selection", name)
+		}
+	}
+}
+
+func TestSendResponsesPreservesNativeBodyAndStream(t *testing.T) {
+	for _, key := range []string{"test-key", ""} {
+		for _, streaming := range []bool{false, true} {
+			c, rec := newRecordingClient(t, http.StatusOK, "application/json", `{}`)
+			c.Key = key
+			raw := []byte(`{"model":"gpt-6-sol","input":"Hello","reasoning":{"effort":"high"},"store":false,"tools":[{"type":"function","name":"weather","parameters":{"type":"object"}}]}`)
+			resp, err := c.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIResponses, Model: "gpt-6-sol", RawBody: raw, Streaming: streaming})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			accept := "application/json"
+			if streaming {
+				accept = "text/event-stream"
+			}
+			if rec.Path != "/responses" || !bytes.Equal(rec.Body, raw) || rec.Header.Get("Accept") != accept {
+				t.Fatalf("Responses forwarding: path=%s accept=%s body=%s", rec.Path, rec.Header.Get("Accept"), rec.Body)
+			}
+			wantKey := key
+			if wantKey == "" {
+				wantKey = "public"
+			}
+			if rec.Header.Get("Authorization") != "Bearer "+wantKey {
+				t.Error("incorrect upstream authorization")
+			}
+		}
+	}
+}
+
+func TestSendResponsesNormalizesCodexHistory(t *testing.T) {
+	c, rec := newRecordingClient(t, http.StatusOK, "application/json", `{}`)
+	raw := []byte(`{"model":"gpt-6-sol","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"Be concise"}]},{"type":"reasoning","content":null,"encrypted_content":"opaque"},{"type":"function_call_output","call_id":"call_1"}],"store":false}`)
+	resp, err := c.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIResponses, Model: "gpt-6-sol", RawBody: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	var sent struct {
+		Instructions string           `json:"instructions"`
+		Input        []map[string]any `json:"input"`
+		Store        bool             `json:"store"`
+	}
+	if err := json.Unmarshal(rec.Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.Instructions != "Be concise" || len(sent.Input) != 2 || sent.Store || sent.Input[0]["encrypted_content"] != "opaque" || sent.Input[1]["output"] != "" {
+		t.Fatalf("normalized history = %s", rec.Body)
+	}
+	if _, ok := sent.Input[0]["content"]; ok {
+		t.Fatal("null reasoning content survived normalization")
+	}
+}
+
+func TestSendInvalidResponsesIsTerminal(t *testing.T) {
+	c, rec := newRecordingClient(t, http.StatusOK, "application/json", `{}`)
+	_, err := c.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIResponses, RawBody: []byte(`{invalid`)})
+	if !backend.IsTerminal(err) || rec.Method != "" {
+		t.Fatalf("invalid request: err=%v upstream method=%q", err, rec.Method)
+	}
+}
 
 // recordedRequest captures what the test server received.
 type recordedRequest struct {
@@ -126,6 +207,7 @@ func TestSendRouting(t *testing.T) {
 	}{
 		{backend.KindAnthropic, "/messages"},
 		{backend.KindOpenAIChat, "/chat/completions"},
+		{backend.KindOpenAIResponses, "/responses"},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.kind), func(t *testing.T) {
@@ -157,12 +239,12 @@ func TestSendRouting(t *testing.T) {
 func TestSendUnsupportedKind(t *testing.T) {
 	c, _ := newRecordingClient(t, http.StatusOK, "application/json", `{}`)
 	resp, err := c.Send(t.Context(), &backend.Request{
-		Kind:    backend.KindOpenAIResponses,
+		Kind:    backend.Kind("unsupported"),
 		RawBody: []byte(`{}`),
 	})
 	if err == nil {
 		defer func() { _ = resp.Body.Close() }()
-		t.Fatalf("Send(KindOpenAIResponses) succeeded, want error")
+		t.Fatalf("Send(unsupported kind) succeeded, want error")
 	}
 	if !strings.Contains(err.Error(), "does not support") {
 		t.Errorf("error %q does not mention \"does not support\"", err)
@@ -370,7 +452,7 @@ func TestSendPreservesFreeTierRestriction(t *testing.T) {
 
 func TestModelsFiltersEmptyIDsAndWorksWithoutKey(t *testing.T) {
 	c, rec := newRecordingClient(t, http.StatusOK, "application/json",
-		`{"data":[{"id":"gemini-3-flash"},{"id":""},{"id":"claude-opus-5"}]}`)
+		`{"data":[{"id":"gemini-3-flash"},{"id":""},{"id":"jev-1.13"},{"id":"jev-1.13-free"},{"id":"gpt-6-sol"},{"id":"claude-opus-5"}]}`)
 	c.Key = ""
 
 	models, err := c.Models(t.Context())
@@ -378,7 +460,7 @@ func TestModelsFiltersEmptyIDsAndWorksWithoutKey(t *testing.T) {
 		t.Fatalf("Models returned error: %v", err)
 	}
 
-	want := []string{"gemini-3-flash", "claude-opus-5"}
+	want := []string{"gpt-6-sol", "claude-opus-5"}
 	if !slices.Equal(models, want) {
 		t.Errorf("Models = %v, want %v", models, want)
 	}

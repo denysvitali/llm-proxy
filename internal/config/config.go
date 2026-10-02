@@ -14,7 +14,7 @@ import (
 
 // BackendConfig is one upstream provider entry.
 type BackendConfig struct {
-	// Type is the registered backend identifier ("venice", "opencode", "opencode-go",
+	// Type is the registered backend identifier ("venice", "opencode", "opencode-zen", "opencode-go",
 	// "grok", "nous", "apodex", "zcode", "minimax-code", "mimo-token-plan", ...). Valid types come from the backend registry;
 	// binaries populate it by importing internal/backend/all.
 	Type string `mapstructure:"type"`

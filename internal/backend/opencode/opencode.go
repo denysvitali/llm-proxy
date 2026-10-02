@@ -1,7 +1,6 @@
-// Package opencode implements the OpenCode Zen backend. Zen natively serves
-// both the Anthropic Messages API (/messages) and the OpenAI Chat Completions
-// API (/chat/completions), so both request kinds pass through byte-for-byte
-// with the upstream key swapped in.
+// Package opencode implements OpenCode Zen's model-specific Messages, Chat
+// Completions, and Responses endpoints. Both opencode and opencode-zen config
+// types use this implementation.
 package opencode
 
 import (
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 const (
@@ -85,47 +85,51 @@ func init() {
 	backend.Register("opencode", func(opts backend.Options) (backend.Backend, error) {
 		return New(opts.BaseURL, opts.APIKey), nil
 	})
+	backend.Register("opencode-zen", func(opts backend.Options) (backend.Backend, error) {
+		return &zenClient{Client: New(opts.BaseURL, opts.APIKey)}, nil
+	})
 }
 
 func (c *Client) Name() string { return "opencode" }
 
-// Supports: Zen exposes /messages and /chat/completions natively, so both
-// shapes pass through untouched. The OpenAI Responses API is translated by
-// the server instead.
+type zenClient struct{ *Client }
+
+func (c *zenClient) Name() string { return "opencode-zen" }
+
+// Supports reports the API shapes present across Zen's catalog. SupportsModel
+// selects the documented endpoint for the particular model.
 func (c *Client) Supports(kind backend.Kind) bool {
 	switch kind {
-	case backend.KindAnthropic, backend.KindOpenAIChat:
+	case backend.KindAnthropic, backend.KindOpenAIChat, backend.KindOpenAIResponses:
 		return true
-	case backend.KindOpenAIResponses:
-		return false
 	default:
 		return false
 	}
 }
 
-// SupportsModel refines Supports per model. Zen's Anthropic /messages endpoint
-// only serves its Anthropic-native (Claude) models; for every other model in
-// its catalog (OpenAI-native and community models such as x-preview-f-free)
-// /messages returns HTTP 500, while /chat/completions works. Reporting no
-// native Anthropic support for those models makes the server translate
-// Anthropic requests onto Chat Completions instead of forwarding them to the
-// broken endpoint. Chat Completions is served for every model.
+// SupportsModel uses the endpoint table at https://opencode.ai/docs/zen/.
+// Unknown models retain the Chat Completions compatibility path. Google
+// generateContent and System One models have no supported proxy wire format.
 func (c *Client) SupportsModel(kind backend.Kind, model string) bool {
-	if kind == backend.KindAnthropic && !isAnthropicNativeModel(model) {
-		return false
-	}
-	return c.Supports(kind)
+	return c.Supports(kind) && kind == modelKind(model)
 }
 
-// isAnthropicNativeModel reports whether a Zen model id is a Claude model,
-// which are the only models Zen serves over the Anthropic /messages endpoint.
-// The id may carry an "opencode/" backend prefix.
-func isAnthropicNativeModel(model string) bool {
-	m := model
-	if i := strings.IndexByte(m, '/'); i >= 0 {
-		m = m[i+1:]
+func modelKind(model string) backend.Kind {
+	model = strings.TrimPrefix(strings.TrimPrefix(model, "opencode/"), "opencode-zen/")
+	switch {
+	case strings.HasPrefix(model, "gemini-"), strings.HasPrefix(model, "jev-"):
+		return ""
+	case strings.HasPrefix(model, "claude-"):
+		return backend.KindAnthropic
+	case strings.HasPrefix(model, "gpt-"), strings.HasPrefix(model, "grok-"), strings.HasPrefix(model, "muse-spark-"):
+		return backend.KindOpenAIResponses
 	}
-	return strings.HasPrefix(m, "claude-")
+	switch model {
+	case "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.5-plus":
+		return backend.KindAnthropic
+	default:
+		return backend.KindOpenAIChat
+	}
 }
 
 // Do performs a request against the Zen API, attaching the bearer token when
@@ -194,6 +198,8 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		path = "/messages"
 	case backend.KindOpenAIChat:
 		path = "/chat/completions"
+	case backend.KindOpenAIResponses:
+		path = "/responses"
 	default:
 		return nil, fmt.Errorf("opencode backend does not support kind %q", req.Kind)
 	}
@@ -208,8 +214,17 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	// stream, inject the bash/glob/grep/read tool quartet) and always
 	// negotiate SSE upstream. Non-streaming callers get the stream
 	// aggregated back into a JSON completion below.
-	freeTier := c.Key == ""
+	// The existing anonymous Chat/Messages adapter does not apply to the
+	// Responses protocol; Responses requests retain the caller's stream mode.
+	freeTier := c.Key == "" && req.Kind != backend.KindOpenAIResponses
 	body := req.RawBody
+	if req.Kind == backend.KindOpenAIResponses && len(body) > 0 {
+		normalized, err := translate.NormalizeResponsesRequest(body)
+		if err != nil {
+			return nil, backend.Terminal(fmt.Errorf("normalize OpenCode Zen Responses request: %w", err))
+		}
+		body = normalized
+	}
 	if freeTier {
 		prepared, err := prepareFreeTierBody(req.Kind, body)
 		if err != nil {
@@ -342,8 +357,8 @@ type modelList struct {
 	} `json:"data"`
 }
 
-// Models lists Zen's public catalog, which can be read with or without a key.
-// Inclusion in the catalog does not guarantee account or client access.
+// Models lists Zen's public catalog, excluding unsupported Google and System
+// One protocols. Inclusion does not guarantee account or client access.
 func (c *Client) Models(ctx context.Context) ([]string, error) {
 	resp, err := c.Do(ctx, http.MethodGet, "/models", nil, "application/json")
 	if err != nil {
@@ -363,7 +378,7 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	}
 	models := make([]string, 0, len(list.Data))
 	for _, m := range list.Data {
-		if m.ID != "" {
+		if m.ID != "" && modelKind(m.ID) != "" {
 			models = append(models, m.ID)
 		}
 	}

@@ -24,7 +24,7 @@ not upstream API keys.
 | `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
 | `anyrouter` | [AnyRouter](https://docs.anyrouter.dev/api-reference/overview) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live model catalog, including `stealth/fledge-alpha`. |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
-| `opencode` | [OpenCode Zen](https://opencode.ai/docs/zen/) | Anthropic Messages, Chat Completions | Both request shapes pass through byte-for-byte.              |
+| `opencode-zen` (`opencode` also supported) | [OpenCode Zen](https://opencode.ai/docs/zen/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | The proxy selects Zen's documented endpoint per model and translates other client APIs. |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
 | `grok`     | xAI Grok subscription             | Responses API                            | Anthropic and Chat Completions requests are translated server-side, so Claude Code and Codex work unchanged. |
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
@@ -385,16 +385,31 @@ with available credit and select a paid model your account can use:
 
 ```yaml
 backends:
-  - type: opencode
+  - type: opencode-zen
     api_key_env: OPENCODE_API_KEY
 ```
 
 Export `OPENCODE_API_KEY` in the proxy server's environment and restart the
-server after changing it. For example, select `opencode/kimi-k3` in your client
+server after changing it. For example, select `opencode-zen/kimi-k3` in your client
 to route explicitly to Zen's Chat Completions API. The client authenticates
 to llm-proxy with its `llx_` key; the proxy supplies the separate Zen key
-upstream. Requests to paid models incur provider charges. Paid-key Zen
-requests are forwarded byte-for-byte (with the key swapped in).
+upstream. Requests to paid models incur provider charges. Existing
+`type: opencode` configurations and `opencode/<model-id>` routes keep working;
+use the prefix matching your configured backend type.
+
+Zen uses different native APIs per model:
+
+- GPT, Grok, and Muse Spark models use `/responses`.
+- Claude and `qwen3.8-flash`, `qwen3.7-max`, `qwen3.7-plus`,
+  `qwen3.6-plus`, and `qwen3.5-plus` use `/messages`.
+- Other models use `/chat/completions`, including Kimi, GLM, MiniMax,
+  DeepSeek, and `qwen3.8-max`.
+
+All three client APIs work through the proxy's translation matrix, including
+streaming. Native paid requests preserve provider fields; Responses history
+is normalized for strict upstreams using the same compatibility handling as
+OpenCode Go. The live `/models` catalog excludes Gemini and Jev because their
+Google and System One protocols are not supported by llm-proxy.
 
 **Free tier (no Zen key):** when `api_key` / `api_key_env` is omitted, the
 proxy uses OpenCode's free relay. To satisfy Zen's free-tier gates without
@@ -413,11 +428,15 @@ requiring the OpenCode CLI, llm-proxy:
 - aggregates the upstream SSE stream back into a JSON completion when the
   client asked for a non-streaming response.
 
-Free models such as `opencode/mimo-v2.6-flash-free` can therefore be used
+Free models such as `opencode-zen/mimo-v2.6-flash-free` can therefore be used
 through the proxy from any client (including `claude` or plain HTTP) without
 seeing **403: OpenCode's free tier can only be used from within OpenCode**.
 If Zen still returns that 403 (for example after a gate change), the proxy
 relays the provider error verbatim rather than masking it.
+
+The anonymous adapter above applies to Chat Completions and Messages models.
+Responses models are forwarded with the caller's stream mode and require
+whatever access Zen permits for the supplied key or public token.
 
 The public `/models` catalog is discovery information, not proof that your
 account or client can call every listed model. OpenCode Go subscribers should
@@ -691,7 +710,7 @@ flags are applied afterwards.
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
 | `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
