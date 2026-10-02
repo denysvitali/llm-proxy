@@ -656,8 +656,9 @@ Every inbound request carries a model name, which resolves in this order:
 1. **Explicit routes** — an exact match in `routes`.
 2. **Backend catalogs** — the enabled backends' live model lists, consulted in
    configuration order; first catalog containing the model wins. Catalogs are
-   cached for about a minute, and dated snapshot suffixes (`-YYYYMMDD`) match
-   their undated entries.
+   cached for about a minute. Concurrent requests share one refresh per
+   backend; canceling a waiting request does not cancel another request's
+   refresh. Dated snapshot suffixes (`-YYYYMMDD`) match their undated entries.
 3. **Default route** — `default_route.backend`, with the model rewritten by
    `default_route.model` when set.
 

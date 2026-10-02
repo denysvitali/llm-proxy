@@ -5,13 +5,9 @@ package server
 
 import (
 	"net/http"
-	"sync"
-	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/auth"
 	"github.com/denysvitali/llm-proxy/internal/backend"
-	grokbackend "github.com/denysvitali/llm-proxy/internal/backend/grok"
-	zcodebackend "github.com/denysvitali/llm-proxy/internal/backend/zcode"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"github.com/sirupsen/logrus"
 )
@@ -30,22 +26,9 @@ type Server struct {
 	accounts         AccountProviders
 	accountProviders map[string]*accountProvider
 	catalogs         catalogCache
-	grokUsageMu      sync.Mutex
-	grokUsageValue   *grokbackend.UsageView
-	zcodeUsageMu     sync.Mutex
-	zcodeUsagePlans  []zcodebackend.PlanUsage
-	zcodeUsageAt     time.Time
-	zcodeQuotaMu     sync.Mutex
-	zcodeQuotaValue  zcodebackend.PlanQuota
-	zcodeQuotaAt     time.Time
+	grokUsageCache   *grokUsageCache
+	zcodeUsageCache  *zcodeUsageCache
 }
-
-const (
-	grokUsageBackendName  = "grok"
-	grokUsageTTL          = time.Minute
-	zcodeUsageBackendName = "zcode"
-	zcodeUsageTTL         = time.Minute
-)
 
 // Dependencies names the components required to assemble a Server. Backends
 // must already be constructed in configuration order; Auth may be nil for
@@ -100,6 +83,8 @@ func NewWithDependencies(deps Dependencies) *Server {
 		accounts:         deps.Accounts,
 		accountProviders: deps.Accounts.providers(),
 		catalogs:         newCatalogCache(),
+		grokUsageCache:   newGrokUsageCache(deps.Accounts.Grok, grokUsageBaseURL(cfg.Backends)),
+		zcodeUsageCache:  newZcodeUsageCache(deps.Accounts.ZCode),
 	}
 }
 

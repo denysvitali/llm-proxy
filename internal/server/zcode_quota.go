@@ -17,7 +17,7 @@ type zcodeQuotaView struct {
 // handleZcodeQuota exposes the live ZCode quota buckets. /api/zcode/balance
 // is retained as a path alias because it mirrors the upstream endpoint name.
 func (s *Server) handleZcodeQuota(w http.ResponseWriter, r *http.Request) {
-	quota, err := s.zcodeQuota(r.Context())
+	quota, err := s.zcodeUsageCache.quota(r.Context())
 	if errors.Is(err, errZcodeQuotaUnavailable) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 		return
