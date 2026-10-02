@@ -237,7 +237,8 @@ func isUUID(value string) bool {
 		if i == 8 || i == 13 || i == 18 || i == 23 {
 			continue
 		}
-		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
+		hexDigit := r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F'
+		if !hexDigit {
 			return false
 		}
 	}

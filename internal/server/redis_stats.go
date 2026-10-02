@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -122,133 +121,36 @@ func (r *redisStats) recordToolErrors(ctx context.Context, backend, model string
 	return r.commit(ctx, pipe, modelName, retentionDays)
 }
 
-type redisModel struct {
-	name    string
-	fields  map[string]string
-	buckets map[int64]*bucket
-}
+// Limit queued replies per round trip while avoiding one network round trip
+// per model. A failed batch discards the complete read, so callers fall back
+// to local stats rather than displaying a partial fleet snapshot.
+const redisStatsReadBatchSize = 128
 
-func (r *redisStats) loadModels(ctx context.Context) ([]redisModel, error) {
+func (r *redisStats) loadModels(ctx context.Context) (map[string]modelSnapshot, error) {
 	names, err := r.client.SMembers(ctx, r.modelsKey()).Result()
 	if err != nil {
 		return nil, err
 	}
-	models := make([]redisModel, 0, len(names))
-	for _, name := range names {
-		fields, err := r.client.HGetAll(ctx, r.modelKey(name)).Result()
-		if err != nil {
+	models := make(map[string]modelSnapshot, len(names))
+	for start := 0; start < len(names); start += redisStatsReadBatchSize {
+		batch := names[start:min(start+redisStatsReadBatchSize, len(names))]
+		pipe := r.client.Pipeline()
+		commands := make([]*redis.MapStringStringCmd, len(batch))
+		for i, name := range batch {
+			commands[i] = pipe.HGetAll(ctx, r.modelKey(name))
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
 			return nil, err
 		}
-		if len(fields) == 0 {
-			continue
+		for i, command := range commands {
+			fields := command.Val()
+			// The model index can outlive an expired model hash.
+			if len(fields) > 0 {
+				models[batch[i]] = decodeRedisModel(fields)
+			}
 		}
-		models = append(models, redisModel{name: name, fields: fields, buckets: redisBuckets(fields)})
 	}
 	return models, nil
-}
-
-func redisBuckets(fields map[string]string) map[int64]*bucket {
-	buckets := make(map[int64]*bucket)
-	for field, value := range fields {
-		parts := strings.Split(field, ":")
-		if len(parts) < 3 || parts[0] != "bucket" {
-			continue
-		}
-		win, err := strconv.ParseInt(parts[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		b, ok := buckets[win]
-		if !ok {
-			b = &bucket{
-				WindowStart:       time.Unix(win*300, 0).UTC(),
-				TTFTBuckets:       make([]uint64, len(ttftEdges)),
-				E2EBuckets:        make([]uint64, len(e2eEdges)),
-				ThroughputBuckets: make([]uint64, len(tpsEdges)),
-			}
-			buckets[win] = b
-		}
-		n := redisUint(value)
-		switch parts[2] {
-		case "requests":
-			b.Requests = n
-		case "successes":
-			b.Successes = n
-		case "tokens_in":
-			b.TokensIn = n
-		case "tokens_out":
-			b.TokensOut = n
-		case "cache_read":
-			b.CacheRead = n
-		case "cache_write":
-			b.CacheWrite = n
-		case "tool_calls":
-			b.ToolCalls = n
-		case "tool_errors":
-			b.ToolErrors = n
-		case "status":
-			if len(parts) != 4 || n == 0 {
-				continue
-			}
-			if b.StatusCodes == nil {
-				b.StatusCodes = map[string]uint64{}
-			}
-			b.StatusCodes[parts[3]] += n
-		case "ttft", "e2e", "tps":
-			if len(parts) != 4 {
-				continue
-			}
-			idx, err := strconv.Atoi(parts[3])
-			if err != nil {
-				continue
-			}
-			switch parts[2] {
-			case "ttft":
-				if idx >= 0 && idx < len(b.TTFTBuckets) {
-					b.TTFTBuckets[idx] = n
-				}
-			case "e2e":
-				if idx >= 0 && idx < len(b.E2EBuckets) {
-					b.E2EBuckets[idx] = n
-				}
-			case "tps":
-				if idx >= 0 && idx < len(b.ThroughputBuckets) {
-					b.ThroughputBuckets[idx] = n
-				}
-			}
-		}
-	}
-	return buckets
-}
-
-func redisUint(value string) uint64 {
-	n, _ := strconv.ParseUint(value, 10, 64)
-	return n
-}
-
-func (model redisModel) snapshot() modelSnapshot {
-	snapshot := modelSnapshot{
-		Requests: redisUint(model.fields["requests"]), Successes: redisUint(model.fields["successes"]),
-		TokensIn: redisUint(model.fields["tokens_in"]), TokensOut: redisUint(model.fields["tokens_out"]),
-		CacheRead: redisUint(model.fields["cache_read"]), CacheWrite: redisUint(model.fields["cache_write"]),
-		ToolCalls: redisUint(model.fields["tool_calls"]), ToolErrors: redisUint(model.fields["tool_errors"]),
-		Statuses: map[string]uint64{}, Buckets: make([]bucket, 0, len(model.buckets)),
-	}
-	for field, value := range model.fields {
-		if status, ok := strings.CutPrefix(field, "status:"); ok {
-			if n := redisUint(value); n > 0 {
-				snapshot.Statuses[status] = n
-			}
-		}
-	}
-	for _, b := range model.buckets {
-		snapshot.Buckets = append(snapshot.Buckets, *b)
-	}
-	return snapshot
-}
-
-func redisModelStat(model redisModel, retentionDays int) (ModelStat, bool) {
-	return summarizeModel(model.name, model.snapshot(), retentionDays, time.Now())
 }
 
 func (r *redisStats) snapshot(ctx context.Context, retentionDays int) ([]ModelStat, error) {
@@ -256,14 +158,7 @@ func (r *redisStats) snapshot(ctx context.Context, retentionDays int) ([]ModelSt
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ModelStat, 0, len(models))
-	for _, model := range models {
-		if stat, ok := redisModelStat(model, retentionDays); ok {
-			out = append(out, stat)
-		}
-	}
-	sortModelStats(out)
-	return out, nil
+	return summarizeModels(models, retentionDays, time.Now()), nil
 }
 
 func (st *Stats) seriesAtScopeRedis(ctx context.Context, rng string, now time.Time, backendName, modelName string) (scopedSeriesSet, []string, error) {
@@ -271,9 +166,5 @@ func (st *Stats) seriesAtScopeRedis(ctx context.Context, rng string, now time.Ti
 	if err != nil {
 		return scopedSeriesSet{}, nil, err
 	}
-	snapshots := make(map[string]modelSnapshot, len(models))
-	for _, model := range models {
-		snapshots[model.name] = model.snapshot()
-	}
-	return seriesFromModels(snapshots, rng, now, backendName, modelName, st.cfg.RetentionDays)
+	return seriesFromModels(models, rng, now, backendName, modelName, st.cfg.RetentionDays)
 }

@@ -1,14 +1,10 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
-	"time"
-
-	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 // modelEntry is one item in the OpenAI-style /v1/models payload.
@@ -199,33 +195,6 @@ func writeModels(w http.ResponseWriter, r *http.Request, data []modelEntry) {
 		return
 	}
 	writeJSON(w, http.StatusOK, modelList{Object: "list", Data: data})
-}
-
-// backendCatalog fetches a backend's model list through the shared catalog
-// cache. Server.New leaves the cache zero-valued during bring-up (nil map,
-// no TTL), so initialize it lazily on first use.
-func (s *Server) backendCatalog(ctx context.Context, b backend.Backend) ([]string, error) {
-	s.catalogs.mu.Lock()
-	if s.catalogs.entries == nil {
-		s.catalogs.entries = make(map[string]cachedCatalog)
-	}
-	if s.catalogs.ttl <= 0 {
-		s.catalogs.ttl = time.Minute
-	}
-	s.catalogs.mu.Unlock()
-	return s.catalog(ctx, b)
-}
-
-// enabledBackends returns the constructed backends whose config enables them,
-// in configuration order.
-func (s *Server) enabledBackends() []backend.Backend {
-	out := make([]backend.Backend, 0, len(s.backends))
-	for _, b := range s.backends {
-		if s.enabled(b.Name()) {
-			out = append(out, b)
-		}
-	}
-	return out
 }
 
 // handleModels serves GET /v1/models with the merged catalogs of all enabled

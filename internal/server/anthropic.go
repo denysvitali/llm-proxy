@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -61,30 +60,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	s.exchangeChain(w, r, log, chain, anthropicDialect(func(w http.ResponseWriter, resp *backend.Response) {
 		s.relayUpstreamError(w, log, resp)
-	}), env, prepareAnthropicRequest)
-}
-
-// prepareAnthropicRequest encodes an Anthropic Messages body for one route's
-// backend: verbatim (model rewritten) when the backend speaks Anthropic
-// natively, translated to its wire format otherwise.
-func prepareAnthropicRequest(rt route, wire resolvedWire, env *translateEnv) ([]byte, error) {
-	if wire.native {
-		rewritten, err := rewriteModel(env.body, rt.model)
-		if err != nil {
-			return nil, errors.New("request body is not valid JSON")
-		}
-		return rewritten, nil
-	}
-	request, err := translate.ParseRequest(env.body)
-	if err != nil {
-		return nil, fmt.Errorf("invalid Anthropic Messages request: %v", err)
-	}
-	env.thinking = wantsThinking(request)
-	payload, err := wire.path.encode(*env)
-	if err != nil {
-		return nil, fmt.Errorf("translating request for backend %s failed: %v", rt.backend.Name(), err)
-	}
-	return payload, nil
+	}), env)
 }
 
 // wantsThinking reports whether a successfully parsed Anthropic request asked

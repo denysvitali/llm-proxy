@@ -2,31 +2,12 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/sirupsen/logrus"
-
 	"github.com/denysvitali/llm-proxy/internal/backend"
 )
-
-// openAIEnvelope is the minimal request envelope shared by both OpenAI
-// endpoints; everything else in the body is forwarded untouched.
-type openAIEnvelope struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
-}
-
-func decodeOpenAIEnvelope(body []byte) (openAIEnvelope, error) {
-	var env openAIEnvelope
-	if err := json.Unmarshal(body, &env); err != nil {
-		return openAIEnvelope{}, err
-	}
-	return env, nil
-}
 
 // writeOpenAIModelNotFound answers the canonical OpenAI 404 for a model that
 // no configured backend can serve.
@@ -97,55 +78,5 @@ func relayOpenAIUpstreamError(w http.ResponseWriter, resp *backend.Response) {
 // when the backend speaks chat, translated otherwise — and exchange relays
 // the response back in chat-completions shape either way.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	body, ok := s.readBody(w, r)
-	if !ok {
-		return
-	}
-	envelope, err := decodeOpenAIEnvelope(body)
-	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "request body is not valid JSON")
-		return
-	}
-	_, reasoningEffort, selectorErr := normalizeCodexModelSelector(envelope.Model)
-	if selectorErr != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", selectorErr.Error())
-		return
-	}
-	rt, found := s.resolveChain(r.Context(), envelope.Model)
-	if !found {
-		writeOpenAIModelNotFound(w, envelope.Model)
-		return
-	}
-
-	log := s.log.WithFields(logrus.Fields{
-		"request_id": RequestID(r.Context()),
-		"model":      envelope.Model,
-		"backend":    rt[0].backend.Name(),
-	})
-	env := translateEnv{
-		kind:            backend.KindOpenAIChat,
-		body:            body,
-		clientModel:     envelope.Model,
-		streaming:       envelope.Stream,
-		reasoningEffort: reasoningEffort,
-	}
-	s.exchangeChain(w, r, log, rt, openAIDialect(), env, prepareChatRequest)
-}
-
-// prepareChatRequest encodes a chat-completions body for one route's backend:
-// verbatim (model rewritten) when the backend speaks chat natively,
-// translated otherwise.
-func prepareChatRequest(rt route, wire resolvedWire, env *translateEnv) ([]byte, error) {
-	if wire.native {
-		rewritten, err := rewriteModel(env.body, rt.model)
-		if err != nil {
-			return nil, errors.New("request body is not valid JSON")
-		}
-		return rewritten, nil
-	}
-	translated, err := wire.path.encode(*env)
-	if err != nil {
-		return nil, fmt.Errorf("cannot translate request for backend %s: %v", rt.backend.Name(), err)
-	}
-	return translated, nil
+	s.handleOpenAIRequest(w, r, backend.KindOpenAIChat, openAIDialect())
 }

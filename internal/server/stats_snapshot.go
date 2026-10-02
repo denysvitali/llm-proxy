@@ -274,11 +274,13 @@ func percentilesFromCounts(counts []uint64, edges []float64) Percentiles {
 }
 
 func (st *Stats) snapshotFromBuckets() []ModelStat {
-	models := st.snapshotModels()
+	return summarizeModels(st.snapshotModels(), st.cfg.RetentionDays, time.Now())
+}
+
+func summarizeModels(models map[string]modelSnapshot, retentionDays int, now time.Time) []ModelStat {
 	out := make([]ModelStat, 0, len(models))
-	now := time.Now()
 	for key, model := range models {
-		if stat, ok := summarizeModel(key, model, st.cfg.RetentionDays, now); ok {
+		if stat, ok := summarizeModel(key, model, retentionDays, now); ok {
 			out = append(out, stat)
 		}
 	}

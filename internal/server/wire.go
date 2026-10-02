@@ -374,7 +374,7 @@ type nocloseReader struct{ io.Reader }
 func (r *nocloseReader) Close() error { return nil }
 
 // exchangeChain walks a resolved route chain: each backend gets the request
-// (encoded per its wire format by prepare) until one serves it. A backend
+// (encoded per its selected wire format) until one serves it. A backend
 // that fails or cannot encode before anything reaches the client hands the
 // request to the next fallback; the last backend's failure is written to the
 // client exactly as a single-backend proxy would have.
@@ -385,7 +385,6 @@ func (s *Server) exchangeChain(
 	chain []route,
 	dialect clientDialect,
 	env translateEnv,
-	prepare func(rt route, wire resolvedWire, env *translateEnv) ([]byte, error),
 ) {
 	for i := range chain {
 		if r.Context().Err() != nil {
@@ -407,7 +406,7 @@ func (s *Server) exchangeChain(
 		}
 		routeEnv := env
 		routeEnv.model = rt.model
-		payload, err := prepare(rt, wire, &routeEnv)
+		payload, err := prepareRouteRequest(rt, wire, &routeEnv)
 		if err == nil {
 			payload, err = applyCodexReasoningEffort(rt, wire, payload, routeEnv.reasoningEffort)
 		}

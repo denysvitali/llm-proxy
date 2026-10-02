@@ -58,10 +58,14 @@ func TestStatsStorageParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, model := range redisModels {
-		localModel := local.snapshotForPersist().Models[model.name]
+	for name, model := range redisModels {
+		localModel := local.snapshotForPersist().Models[name]
+		redisBuckets := make(map[time.Time]bucket, len(model.Buckets))
+		for _, b := range model.Buckets {
+			redisBuckets[b.WindowStart] = b
+		}
 		for _, wantBucket := range localModel.Buckets {
-			gotBucket := model.buckets[wantBucket.WindowStart.Unix()/300]
+			gotBucket := redisBuckets[wantBucket.WindowStart]
 			wantJSON, err := json.Marshal(wantBucket)
 			if err != nil {
 				t.Fatal(err)
