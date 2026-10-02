@@ -49,4 +49,7 @@ jobs:
         run: npm --prefix web test
 
       - name: Verify committed dashboard assets
-        run: git diff --exit-code --stat -- internal/server/web/webdist
+        # The container user differs from the owner of the runner's checkout.
+        # Trust this workspace only; checkout's temporary Git config is scoped
+        # to the action and is not inherited by subsequent shell steps.
+        run: git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code --stat -- internal/server/web/webdist
