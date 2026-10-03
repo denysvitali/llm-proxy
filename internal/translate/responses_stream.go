@@ -78,6 +78,10 @@ func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 		if err := json.Unmarshal(payload, &event); err != nil {
 			return false, nil
 		}
+		if event.Type == "response.failed" || event.Type == "error" {
+			s.failure = ResponsesFailure(payload)
+			return true, nil
+		}
 		return s.consumeEvent(event), nil
 	})
 	if err != nil {
@@ -167,22 +171,6 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		s.Finish()
 		return true
 
-	case "response.failed":
-		s.failure = errors.New("upstream stream failed")
-		return true
-
-	case "error":
-		errType, message := "api_error", "upstream stream failed"
-		if event.Error != nil {
-			if event.Error.Type != "" {
-				errType = event.Error.Type
-			}
-			if event.Error.Message != "" {
-				message = event.Error.Message
-			}
-		}
-		s.failure = fmt.Errorf("%s: %s", errType, message)
-		return true
 	}
 	return false
 }
@@ -351,7 +339,12 @@ func (s *ResponsesStreamWriter) Fail(message string) {
 		return
 	}
 	s.closeOpenBlocks()
-	s.emitError("api_error", message)
+	errType := "api_error"
+	var upstream *UpstreamError
+	if errors.As(s.failure, &upstream) {
+		errType = upstream.Type
+	}
+	s.emitError(errType, message)
 }
 
 func (s *ResponsesStreamWriter) emit(event string, payload any) {
@@ -442,6 +435,10 @@ func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 		if err := json.Unmarshal(payload, &event); err != nil {
 			return false, nil
 		}
+		if event.Type == "response.failed" || event.Type == "error" {
+			c.failure = ResponsesFailure(payload)
+			return true, nil
+		}
 		return c.consumeEvent(event), nil
 	})
 	if err != nil {
@@ -517,18 +514,6 @@ func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		c.Finish()
 		return true
 
-	case "response.failed", "error":
-		errType, message := "api_error", "upstream stream failed"
-		if event.Error != nil {
-			if event.Error.Type != "" {
-				errType = event.Error.Type
-			}
-			if event.Error.Message != "" {
-				message = event.Error.Message
-			}
-		}
-		c.failure = fmt.Errorf("%s: %s", errType, message)
-		return true
 	}
 	return false
 }
@@ -628,10 +613,17 @@ func (c *ChatResponsesStreamWriter) Fail(message string) {
 	if !c.started {
 		return
 	}
+	errType := "api_error"
+	var code any
+	var upstream *UpstreamError
+	if errors.As(c.failure, &upstream) {
+		errType = upstream.Type
+		code = upstream.Code
+	}
 	c.writeData(map[string]any{"error": map[string]any{
 		"message": message,
-		"type":    "api_error",
-		"code":    nil,
+		"type":    errType,
+		"code":    code,
 	}})
 }
 

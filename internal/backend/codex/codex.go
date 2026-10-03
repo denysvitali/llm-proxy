@@ -145,6 +145,17 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	aggregated, err := aggregateResponsesSSE(resp.Body)
 	_ = resp.Body.Close()
 	if err != nil {
+		var upstream *translate.UpstreamError
+		if errors.As(err, &upstream) {
+			status := http.StatusBadGateway
+			if upstream.InvalidRequest() {
+				status = http.StatusBadRequest
+			}
+			payload, _ := json.Marshal(map[string]any{"error": upstream})
+			header := resp.Header.Clone()
+			header.Set("Content-Type", "application/json")
+			return &backend.Response{Status: status, Header: header, Body: io.NopCloser(bytes.NewReader(payload))}, nil
+		}
 		return nil, fmt.Errorf("decode Codex response stream: %w", err)
 	}
 	header := resp.Header.Clone()
@@ -198,8 +209,8 @@ func aggregateResponsesSSE(body io.Reader) ([]byte, error) {
 				return nil, errors.New("response.completed omitted response")
 			}
 			return event.Response, nil
-		case "response.failed":
-			return nil, fmt.Errorf("upstream response failed: %s", event.Response)
+		case "response.failed", "error":
+			return nil, translate.ResponsesFailure([]byte(data))
 		}
 	}
 	if err := scanner.Err(); err != nil {

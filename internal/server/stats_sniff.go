@@ -9,6 +9,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,22 @@ func (sn *sniffer) Finish() {
 	}
 	sn.tracker.rep.mergeMax(parseUsageReport(data, sn.sse))
 	success := sn.attemptStatus != statusError && strings.HasPrefix(sn.attemptStatus, "2")
+	if success && sn.sse {
+		for _, line := range bytes.Split(data, []byte("\n")) {
+			line = bytes.TrimSpace(line)
+			if !bytes.HasPrefix(line, []byte("data:")) {
+				continue
+			}
+			payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+			var event struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(payload, &event) == nil && (event.Type == "response.failed" || event.Type == "error") {
+				sn.tracker.markBodyFailure()
+				sn.tracker.errMsg = truncateMessage(translate.ResponsesFailure(payload).Error())
+			}
+		}
+	}
 	if success && !sn.sse && errorShapedBody(data) != nil {
 		// Gateway-200: the exchange will answer 502 for this. Mark the whole
 		// request failed so uptime counts it, and keep the body's message.

@@ -543,7 +543,12 @@ func (s *Server) relayTranslatedStreaming(
 		if gate.w != nil {
 			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced, rt.backend.Name(), rt.model)
 			log.WithError(streamErr).Warn("upstream stream broke after content was forwarded; surfacing an in-stream error")
-			failTranslatedStream(writer, midstreamFailureMessage)
+			message := midstreamFailureMessage
+			var upstream *translate.UpstreamError
+			if errors.As(streamErr, &upstream) {
+				message = upstream.Message
+			}
+			failTranslatedStream(writer, message)
 			return exchangeResult{outcome: exchangeSurfaced, committed: true}
 		}
 		if !s.retryStream(ctx, log, rt, streamErr, attempt) {
@@ -562,6 +567,11 @@ func (s *Server) retryStream(
 	streamErr error,
 	attempt int,
 ) bool {
+	var upstream *translate.UpstreamError
+	if errors.As(streamErr, &upstream) && upstream.InvalidRequest() {
+		log.WithError(streamErr).Warn("upstream rejected stream input")
+		return false
+	}
 	budget := s.retryBudgetFor(rt.backend.Name())
 	if attempt < midstreamRetries && retryPause(ctx, attempt, budget.maxBackoff) {
 		s.metrics.noteRetryAttempt(retryPhaseBody, rt.backend.Name(), rt.model)
@@ -574,6 +584,10 @@ func (s *Server) retryStream(
 }
 
 func failedStream(streamErr error) exchangeResult {
+	var upstream *translate.UpstreamError
+	if errors.As(streamErr, &upstream) && upstream.InvalidRequest() {
+		return exchangeResult{outcome: exchangeRejected, message: upstream.Message, rejection: upstream}
+	}
 	message := midstreamFailureMessage
 	if streamErr != nil {
 		message = fmt.Sprintf("upstream stream failed: %v", streamErr)

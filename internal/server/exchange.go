@@ -57,6 +57,7 @@ type exchangeResult struct {
 	committed        bool
 	fallbackEligible bool
 	message          string
+	rejection        *translate.UpstreamError
 }
 
 func failedExchange(message string) exchangeResult {
@@ -189,6 +190,10 @@ func (s *Server) exchange(
 			result.outcome = exchangeCanceled
 			result.fallbackEligible = false
 			return result
+		}
+		if result.rejection != nil && !result.committed {
+			dialect.writeError(w, http.StatusBadRequest, "invalid_request_error", result.rejection.Message)
+			result.committed = true
 		}
 		if final && result.fallbackEligible && !result.committed {
 			dialect.writeError(w, http.StatusBadGateway, "api_error", result.message)
