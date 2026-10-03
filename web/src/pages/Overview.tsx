@@ -66,7 +66,7 @@ export default function OverviewPage() {
           onRetry={() => ovQ.refetch({ cancelRefetch: false })} retrying={ovQ.isFetching} />}
 
         {ov && <div className="overview-operations" aria-label="Gateway configuration summary">
-          <Group gap="xs"><span className="overview-status-dot" aria-hidden="true" /><Text size="sm" fw={600}>{enabledProviders.length} providers enabled</Text><Text size="xs" c="dimmed">of {ov.backends.length} configured</Text></Group>
+          <Group gap="xs"><span className="overview-status-dot" aria-hidden="true" /><Text size="sm" fw={600}>{enabledProviders.length} {enabledProviders.length === 1 ? 'provider' : 'providers'} enabled</Text><Text size="xs" c="dimmed">of {ov.backends.length} configured</Text></Group>
           <Group gap="sm">
             <Badge variant="light" color={attentionProviders.length ? 'yellow' : 'gray'} tt="none">{attentionProviders.length ? `${attentionProviders.length} need attention` : enabledProviders.length ? 'Catalogs ready' : 'No enabled providers'}</Badge>
             <Text size="xs" c="dimmed">Client auth {ov.authEnabled ? 'on' : 'off'}</Text>
@@ -84,7 +84,7 @@ export default function OverviewPage() {
               <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={17} />} />
             </SimpleGrid>
             <Group className="overview-summary-footer" justify="space-between" gap="xs">
-              <Text size="xs" c="dimmed">{models.filter((model) => model.requests > 0).length} models with traffic</Text>
+              <Text size="xs" c="dimmed">{models.filter((model) => model.requests > 0).length} {models.filter((model) => model.requests > 0).length === 1 ? 'model' : 'models'} with traffic</Text>
               <Group gap="md"><Text size="xs" c="dimmed"><Text span inherit fw={600}>{fmtInt(totals.toolCalls)}</Text> tool calls</Text><Text size="xs" c={totals.toolErrors ? 'red' : 'dimmed'}><Text span inherit fw={600}>{fmtInt(totals.toolErrors)}</Text> tool errors{totals.toolCalls > 0 ? ` · ${(100 * clampRate(totals.toolErrors / totals.toolCalls)).toFixed(1)}%` : ''}</Text></Group>
             </Group>
           </> : statsQ.isPending ? <SimpleGrid cols={{ base: 2, md: 4 }}>{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={122} radius="lg" />)}</SimpleGrid> : null}
