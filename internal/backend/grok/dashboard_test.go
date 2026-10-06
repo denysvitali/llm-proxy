@@ -10,6 +10,9 @@ import (
 
 func TestManagerUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-grok-client-version"); got != "1.0.13" {
+			t.Errorf("x-grok-client-version = %q, want 1.0.13", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/user":

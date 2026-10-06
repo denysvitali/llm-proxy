@@ -76,7 +76,8 @@ func TestSendHeadersAndBody(t *testing.T) {
 				}{
 					{"Authorization", "Bearer test-token"},
 					{"X-XAI-Token-Auth", "xai-grok-cli"},
-					{"x-grok-client-version", ClientVersion},
+					// Pin the upstream compatibility contract independently of ClientVersion.
+					{"x-grok-client-version", "1.0.13"},
 					{"x-grok-client-mode", "cli"},
 					{"Content-Type", "application/json"},
 					{"Accept", tt.wantAccept},
@@ -86,8 +87,8 @@ func TestSendHeadersAndBody(t *testing.T) {
 						t.Errorf("header %s = %q, want %q", chk.header, got, chk.want)
 					}
 				}
-				if ua := h.Get("User-Agent"); !strings.HasPrefix(ua, "llm-proxy/") {
-					t.Errorf("User-Agent = %q, want prefix %q", ua, "llm-proxy/")
+				if ua := h.Get("User-Agent"); ua != "llm-proxy/1.0.13" {
+					t.Errorf("User-Agent = %q, want %q", ua, "llm-proxy/1.0.13")
 				}
 
 				w.Header().Set("Content-Type", tt.wantAccept)

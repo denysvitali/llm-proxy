@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	Issuer        = "https://auth.x.ai"
-	ClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
-	Scopes        = "openid profile email offline_access grok-cli:access api:access"
-	ClientVersion = "0.2.99"
+	Issuer   = "https://auth.x.ai"
+	ClientID = "b1a00492-073a-47ea-816f-4c329264a828"
+	Scopes   = "openid profile email offline_access grok-cli:access api:access"
+	// Minimum CLI compatibility version required by the Grok subscription API.
+	ClientVersion = "1.0.13"
 )
 
 type Token struct {
