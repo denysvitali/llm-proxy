@@ -13,6 +13,7 @@ import (
 	_ "github.com/denysvitali/llm-proxy/internal/backend/grok"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/mimotokenplan"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/minimaxcode"
+	_ "github.com/denysvitali/llm-proxy/internal/backend/mistral"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/nous"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/opencode"
 	_ "github.com/denysvitali/llm-proxy/internal/backend/opencodego"

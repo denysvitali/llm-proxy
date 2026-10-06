@@ -353,17 +353,19 @@ func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 	for _, choice := range chunk.Choices {
 		delta := choice.Delta
-		if delta.Content != nil && *delta.Content != "" {
-			if !s.stream.openItem("message") {
-				return nil
-			}
-			s.stream.appendText(*delta.Content)
-		}
+		// A Mistral transition delta can close the reasoning trace and start
+		// the answer together. Emit reasoning before opening the text item.
 		if delta.ReasoningContent != "" {
 			if !s.stream.openItem("reasoning") {
 				return nil
 			}
 			s.stream.appendReasoning(delta.ReasoningContent)
+		}
+		if delta.Content != nil && *delta.Content != "" {
+			if !s.stream.openItem("message") {
+				return nil
+			}
+			s.stream.appendText(*delta.Content)
 		}
 		for _, call := range delta.ToolCalls {
 			if call.ID != "" || call.Function.Name != "" {

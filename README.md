@@ -23,6 +23,7 @@ not upstream API keys.
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
 | `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
 | `anyrouter` | [AnyRouter](https://docs.anyrouter.dev/api-reference/overview) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live model catalog, including `stealth/fledge-alpha`. |
+| `mistral-vibe` (`mistral` also supported) | [Mistral Vibe](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles) | Chat Completions | Mistral API keys, live chat-model catalog; Messages and Responses clients use translation. |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
 | `opencode-zen` (`opencode` also supported) | [OpenCode Zen](https://opencode.ai/docs/zen/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | The proxy selects Zen's documented endpoint per model and translates other client APIs. |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
@@ -348,6 +349,48 @@ Messages for non-Anthropic models. Request JSON (apart from the proxy's model
 rewrite), response bodies, and SSE events pass through unchanged, preserving
 provider routing, reasoning, tools, and AnyRouter metadata. The proxy supplies
 upstream credentials and forwards Anthropic version/beta headers for Messages.
+
+### Mistral Vibe / Mistral
+
+[Mistral Vibe Code](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles)
+uses the [Mistral API](https://docs.mistral.ai/api) at
+`https://api.mistral.ai/v1`. Create a key from
+[Code › Vibe CLI](https://chat.mistral.ai/code/extensions), then export it as
+`MISTRAL_API_KEY` in the proxy process's environment:
+
+```yaml
+backends:
+  - type: mistral-vibe
+    api_key_env: MISTRAL_API_KEY
+
+# Optional shorter model name:
+routes:
+  vibe:
+    backend: mistral-vibe
+    model: mistral-medium-3-5
+```
+
+Select `mistral-vibe/mistral-medium-3-5` in a client, or use `vibe` with the
+route above. `type: mistral` uses the same API and accepts `mistral/<model-id>`
+qualified IDs instead. `base_url` overrides the API root, including `/v1`.
+The authenticated `GET /models` catalog includes model aliases and excludes
+archived models and those explicitly marked as unable to serve chat, such as
+embedding-only models. Availability depends on the configured key.
+
+Chat Completions requests use `/chat/completions`; Anthropic Messages and
+OpenAI Responses requests use the proxy's existing translation paths,
+including streaming and function tools. The backend adapts
+`max_completion_tokens` to `max_tokens`, `seed` to `random_seed`, developer
+messages to system messages, and incompatible tool-call IDs to matching,
+deterministic nine-character alphanumeric IDs. It omits OpenAI's
+`stream_options`, since Mistral's chat schema has no such field. Mistral
+text/thinking content chunks are decoded for translated clients; native chat
+responses and SSE events retain their original content and metadata.
+
+This integration uses an explicitly configured API key. Vibe's browser login
+and automatic loading of `~/.vibe/.env` are not proxy login methods. Mistral's
+included usage and pay-as-you-go settings still apply; a proxy configuration
+does not change the account's billing settings.
 
 ### OpenRouter
 
@@ -725,7 +768,7 @@ flags are applied afterwards.
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
 | `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |

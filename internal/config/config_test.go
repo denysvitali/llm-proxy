@@ -14,10 +14,13 @@ func TestValidateAcceptsRegisteredBackends(t *testing.T) {
 			{Type: "venice"},
 			{Type: "nous", APIKeyEnv: "NOUS_KEY"},
 			{Type: "opencode-zen", APIKeyEnv: "OPENCODE_API_KEY"},
+			{Type: "mistral", APIKeyEnv: "MISTRAL_API_KEY"},
+			{Type: "mistral-vibe", APIKeyEnv: "MISTRAL_VIBE_API_KEY"},
 		},
 		Routes: map[string]ModelRoute{
 			"stealth/ox-alpha": {Backend: "nous"},
 			"zen-gpt":          {Backend: "opencode-zen", Model: "gpt-6-sol"},
+			"vibe":             {Backend: "mistral-vibe", Model: "mistral-medium-3-5"},
 		},
 		DefaultRoute: ModelRoute{Backend: "venice"},
 	}

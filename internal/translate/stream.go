@@ -11,12 +11,8 @@ type openAIChunk struct {
 	ID      string `json:"id"`
 	Model   string `json:"model"`
 	Choices []struct {
-		FinishReason string `json:"finish_reason"`
-		Delta        struct {
-			Content          string           `json:"content"`
-			ReasoningContent string           `json:"reasoning_content"`
-			ToolCalls        []openAIToolCall `json:"tool_calls"`
-		} `json:"delta"`
+		FinishReason string           `json:"finish_reason"`
+		Delta        openAIMessageOut `json:"delta"`
 	} `json:"choices"`
 	Usage *openAIUsage    `json:"usage"`
 	Error json.RawMessage `json:"error"`
