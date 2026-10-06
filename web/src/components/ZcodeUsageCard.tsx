@@ -85,7 +85,7 @@ function PlanRow({ plan }: { plan: ZcodePlanUsage }) {
             <Progress.Section value={Math.min(100, percent)} color={color} withAria={false} />
           </Progress.Root>
           {percent > 100 && (
-            <Text size="xs" mt={6} c="red" fw={500} style={{ fontVariantNumeric: 'tabular-nums' }}>
+            <Text size="xs" mt={6} fw={500} style={{ color: 'var(--data-critical)', fontVariantNumeric: 'tabular-nums' }}>
               {(percent - 100).toFixed(1)}% over plan limit
             </Text>
           )}

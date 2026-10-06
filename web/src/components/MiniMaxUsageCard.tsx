@@ -57,7 +57,7 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
             {checkin.error.message}
             <Text size="sm" mt={4}>Check the refreshed status before trying again.</Text>
           </Alert>}
-          {checkin.isSuccess && <Text size="sm" c="teal" role="status">
+          {checkin.isSuccess && <Text size="sm" role="status" style={{ color: 'var(--data-good)' }}>
             {checkin.data.claim_result === 2 ? 'Already checked in today.' : `Checked in! +${checkin.data.points.toLocaleString()} credits.`}
             {checkin.data.claim_result === 1 && dateLabel(checkin.data.expire_at_ms) ? ` Credits expire ${dateLabel(checkin.data.expire_at_ms)}.` : ''}
           </Text>}
@@ -67,7 +67,7 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
                 <Text size="xs" fw={day.is_today ? 700 : 500}>Day {day.day_no}</Text>
                 <Text fz={12} fw={600} mt={4}>{Number.isFinite(day.points) ? day.points.toLocaleString() : '—'} credits</Text>
                 {day.bonus_points != null && day.bonus_points > 0 && <Text fz={11} c="dimmed">Includes {day.bonus_points.toLocaleString()} bonus</Text>}
-                <Text fz={11} c={day.status === 3 ? 'teal' : 'dimmed'} mt={4}>{day.status === 3 ? 'Claimed' : day.status === 2 ? 'Available' : day.status === 4 ? 'Unavailable' : 'Upcoming'}</Text>
+                <Text fz={11} mt={4} style={{ color: day.status === 3 ? 'var(--data-good)' : undefined }} c={day.status === 3 ? undefined : 'dimmed'}>{day.status === 3 ? 'Claimed' : day.status === 2 ? 'Available' : day.status === 4 ? 'Unavailable' : 'Upcoming'}</Text>
                 {day.is_today && <Text fz={11} fw={700}>Today</Text>}
               </Box>
             ))}
@@ -87,7 +87,14 @@ export function MiniMaxUsageCompact({ usage }: { usage: MiniMaxUsage }) {
     </Group>
     <Group justify="space-between" gap="xs" mt={6}>
       <Text size="xs" c="dimmed">Daily check-in</Text>
-      <Badge size="xs" variant="light" color={claimedToday(usage.checkin) ? 'teal' : 'gray'} tt="none">
+      <Badge size="xs" variant="light" tt="none"
+        styles={{
+          root: claimedToday(usage.checkin)
+            ? { color: 'var(--data-good)', background: 'color-mix(in srgb, var(--data-good) 12%, var(--card))' }
+            : undefined,
+        }}
+        color={claimedToday(usage.checkin) ? undefined : 'gray'}
+      >
         {usage.checkinError ? 'Unavailable' : claimedToday(usage.checkin) ? 'Checked in today' : usage.checkin?.days.some((day) => day.status === 2) ? 'Ready to claim' : 'Unavailable'}
       </Badge>
     </Group>

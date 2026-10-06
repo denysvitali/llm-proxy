@@ -15,7 +15,7 @@ export default function GrokUsageCompact({ usage }: { usage: GrokUsage }) {
           {percent === null ? 'Usage unavailable' : `${percent.toFixed(1)}% used`}
         </Text>
       </Group>
-      {percent !== null && <UsageMeter percent={percent} compact />}
+      {percent !== null && <UsageMeter percent={percent} compact label="Grok subscription quota used" />}
       <Text size="xs" c="dimmed" mt={4}>
         {formatPeriod(usage.periodStart, usage.periodEnd, usage.periodType)}
       </Text>

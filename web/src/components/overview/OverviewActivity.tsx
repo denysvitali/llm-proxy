@@ -44,7 +44,9 @@ export function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] })
     <Card withBorder radius="lg" p="md">
       <div className="overview-card-header">
         <Group gap={8}>
-          <ThemeIcon variant="light" color="red" size="sm" radius="md" aria-hidden="true">
+          <ThemeIcon variant="light" size="sm" radius="md" aria-hidden="true"
+            styles={{ root: { color: 'var(--data-critical)', background: 'color-mix(in srgb, var(--data-critical) 12%, var(--card))' } }}
+          >
             <IconServerOff size={13} />
           </ThemeIcon>
           <Title order={5} className="overview-card-title">Recent upstream errors</Title>

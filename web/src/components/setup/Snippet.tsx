@@ -157,7 +157,7 @@ export function Snippet({
         {clipboard.error && (
           <Group gap="xs" role="alert">
             <IconExclamationCircle size={16} style={{ flexShrink: 0 }} />
-            <Text size="sm" c="yellow">
+            <Text size="sm" style={{ color: 'var(--data-warning)' }}>
               Clipboard access is unavailable. Select the snippet below and copy it manually.
             </Text>
           </Group>

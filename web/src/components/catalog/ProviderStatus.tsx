@@ -2,17 +2,7 @@ import { useId, type ReactNode } from 'react'
 import { Button, Group, Stack, Text, Title } from '@mantine/core'
 import { IconLogin } from '@tabler/icons-react'
 import type { OverviewBackend } from '../../api'
-
-// Account-backed providers sign in through the proxy's web login flow; this
-// table is the single source for label + login path in card and drawer.
-// grok mounts at /login, the others at /login/<name>.
-const ACCOUNT_AUTH: Record<string, { label: string; login: string }> = {
-  grok: { label: 'xAI', login: '/login' },
-  workbuddy: { label: 'WorkBuddy', login: '/login/workbuddy' },
-  codex: { label: 'ChatGPT', login: '/login/codex' },
-  zcode: { label: 'ZCode', login: '/login/zcode' },
-  'minimax-code': { label: 'MiniMax', login: '/login/minimax-code' },
-}
+import { ACCOUNT_AUTH } from '../../lib/accounts'
 
 // A native indicator plus explicit text keeps configuration state readable
 // without color; theme roles match the rest of the health chrome.

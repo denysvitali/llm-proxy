@@ -41,7 +41,7 @@ export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsa
                   {percent > 100 ? `${(percent - 100).toFixed(1)}% over limit` : `${(100 - percent).toFixed(1)}% remaining`}
                 </Text>
               </Group>
-              <UsageMeter percent={percent} />
+              <UsageMeter percent={percent} label="Grok subscription quota used" />
             </>
           ) : (
             <Text size="sm" c="dimmed">

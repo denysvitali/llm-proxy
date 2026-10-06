@@ -235,18 +235,12 @@
   justify-self: start;
   margin-top: 2px;
 }
-@media (max-width: 74em) {
-  .overview-activity-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-@media (max-width: 62em) {
+@media (max-width: 48em) {
+  .overview-activity-grid,
   .overview-history-grid,
   .overview-breakdown-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-}
-@media (max-width: 48em) {
   .overview-operations {
     padding: 12px;
     gap: 8px;

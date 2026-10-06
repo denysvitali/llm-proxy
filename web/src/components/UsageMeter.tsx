@@ -1,7 +1,7 @@
 import { Progress } from '@mantine/core'
 import { usageTone } from './usageFormatting'
 
-export default function UsageMeter({ percent, compact = false }: { percent: number; compact?: boolean }) {
+export default function UsageMeter({ percent, compact = false, label }: { percent: number; compact?: boolean; label: string }) {
   const color = usageTone(percent)
   const description = `${percent.toFixed(1)}% used${percent > 100 ? ', over subscription limit' : `, ${(100 - percent).toFixed(1)}% remaining`}`
   return (
@@ -9,7 +9,7 @@ export default function UsageMeter({ percent, compact = false }: { percent: numb
       size={compact ? 'sm' : 'md'}
       radius="xl"
       role="meter"
-      aria-label="Grok subscription quota used"
+      aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.min(100, percent)}

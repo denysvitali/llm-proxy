@@ -56,7 +56,7 @@ export default function ProviderCard({
         <Stack gap={7} align="flex-start" className="catalog-provider-status">
           <Box><UptimeBadge uptime={ready ? aggregate.uptime : NaN} requests={ready ? aggregate.requests : NaN} /></Box>
           <StatusDot ok={backend.catalogOK} okLabel="Catalog ready" badLabel="Catalog unavailable" />
-          <Group gap={5} wrap="nowrap" c={authenticated ? 'dimmed' : 'yellow'}>
+          <Group gap={5} wrap="nowrap" style={{ color: authenticated ? undefined : 'var(--data-warning)' }} c={authenticated ? 'dimmed' : undefined}>
             {hasAccount ? <IconUser size={13} aria-hidden /> : <IconKey size={13} aria-hidden />}
             <Text size="xs">{authenticated ? (hasAccount ? 'Account connected' : 'Key configured') : 'Auth needed'}</Text>
           </Group>

@@ -11,7 +11,7 @@ interface StatTileProps {
   accent?: Accent
 }
 
-export default function StatTile({ label, value, hint, icon, accent = 'brand' }: StatTileProps) {
+export default function StatTile({ label, value, hint, icon, accent = 'gray' }: StatTileProps) {
   const labelId = useId()
   const hasValue = value !== null && value !== undefined && value !== '' && typeof value !== 'boolean'
     && !(typeof value === 'number' && !Number.isFinite(value))

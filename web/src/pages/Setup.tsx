@@ -13,16 +13,13 @@ import type { Overview } from '../api'
 import { dashboardQueries } from '../queries'
 import { Fade } from '../App'
 import { PageHeader } from '../components/PageHeader'
+import { ACCOUNT_AUTH } from '../lib/accounts'
 import { Snippet } from '../components/setup/Snippet'
 import './setup.css'
 
-const accountProviders = [
-  { name: 'grok', label: 'Grok', account: 'xAI account', href: '/login' },
-  { name: 'workbuddy', label: 'WorkBuddy', account: 'WorkBuddy account', href: '/login/workbuddy' },
-  { name: 'codex', label: 'Codex', account: 'ChatGPT account', href: '/login/codex' },
-  { name: 'zcode', label: 'ZCode', account: 'ZCode account', href: '/login/zcode' },
-  { name: 'minimax-code', label: 'MiniMax Code', account: 'MiniMax account', href: '/login/minimax-code' },
-]
+const accountProviders = Object.entries(ACCOUNT_AUTH).map(([name, { label, account, login }]) => ({
+  name, label, account, href: login,
+}))
 
 export default function SetupPage() {
   const q = useQuery(dashboardQueries.overview())
@@ -171,7 +168,7 @@ function ConnectionCheck() {
         <Button variant="light" loading={testing} onClick={() => void checkConnection()} leftSection={<IconPlugConnected size={16} />}>Check connection</Button>
       </Group>
       <div role="status" aria-live="polite">
-        {result && <Group gap="xs" mt="md" align="flex-start" wrap="nowrap"><Box c={result.ok ? 'teal' : 'red'}>{result.ok ? <IconCheck size={16} /> : <IconInfoCircle size={16} />}</Box><Text size="sm" c={result.ok ? 'teal' : 'red'}>{result.message}</Text></Group>}
+        {result && <Group gap="xs" mt="md" align="flex-start" wrap="nowrap"><Box style={{ color: result.ok ? 'var(--data-good)' : 'var(--data-critical)' }}>{result.ok ? <IconCheck size={16} /> : <IconInfoCircle size={16} />}</Box><Text size="sm" style={{ color: result.ok ? 'var(--data-good)' : 'var(--data-critical)' }}>{result.message}</Text></Group>}
       </div>
     </Card>
   )
