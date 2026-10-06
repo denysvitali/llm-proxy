@@ -139,6 +139,96 @@ func TestSendHeadersAndUpstreamErrors(t *testing.T) {
 	}
 }
 
+func TestMistralVibeAttributionStamped(t *testing.T) {
+	const body = `{"model":"mistral-medium-3-5","messages":[],"metadata":{"session_id":"s1"}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") != vibeUserAgent {
+			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), vibeUserAgent)
+		}
+		if r.Header.Get("X-Affinity") != "session-42" {
+			t.Errorf("X-Affinity = %q, want session-42", r.Header.Get("X-Affinity"))
+		}
+		received, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		if err := json.Unmarshal(received, &payload); err != nil {
+			t.Fatal(err)
+		}
+		metadata, ok := payload["metadata"].(map[string]any)
+		if !ok {
+			t.Fatalf("metadata missing or not an object: %s", received)
+		}
+		if metadata["call_source"] != "vibe_code" {
+			t.Errorf("metadata.call_source = %v, want vibe_code", metadata["call_source"])
+		}
+		if metadata["session_id"] != "s1" {
+			t.Errorf("metadata.session_id lost: %s", received)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"x","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	client := New(server.URL+"/v1", "secret")
+	client.name = "mistral-vibe"
+	resp, err := client.Send(t.Context(), &backend.Request{
+		Kind: backend.KindOpenAIChat, RawBody: []byte(body),
+		Header: http.Header{"X-Affinity": {"session-42"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+}
+
+func TestMistralVibeAttributionPreservesExplicitCallSource(t *testing.T) {
+	const body = `{"model":"mistral-medium-3-5","messages":[],"metadata":{"call_source":"studio"}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		if err := json.Unmarshal(received, &payload); err != nil {
+			t.Fatal(err)
+		}
+		metadata := payload["metadata"].(map[string]any)
+		if metadata["call_source"] != "studio" {
+			t.Errorf("metadata.call_source = %v, want studio (client value preserved)", metadata["call_source"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"x","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	client := New(server.URL+"/v1", "secret")
+	client.name = "mistral-vibe"
+	resp, err := client.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIChat, RawBody: []byte(body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+}
+
+func TestPlainMistralDoesNotStampAttribution(t *testing.T) {
+	const body = `{"model":"mistral-medium-3-5","messages":[]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") == vibeUserAgent {
+			t.Errorf("plain mistral backend must not send Vibe User-Agent")
+		}
+		received, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		if err := json.Unmarshal(received, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := payload["metadata"]; exists {
+			t.Errorf("plain mistral backend must not inject metadata: %s", received)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"x","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	resp, err := New(server.URL+"/v1", "secret").Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIChat, RawBody: []byte(body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+}
+
 func TestMissingKeyAndInvalidRequestsAreTerminal(t *testing.T) {
 	client := New("http://invalid.test/v1", "")
 	if _, err := client.Models(t.Context()); !backend.IsTerminal(err) {

@@ -14,6 +14,48 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/config"
 )
 
+func TestMistralVibeStampsCallSourceThroughProxy(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		stamped  bool // whether metadata.call_source=vibe_code reaches the upstream
+		vibeUA   bool // whether the Vibe User-Agent reaches the upstream
+	}{
+		{provider: "mistral-vibe", stamped: true, vibeUA: true},
+		{provider: "mistral", stamped: false, vibeUA: false},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var sent map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+					t.Error(err)
+					return
+				}
+				metadata, _ := sent["metadata"].(map[string]any)
+				callSource, _ := metadata["call_source"].(string)
+				if got := callSource == "vibe_code"; got != tc.stamped {
+					t.Errorf("metadata.call_source=vibe_code stamped=%t at upstream, want %t (body: %v)", got, tc.stamped, sent["metadata"])
+				}
+				if gotUA := strings.Contains(r.Header.Get("User-Agent"), "Mistral-Vibe"); gotUA != tc.vibeUA {
+					t.Errorf("User-Agent %q contains Mistral-Vibe=%t, want %t", r.Header.Get("User-Agent"), gotUA, tc.vibeUA)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"x","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+			}))
+			defer upstream.Close()
+			bc := config.BackendConfig{Type: tc.provider, BaseURL: upstream.URL + "/v1", APIKey: "secret"}
+			b, err := backend.New(tc.provider, backend.Options{BaseURL: bc.BaseURL, APIKey: bc.APIKey})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := newTestServer(t, []backend.Backend{b}, bc)
+			rec := postOpenAI(t, s, "/v1/chat/completions", fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}]}`, tc.provider+"/mistral-large-latest"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+			}
+		})
+	}
+}
+
 func TestMistralClientAPIs(t *testing.T) {
 	clients := []struct {
 		path, body, responseEnd string

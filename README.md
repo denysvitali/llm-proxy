@@ -23,7 +23,7 @@ not upstream API keys.
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
 | `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
 | `anyrouter` | [AnyRouter](https://docs.anyrouter.dev/api-reference/overview) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live model catalog, including `stealth/fledge-alpha`. |
-| `mistral-vibe` (`mistral` also supported) | [Mistral Vibe](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles) | Chat Completions | Mistral API keys, live chat-model catalog; Messages and Responses clients use translation. |
+| `mistral-vibe` (`mistral` also supported) | [Mistral Vibe](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles) | Chat Completions | Mistral API keys, live chat-model catalog; Messages and Responses clients use translation. `mistral-vibe` stamps `metadata.call_source="vibe_code"` so usage meters against the Vibe Code allowance. |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
 | `opencode-zen` (`opencode` also supported) | [OpenCode Zen](https://opencode.ai/docs/zen/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | The proxy selects Zen's documented endpoint per model and translates other client APIs. |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
@@ -391,6 +391,15 @@ This integration uses an explicitly configured API key. Vibe's browser login
 and automatic loading of `~/.vibe/.env` are not proxy login methods. Mistral's
 included usage and pay-as-you-go settings still apply; a proxy configuration
 does not change the account's billing settings.
+
+`type: mistral-vibe` marks every chat completion it proxies as Vibe Code
+usage, mirroring the calls the Vibe CLI itself makes: the request body's
+`metadata.call_source` is set to `"vibe_code"` (a client-provided `call_source`
+is preserved), a `User-Agent: mistral-client-python/Mistral-Vibe/...` header is
+sent, and an inbound `X-Affinity` session header is forwarded upstream. Mistral
+therefore meters these calls against the account's included Vibe Code
+allowance. `type: mistral` sends no Vibe attribution and meters against the
+general API/Studio allowance instead.
 
 ### OpenRouter
 

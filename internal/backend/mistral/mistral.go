@@ -16,6 +16,10 @@ import (
 
 const defaultBaseURL = "https://api.mistral.ai/v1"
 
+// vibeUserAgent mimics Mistral Vibe's SDK-backend User-Agent, under which
+// Mistral meters Vibes CLI traffic separately from plain API usage.
+const vibeUserAgent = "mistral-client-python/Mistral-Vibe/2.26.0"
+
 type Client struct {
 	BaseURL string
 	Key     string
@@ -60,11 +64,23 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, backend.Terminal(fmt.Errorf("prepare Mistral request: %w", err))
 	}
+	if c.name == "mistral-vibe" {
+		body, err = stampVibeAttribution(body)
+		if err != nil {
+			return nil, backend.Terminal(fmt.Errorf("prepare Mistral Vibe attribution: %w", err))
+		}
+	}
 	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+"/chat/completions", body, req.Streaming)
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+	if c.name == "mistral-vibe" {
+		httpReq.Header.Set("User-Agent", vibeUserAgent)
+		if affinity := req.Header.Get("X-Affinity"); affinity != "" {
+			httpReq.Header.Set("X-Affinity", affinity)
+		}
+	}
 	return upstream.Send(c.HTTP, httpReq, "Mistral")
 }
 

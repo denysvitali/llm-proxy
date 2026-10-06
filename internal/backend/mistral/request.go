@@ -103,6 +103,31 @@ func rewriteID(object map[string]any, key string, seen map[string]string) (bool,
 	return true, nil
 }
 
+// stampVibeAttribution marks a request as Vibe Code usage in the request
+// metadata, so Mistral meters it under the account's Vibe Code allowance
+// instead of the general API/Studio allowance. An explicit caller-provided
+// call_source is preserved; all other metadata keys are kept intact.
+func stampVibeAttribution(body []byte) ([]byte, error) {
+	var payload map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	if payload == nil {
+		return nil, fmt.Errorf("request must be an object")
+	}
+	metadata, _ := payload["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if _, exists := metadata["call_source"]; !exists {
+		metadata["call_source"] = "vibe_code"
+	}
+	payload["metadata"] = metadata
+	return json.Marshal(payload)
+}
+
 // Hash incompatible IDs rather than truncating common call_/toolu_ prefixes.
 // Matching calls and results get the same ID across requests, retries and
 // concurrent sessions, without any shared mutable state.
