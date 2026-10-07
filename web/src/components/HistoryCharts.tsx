@@ -277,6 +277,7 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
       axisLine: false as const,
       width: 48,
       tickCount: 4,
+      ...(single && (series[0]?.formatter === fmtPct || series[0]?.formatter === historyFormatters.percent) ? { domain: [0, 1] as [number, number], ticks: [0, 0.5, 1] } : {}),
       tickFormatter: formatter,
     },
   }

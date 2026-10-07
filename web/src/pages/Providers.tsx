@@ -206,7 +206,7 @@ export default function ProvidersPage() {
                 </Button>
               </Stack>
             ) : (
-              <Stack gap="sm" className="catalog-provider-list">
+              <div className="catalog-provider-list">
                 {visible.map(({ backend, models: providerModels }) => (
                   <ProviderCard
                     key={backend.name}
@@ -224,7 +224,7 @@ export default function ProvidersPage() {
                     onInspect={() => setSelectedName(backend.name)}
                   />
                 ))}
-              </Stack>
+              </div>
             )}
           </>
         )}

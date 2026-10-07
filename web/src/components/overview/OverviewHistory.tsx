@@ -1,4 +1,4 @@
-import { Card, Code, SimpleGrid, Skeleton, Text } from '@mantine/core'
+import { Card, Code, SimpleGrid, Skeleton, Text, Title } from '@mantine/core'
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { SeriesPoint, StatsSeriesResponse } from '../../api'
 import { PageSection } from '../PageSection'
@@ -28,6 +28,7 @@ function lastValue(points: SeriesPoint[] | undefined): number | undefined {
 function ChartCard({ title, headline, caption, children }: { title: string; headline: string; caption: string; children: React.ReactNode }) {
   return (
     <Card withBorder radius="lg" p="lg" className="overview-chart-card">
+      <Title order={3} fz={13} fw={650}>{title}</Title>
       <div className="overview-chart-headline" aria-label={title}><span className="tabular">{headline}</span><Text size="xs" c="dimmed">{caption}</Text></div>
       {children}
     </Card>
@@ -43,8 +44,14 @@ export default function OverviewHistory({ query, range, onRangeChange }: {
   const requests = series?.requests
   const requestCount = requests?.length ? Math.round(requests.reduce((sum, point) => sum + point.value, 0)) : undefined
   const successRate = weighted(series?.success_rate, requests)
-  const tokensIn = series?.tokens_in?.reduce((sum, p) => sum + p.value, 0) ?? 0
-  const tokensOut = series?.tokens_out?.reduce((sum, p) => sum + p.value, 0) ?? 0
+  const tokenTotal = (points: SeriesPoint[] | undefined) => {
+    const samples = points?.filter((point) => Number.isFinite(point.value)) ?? []
+    return samples.length ? samples.reduce((sum, point) => sum + point.value, 0) : undefined
+  }
+  const tokensIn = tokenTotal(series?.tokens_in)
+  const tokensOut = tokenTotal(series?.tokens_out)
+  const tokenCount = tokensIn === undefined && tokensOut === undefined ? undefined : (tokensIn ?? 0) + (tokensOut ?? 0)
+  const tokenLabel = (value: number | undefined) => value === undefined ? '—' : historyFormatters.count(value)
   const e2e = lastValue(series?.e2e_p50)
   const ttft = lastValue(series?.ttft_p50)
   const tps = lastValue(series?.throughput_p50)
@@ -63,19 +70,19 @@ export default function OverviewHistory({ query, range, onRangeChange }: {
       ) : (
         <div className="overview-history-grid">
           <ChartCard title="Requests" headline={requestCount === undefined ? '—' : historyFormatters.count(requestCount)} caption="upstream attempts in range">
-            <HistoryBarChart title="Request volume" description="Upstream attempts per interval" points={requests ?? []} height={180} />
+            <HistoryBarChart title="Request volume" description="Upstream attempts per interval" points={requests ?? []} height={150} />
           </ChartCard>
           <ChartCard title="Success rate" headline={successRate === undefined ? '—' : historyFormatters.percent(successRate)} caption="request-weighted average">
             <HistoryLineChart title="Success rate" description="Share of attempts that succeeded" data={successData}
-              series={[{ name: 'series0', label: 'Success', formatter: historyFormatters.percent }]} height={180} />
+              series={[{ name: 'series0', label: 'Success', formatter: historyFormatters.percent }]} height={150} />
           </ChartCard>
           <ChartCard title="Latency" headline={e2e === undefined ? '—' : historyFormatters.seconds(e2e)} caption={ttft === undefined ? 'median full response, latest' : `median full response · ${historyFormatters.seconds(ttft)} to first byte`}>
             <HistoryLineChart title="Latency" description="Median time to first byte and full response" data={latency}
-              series={[{ name: 'series0', label: 'First byte', formatter: historyFormatters.seconds }, { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds }]} height={180} />
+              series={[{ name: 'series0', label: 'First byte', formatter: historyFormatters.seconds }, { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds }]} height={150} />
           </ChartCard>
-          <ChartCard title="Tokens" headline={historyFormatters.count(tokensIn + tokensOut)} caption={`${historyFormatters.count(tokensIn)} in · ${historyFormatters.count(tokensOut)} out${tps === undefined ? '' : ` · ${historyFormatters.tps(tps)} tok/s`}`}>
+          <ChartCard title="Tokens" headline={tokenLabel(tokenCount)} caption={`${tokenLabel(tokensIn)} in · ${tokenLabel(tokensOut)} out${tps === undefined ? '' : ` · ${historyFormatters.tps(tps)} tok/s`}`}>
             <HistoryLineChart title="Token volume" description="Input and output tokens per interval" data={tokens}
-              series={[{ name: 'series0', label: 'Input', formatter: historyFormatters.count }, { name: 'series1', label: 'Output', formatter: historyFormatters.count }]} height={180} />
+              series={[{ name: 'series0', label: 'Input', formatter: historyFormatters.count }, { name: 'series1', label: 'Output', formatter: historyFormatters.count }]} height={150} />
           </ChartCard>
         </div>
       )}

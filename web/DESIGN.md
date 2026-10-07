@@ -6,23 +6,28 @@ raise it with the lead rather than silently diverging.
 
 ## 1. The direction in one paragraph
 
-A compact gateway workspace with a persistent slate sidebar, indigo interaction
+A compact gateway workspace with a scheme-aware sidebar, indigo interaction
 accents, and a clear hierarchy from page title to sections to data. Light and
-dark schemes share the same layouts. Cards use flat surfaces, quiet borders, and restrained
-rounding; charts and tables keep the emphasis on readable values.
+dark schemes share layouts. Cards use flat surfaces, quiet borders, and restrained
+rounding; charts and tables emphasize readable values.
 
-Desktop navigation is a compact 216px rail with single-line links. The app bar is
-60px high; a small client-setup utility sits at the foot of the rail. Mobile uses bottom navigation and shows the
-current page below the brand. Keep the first screen useful: show key statistics,
-primary controls, and the start of the main content before secondary details.
+Desktop navigation is a 232px rail with a label and short description. Its surface
+follows the selected scheme. The app bar is 60px high with live-update state,
+client setup, and appearance controls. Mobile uses bottom navigation and shows
+the current page below the brand. Keep the first screen useful: key statistics,
+primary controls, and the start of content appear before secondary details.
 
-Page headers end with a hairline and keep actions alongside the title on desktop.
+Page headers keep actions alongside the title on desktop. Overview metrics form
+one divided band; history sits beside provider readiness on wide screens. Provider
+cards and model entries form responsive grids, and Setup presents a numbered client
+connection workflow. Authentication/catalog readiness is distinct from measured
+request success. Preserve all-time versus selected-range labels and unknown values.
+
 Metrics use neutral icons, strong values, and secondary explanatory text; reserve
 status color for actual operational states. Initial route loads use content-shaped
-skeletons so the shell and the page hierarchy stay stable.
-
-Prefer structure over decoration: group related controls, disclose dense detail,
-and preserve complete model IDs. Gradients are limited to the small brand mark.
+skeletons so the shell and page hierarchy stay stable. Group related controls,
+disclose dense detail, and preserve complete model IDs. Gradients are limited to
+the small brand mark.
 
 ## 2. Color tokens
 
@@ -40,7 +45,7 @@ Defined in `web/src/index.css` per color-scheme, and mirrored as Mantine ramps i
 | `--chart-grid-color` | `rgba(37,51,78,.08)` | `rgba(196,210,236,.10)` | Chart gridlines |
 | `--chart-cursor-fill` | `rgba(37,51,78,.04)` | `rgba(196,210,236,.06)` | Chart crosshair band |
 
-The sidebar has its own fixed slate surface and foreground tokens in `index.css`.
+The sidebar uses scheme-aware `--sidebar`, `--sidebar-text`, and related tokens in `index.css`.
 Other components must follow the selected scheme. **Do not hard-code surface hexes in components.** Use `var(--card)`, `var(--hairline)`,
 `var(--canvas)`, or Mantine semantic colors (`--mantine-color-text`,
 `-dimmed`, `-default-border`). A hard-coded hex is a bug: it will not follow the
@@ -95,7 +100,7 @@ Never use a chart status color for a UI badge, or vice versa.
 
 - UI/body: Inter with system fallbacks; monospace for code and identifiers.
 - Use tabular figures for numbers compared in columns (`tabular` or `stat-value`).
-- Scale: `xs 12 · sm 13 · md 14 · lg 16`; page titles are 34px on desktop
+- Scale: `xs 12 · sm 13 · md 14 · lg 16`; page titles are 36px on desktop
   and 28px on mobile. Section titles remain 15–18px.
 - Keep paragraph line lengths readable. Do not reduce text sizes to fit a layout;
   let controls wrap or switch to a single column.

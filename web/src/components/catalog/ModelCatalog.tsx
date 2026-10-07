@@ -63,7 +63,7 @@ export default function ModelCatalog() {
               Available models
             </Title>
             <Text size="xs" c="dimmed">
-              Copy a model ID to use it in your client configuration.
+              Search the enabled provider catalogs, then copy the complete ID for your client.
             </Text>
           </Box>
         </Group>
@@ -116,6 +116,12 @@ export default function ModelCatalog() {
               {failed} provider catalog{failed === 1 ? ' is' : 's are'} unavailable.
             </Text>
           )}
+          <Group justify="space-between" gap="xs" mt="md" className="catalog-result-summary">
+            <Text size="sm" fw={600}>Model catalog</Text>
+            <Text size="xs" c="dimmed" aria-live="polite">
+              {visible.length ? `${visible.length} available` : 'No results'} · {enabled.length} enabled providers
+            </Text>
+          </Group>
           <div className="catalog-model-grid">
             {visible.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map((entry) => (
               <CatalogModel key={entry.id} {...entry} />
@@ -169,11 +175,11 @@ function CatalogModel({ id, providers }: { id: string; providers: string[] }) {
   const clipboard = useClipboard({ timeout: 2000 })
   return (
     <div className="catalog-model-entry">
-      <Box miw={0}>
-        <Text className="catalog-model-id">{id}</Text>
-        <Text size="xs" c="dimmed" mt={3} style={{ overflowWrap: 'anywhere' }}>
-          {providers.join(' · ')}
-        </Text>
+      <Box miw={0} className="catalog-model-entry-copy">
+        <Text className="catalog-model-id" title={id} style={{ userSelect: 'text' }}>{id}</Text>
+        <Group gap={5} mt={7} wrap="wrap" className="catalog-model-providers" aria-label="Available from providers">
+          {providers.map((provider) => <Badge key={provider} size="xs" variant="light" color="gray">{provider}</Badge>)}
+        </Group>
       </Box>
       <ActionIcon
         variant={clipboard.copied ? 'light' : 'subtle'}

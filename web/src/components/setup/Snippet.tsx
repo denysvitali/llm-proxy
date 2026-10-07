@@ -132,6 +132,7 @@ export function Snippet({
   return (
     <Box miw={0}>
       <Stack gap="sm" p="lg">
+        <Text size="sm" fw={600}>{title} configuration</Text>
         <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{description}</Text>
         <Group justify="space-between" gap="sm" wrap="wrap" className="setup-snippet-toolbar">
           <Switch
@@ -145,6 +146,7 @@ export function Snippet({
             size="sm"
             variant={copied ? 'light' : 'filled'}
             color={copied ? 'teal' : undefined}
+            style={{ minHeight: 44 }}
             leftSection={copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
             onClick={() => clipboard.copy(snippet)}
             aria-label={`Copy ${title} snippet`}

@@ -35,32 +35,36 @@ export default function ProviderCard({
   const hasAccount = ['grok', 'workbuddy', 'codex', 'zcode', 'minimax-code'].includes(backend.name)
   const authenticated = hasAccount ? backend.authConfigured : backend.hasKey
   return (
-    <Card withBorder radius="md" p={0} className="provider-card catalog-provider-card" miw={0}>
+    <Card withBorder radius="lg" p={0} className="provider-card catalog-provider-card" miw={0}>
       <div className="catalog-provider-main">
-        <Group gap="sm" wrap="nowrap" align="flex-start" className="catalog-provider-identity">
-          <span className="catalog-provider-avatar" aria-hidden>
-            {backend.name.slice(0, 2).toUpperCase()}
-          </span>
-          <Box miw={0}>
-            <Group gap="xs">
-              <Title order={3} size="h4" className="catalog-model-name">{backend.name}</Title>
-              {!backend.enabled && <Badge size="xs" variant="light" color="gray">Disabled</Badge>}
-            </Group>
-            <Text size="xs" c="dimmed" className="catalog-provider-host" mt={3}>{backend.host}</Text>
-            <Text size="xs" c="dimmed" mt={4}>
-              {backend.catalogOK ? `${fmtInt(backend.models?.length ?? 0)} models` : 'Models unavailable'}
-              {routeCount > 0 && ` · ${routeCount} explicit route${routeCount === 1 ? '' : 's'}`}
-            </Text>
-          </Box>
-        </Group>
-        <Stack gap={7} align="flex-start" className="catalog-provider-status">
-          <Box><UptimeBadge uptime={ready ? aggregate.uptime : NaN} requests={ready ? aggregate.requests : NaN} /></Box>
-          <StatusDot ok={backend.catalogOK} okLabel="Catalog ready" badLabel="Catalog unavailable" />
-          <Group gap={5} wrap="nowrap" style={{ color: authenticated ? undefined : 'var(--data-warning)' }} c={authenticated ? 'dimmed' : undefined}>
-            {hasAccount ? <IconUser size={13} aria-hidden /> : <IconKey size={13} aria-hidden />}
-            <Text size="xs">{authenticated ? (hasAccount ? 'Account connected' : 'Key configured') : 'Auth needed'}</Text>
+        <div className="catalog-provider-topline">
+          <Group gap="sm" wrap="nowrap" align="flex-start" className="catalog-provider-identity">
+            <span className="catalog-provider-avatar" aria-hidden>
+              {backend.name.slice(0, 2).toUpperCase()}
+            </span>
+            <Box miw={0}>
+              <Group gap="xs">
+                <Title order={3} size="h4" className="catalog-model-name">{backend.name}</Title>
+                {!backend.enabled && <Badge size="xs" variant="light" color="gray">Disabled</Badge>}
+              </Group>
+              <Text size="xs" c="dimmed" className="catalog-provider-host" mt={3}>{backend.host}</Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                {backend.catalogOK ? `${fmtInt(backend.models?.length ?? 0)} models` : 'Models unavailable'}
+                {routeCount > 0 && ` · ${routeCount} explicit route${routeCount === 1 ? '' : 's'}`}
+              </Text>
+            </Box>
           </Group>
-        </Stack>
+          <Stack gap={7} align="flex-end" className="catalog-provider-status">
+            <Box><UptimeBadge uptime={ready ? aggregate.uptime : NaN} requests={ready ? aggregate.requests : NaN} /></Box>
+            <Group gap="sm" wrap="wrap" justify="flex-end" className="catalog-provider-state">
+              <StatusDot ok={backend.catalogOK} okLabel="Catalog ready" badLabel="Catalog unavailable" />
+              <Group gap={5} wrap="nowrap" style={{ color: authenticated ? undefined : 'var(--data-warning)' }} c={authenticated ? 'dimmed' : undefined}>
+                {hasAccount ? <IconUser size={13} aria-hidden /> : <IconKey size={13} aria-hidden />}
+                <Text size="xs">{authenticated ? (hasAccount ? 'Account connected' : 'Key configured') : 'Auth needed'}</Text>
+              </Group>
+            </Group>
+          </Stack>
+        </div>
         <div className="catalog-provider-metrics">
           <Metric label="Requests" value={ready ? fmtInt(aggregate.requests) : '—'} />
           <Metric label="Success" value={ready && aggregate.requests > 0 ? pct(aggregate.uptime) : '—'} />
@@ -69,8 +73,8 @@ export default function ProviderCard({
         <Button
           aria-label={`Inspect ${backend.name}`}
           onClick={onInspect}
-          variant="subtle"
-          color="gray"
+          variant="light"
+          color="brand"
           size="xs"
           mih={44}
           px="xs"

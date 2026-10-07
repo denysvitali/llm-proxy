@@ -92,7 +92,7 @@ export default function App() {
     <AppShell
       layout="alt"
       header={{ height: 60 }}
-      navbar={{ width: 216, breakpoint: 'sm', collapsed: { mobile: true, desktop: isMobile } }}
+      navbar={{ width: 232, breakpoint: 'sm', collapsed: { mobile: true, desktop: isMobile } }}
       footer={isMobile ? { height: 'calc(64px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
       padding={0}
     >
@@ -100,7 +100,7 @@ export default function App() {
       {!isMobile && (
         <AppShell.Navbar component="aside" className="app-sidebar" p="md">
           <HeaderBrand />
-          <Text className="nav-caption" mt={40} mb="sm">Workspace</Text>
+          <Text className="nav-caption" mt={36} mb="sm">Gateway workspace</Text>
           <Navigation />
           <Stack mt="auto" gap="md" pt="xl">
             <Anchor component={NavLink} to="/setup" className="sidebar-connect" underline="never">
@@ -120,13 +120,15 @@ export default function App() {
         <Group h="100%" justify="space-between" px={{ base: 'md', sm: 'xl' }} wrap="nowrap">
           {isMobile ? <HeaderBrand subtitle={pageName} /> : (
             <Group gap="sm" className="header-breadcrumb">
-              <Text size="sm" c="dimmed">Workspace</Text>
+              <span className="header-workspace-dot" aria-hidden />
+              <Text size="sm" c="dimmed">Gateway</Text>
               <Text size="sm" c="dimmed" aria-hidden>/</Text>
               <Text size="sm" fw={600}>{pageName}</Text>
             </Group>
           )}
           <Group gap="md" wrap="nowrap">
             <LiveStatusBadge />
+            {!isMobile && <Anchor component={NavLink} to="/setup" className="header-connect" size="sm" underline="never"><IconTerminal2 size={16} aria-hidden /> Connect client</Anchor>}
             <ColorSchemeToggle />
           </Group>
         </Group>
@@ -215,7 +217,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
           title={description}
           aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
           <span className="nav-icon"><Icon size={20} stroke={1.7} aria-hidden /></span>
-          <span className="nav-label">{label}</span>
+          <span className="nav-label"><span>{label}</span>{!mobile && <span className="nav-description">{description}</span>}</span>
         </UnstyledButton>
       ))}
     </Box>

@@ -5,7 +5,7 @@ import {
 } from '@mantine/core'
 import {
   IconArrowUpRight, IconCheck, IconHeartbeat, IconInfoCircle,
-  IconPlugConnected, IconShieldLock,
+  IconPlugConnected, IconShieldLock, IconTerminal2,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -25,14 +25,15 @@ export default function SetupPage() {
   const q = useQuery(dashboardQueries.overview())
   const ov = q.data
   const [wrapLines, setWrapLines] = useState(true)
+  const endpoint = `${window.location.origin}/v1/messages`
   const curlSnippet = ov
-    ? `curl http://${ov.listen.replace('0.0.0.0', 'localhost')}/v1/messages \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: <key>" \\\n  -d '${JSON.stringify({ model: ov.exampleModel, messages: [{ role: 'user', content: 'Hello' }] })}'`
+    ? `curl ${endpoint} \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: <key>" \\\n  -d '${JSON.stringify({ model: ov.exampleModel, max_tokens: 128, messages: [{ role: 'user', content: 'Hello' }] })}'`
     : ''
 
   return (
     <Fade pending={q.isPending}>
       <Stack gap="lg" miw={0}>
-        <PageHeader title="Setup" subtitle="Copy a client configuration, add your proxy key, and connect." />
+        <PageHeader title="Setup" subtitle="Connect a coding client to your gateway in three steps." />
         {q.isError && (
           <Alert color="red" variant="light" icon={<IconInfoCircle size={16} />} title={ov ? 'Setup details could not be refreshed' : 'Setup details unavailable'}>
             <Stack gap="sm">
@@ -55,8 +56,14 @@ export default function SetupPage() {
               <Stack gap="lg" miw={0}>
                 <Card className="setup-client-card" p={0}>
                   <Box className="setup-section-heading">
-                    <Text size="xs" c="dimmed" fw={600} mb={5}>01 / CONFIGURE</Text>
-                    <Title order={2} size="h3">Choose your client</Title>
+                    <Group gap="sm" align="flex-start" wrap="nowrap">
+                      <span className="setup-step-number" aria-hidden="true">1</span>
+                      <Box>
+                        <Text size="xs" c="dimmed" fw={600} mb={5}>STEP 1 · CLIENT</Text>
+                        <Title order={2} size="h3">Choose your client</Title>
+                        <Text size="xs" c="dimmed" mt={5}>Each tab has a ready-to-copy setup for that client.</Text>
+                      </Box>
+                    </Group>
                   </Box>
                   <Tabs defaultValue="claude" keepMounted={false}>
                     <Tabs.List px="md" aria-label="Coding agent" className="setup-client-tabs">
@@ -75,7 +82,13 @@ export default function SetupPage() {
                     </Tabs.Panel>
                   </Tabs>
                   <Box className="setup-key-note" p="lg">
-                    <Text size="xs" c="dimmed" fw={600} mb="sm">02 / AUTHENTICATE</Text>
+                    <Group gap="sm" align="flex-start" wrap="nowrap" mb="sm">
+                      <span className="setup-step-number setup-step-number-small" aria-hidden="true">2</span>
+                      <Box>
+                        <Text size="xs" c="dimmed" fw={600} mb={4}>STEP 2 · AUTHENTICATION</Text>
+                        <Text size="sm" fw={600}>Use the correct key value for this gateway</Text>
+                      </Box>
+                    </Group>
                     <Group gap="xs" mb={6} wrap="nowrap"><IconShieldLock size={16} aria-hidden /><Text size="sm" fw={600}>{ov.authEnabled ? 'Use your proxy API key' : 'No proxy key required'}</Text></Group>
                     <Text size="xs" c="dimmed" lh={1.6}>{ov.authEnabled
                       ? 'Replace <key> with an llx_ proxy key. For Codex CLI, set LLM_PROXY_API_KEY in your terminal before launching. Manage keys with ./llm-proxy keys.'
@@ -90,7 +103,7 @@ export default function SetupPage() {
                 <ConnectionCheck />
               </Stack>
               <Stack gap="md" miw={0}>
-                <GatewayDetails overview={ov} />
+                <GatewayDetails overview={ov} endpoint={endpoint} />
                 <AccountConnections overview={ov} />
               </Stack>
             </div>
@@ -101,15 +114,24 @@ export default function SetupPage() {
   )
 }
 
-function GatewayDetails({ overview: ov }: { overview: Overview }) {
+function GatewayDetails({ overview: ov, endpoint }: { overview: Overview; endpoint: string }) {
   return (
     <Card p="lg" className="setup-gateway-card">
-      <Title order={2} size="h3" mb="md">Gateway details</Title>
-      <Stack gap="md">
-        <div><Text size="xs" c="dimmed" mb={5}>Listen address</Text><Code className="setup-identifier">{ov.listen}</Code></div>
-        <div><Text size="xs" c="dimmed" mb={5}>Authentication</Text><Badge variant="light" color={ov.authEnabled ? 'teal' : 'gray'} tt="none">{ov.authEnabled ? 'Proxy key required' : 'Disabled'}</Badge></div>
-        <div><Text size="xs" c="dimmed" mb={5}>Example model</Text><Code className="setup-identifier">{ov.exampleModel}</Code></div>
-        <Anchor component={Link} to="/models" size="sm" className="setup-inline-link">Browse models <IconArrowUpRight size={15} /></Anchor>
+      <Group gap="xs" mb="md"><IconTerminal2 size={17} aria-hidden /><Title order={2} size="h3">Gateway details</Title></Group>
+      <Stack gap="sm">
+        <div className="setup-endpoint-block">
+          <Text size="xs" c="dimmed" mb={6}>Messages endpoint</Text>
+          <Code className="setup-identifier setup-endpoint">{endpoint}</Code>
+        </div>
+        <div className="setup-context-row">
+          <Text size="xs" c="dimmed">Authentication</Text>
+          <Badge variant="light" color={ov.authEnabled ? 'teal' : 'gray'} tt="none">{ov.authEnabled ? 'Proxy key required' : 'Disabled'}</Badge>
+        </div>
+        <div className="setup-context-row setup-model-row">
+          <Text size="xs" c="dimmed">Example model</Text>
+          <Code className="setup-identifier">{ov.exampleModel}</Code>
+        </div>
+        <Anchor component={Link} to="/models" size="sm" className="setup-inline-link">Browse model catalog <IconArrowUpRight size={15} /></Anchor>
       </Stack>
     </Card>
   )
@@ -122,13 +144,13 @@ function AccountConnections({ overview }: { overview: Overview }) {
   })
   if (accounts.length === 0) return null
   return (
-    <Card p="lg">
-      <Title order={2} size="h3" mb={5}>Account connections</Title>
-      <Text size="xs" c="dimmed" mb="md">Subscriptions linked to this gateway.</Text>
+    <Card p="lg" className="setup-accounts-card">
+      <Group gap="xs" mb={5}><IconShieldLock size={16} aria-hidden /><Title order={2} size="h3">Account connections</Title></Group>
+      <Text size="xs" c="dimmed" mb="md">Account-backed providers enabled on this gateway.</Text>
       <Stack gap={0}>
         {accounts.map((provider) => (
           <div className="setup-account" key={provider.name}>
-            <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Group justify="space-between" gap="xs" wrap="wrap">
               <Text size="sm" fw={600}>{provider.label}</Text>
               <Badge variant="dot" size="sm" color={provider.signedIn ? 'teal' : 'orange'} tt="none">{provider.signedIn ? 'Connected' : 'Sign-in needed'}</Badge>
             </Group>
@@ -159,11 +181,17 @@ function ConnectionCheck() {
   }
   return (
     <Card className="setup-connection-check" p="lg">
-      <Text size="xs" c="dimmed" fw={600} mb="sm">03 / VERIFY</Text>
+      <Group gap="sm" align="flex-start" wrap="nowrap" mb="sm">
+        <span className="setup-step-number setup-step-number-small" aria-hidden="true">3</span>
+        <Box>
+          <Text size="xs" c="dimmed" fw={600} mb={4}>STEP 3 · VERIFY</Text>
+          <Title order={2} size="h3">Check your connection</Title>
+        </Box>
+      </Group>
       <Group justify="space-between" gap="md">
         <Box style={{ flex: '1 1 15rem' }}>
-          <Group gap="xs" mb={5}><IconHeartbeat size={18} aria-hidden /><Title order={2} size="h3">Check your connection</Title></Group>
-          <Text size="sm" c="dimmed">Check gateway reachability from this browser. Then launch your client to verify its key and model.</Text>
+          <Group gap="xs" mb={5}><IconHeartbeat size={18} aria-hidden /><Text size="sm" fw={600}>Browser reachability</Text></Group>
+          <Text size="sm" c="dimmed">This checks that the gateway responds from this browser. Launch your client to verify its key and model.</Text>
         </Box>
         <Button variant="light" loading={testing} onClick={() => void checkConnection()} leftSection={<IconPlugConnected size={16} />}>Check connection</Button>
       </Group>

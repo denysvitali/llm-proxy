@@ -98,12 +98,6 @@ export default function ModelsPage() {
     <Fade pending={query.isPending}>
       <Stack gap="lg" className="models-page">
         <PageHeader title="Models" subtitle="Explore available models and inspect their recorded performance." />
-        <CatalogSummary label="Model traffic summary" items={[
-          { label: 'Models tracked', value: query.data ? fmtInt(models.length) : '—', hint: 'With recorded activity' },
-          { label: 'Requests', value: query.data ? fmtInt(summary.requests) : '—', hint: 'Across all models' },
-          { label: 'First token', value: fmtSec(summary.latency), hint: 'Median model p50' },
-          { label: 'With errors', value: query.data ? fmtInt(summary.errors) : '—', hint: 'Request or tool failures', attention: summary.errors > 0 },
-        ]} />
         <Tabs defaultValue="catalog" className="catalog-workspace-tabs">
           <Tabs.List mb="md" aria-label="Model workspace">
             <Tabs.Tab value="catalog">Available models</Tabs.Tab>
@@ -111,6 +105,12 @@ export default function ModelsPage() {
           </Tabs.List>
           <Tabs.Panel value="catalog"><ModelCatalog /></Tabs.Panel>
           <Tabs.Panel value="traffic">
+            <CatalogSummary label="Model traffic summary" items={[
+              { label: 'Models tracked', value: query.data ? fmtInt(models.length) : '—', hint: 'With recorded activity' },
+              { label: 'Requests', value: query.data ? fmtInt(summary.requests) : '—', hint: 'Across all models' },
+              { label: 'First token', value: fmtSec(summary.latency), hint: 'Median model p50' },
+              { label: 'With errors', value: query.data ? fmtInt(summary.errors) : '—', hint: 'Request or tool failures', attention: summary.errors > 0 },
+            ]} />
             <Paper
               component="section"
               withBorder

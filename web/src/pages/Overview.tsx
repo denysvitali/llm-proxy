@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
-import { Accordion, Badge, Box, Button, Group, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
-import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, IconShieldCheck, IconWallet } from '@tabler/icons-react'
+import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Skeleton, Stack, Text, Title } from '@mantine/core'
+import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, IconShieldCheck, IconWallet, IconServer, IconTerminal2 } from '@tabler/icons-react'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { dashboardQueries } from '../queries'
-import type { ModelStat } from '../api'
+import type { ModelStat, Overview } from '../api'
 import GrokUsageCard from '../components/GrokUsageCard'
 import ZcodeUsageCard from '../components/ZcodeUsageCard'
 import MiniMaxUsageCard from '../components/MiniMaxUsageCard'
@@ -49,11 +49,9 @@ export default function OverviewPage() {
       output: models.reduce((sum, model) => sum + model.output_tokens, 0),
       toolCalls: models.reduce((sum, model) => sum + model.tool_calls, 0),
       toolErrors: models.reduce((sum, model) => sum + model.tool_errors, 0),
-      speed: speeds.length ? (speeds.length % 2 ? speeds[middle] : (speeds[middle - 1] + speeds[middle]) / 2) : 0,
+      speed: speeds.length ? (speeds.length % 2 ? speeds[middle] : (speeds[middle - 1] + speeds[middle]) / 2) : Number.NaN,
     }
   }, [models])
-  const enabledProviders = ov?.backends.filter((backend) => backend.enabled) ?? []
-  const attentionProviders = enabledProviders.filter((backend) => (!backend.hasKey && !backend.authConfigured) || !backend.catalogOK)
   const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax'].filter(Boolean)
 
   return (
@@ -65,18 +63,9 @@ export default function OverviewPage() {
         {ovQ.isError && <ErrorRetryCard title="Instance details unavailable" message="Configuration and subscription visibility could not be refreshed. Traffic statistics are loaded separately."
           onRetry={() => ovQ.refetch({ cancelRefetch: false })} retrying={ovQ.isFetching} />}
 
-        {ov && <div className="overview-operations" aria-label="Gateway configuration summary">
-          <Group gap="xs"><span className="overview-status-dot" aria-hidden="true" /><Text size="sm" fw={600}>{enabledProviders.length} {enabledProviders.length === 1 ? 'provider' : 'providers'} enabled</Text><Text size="xs" c="dimmed">of {ov.backends.length} configured</Text></Group>
-          <Group gap="sm">
-            <Badge variant="light" color={attentionProviders.length ? 'yellow' : 'gray'} tt="none">{attentionProviders.length ? `${attentionProviders.length} need attention` : enabledProviders.length ? 'Catalogs ready' : 'No enabled providers'}</Badge>
-            <Text size="xs" c="dimmed">Client auth {ov.authEnabled ? 'on' : 'off'}</Text>
-            <Button component={Link} to="/providers" variant="subtle" size="compact-xs" rightSection={<IconArrowUpRight size={14} />}>Manage providers</Button>
-          </Group>
-        </div>}
-
         <PageSection title="Traffic summary" description="All recorded traffic · independent of the chart range">
           {statsQ.data ? <>
-            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md">
+            <SimpleGrid cols={{ base: 2, md: 4 }} spacing={0} className="overview-metric-band">
               <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={17} />} />
               <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
                 hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={17} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
@@ -92,7 +81,10 @@ export default function OverviewPage() {
             onRetry={() => statsQ.refetch({ cancelRefetch: false })} retrying={statsQ.isFetching} /> : models.length === 0 && !statsQ.isPending ? <EmptyState icon={<IconInboxOff size={20} />} title="No model traffic yet" hint="Send a request through the proxy and per-model stats will land here." /> : null}
         </PageSection>
 
-        <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />
+        <div className="overview-monitoring-grid">
+          <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />
+          {ov && <GatewaySnapshot overview={ov} />}
+        </div>
 
         {usageNames.length > 0 && <Accordion variant="separated" radius="lg" className="overview-subscriptions">
           <Accordion.Item value="subscriptions">
@@ -128,5 +120,37 @@ export default function OverviewPage() {
         </PageSection>
       </Stack>
     </Fade>
+  )
+}
+
+function GatewaySnapshot({ overview }: { overview: Overview }) {
+  const enabled = overview.backends.filter((backend) => backend.enabled)
+  const needsAttention = (backend: Overview['backends'][number]) => (!backend.hasKey && !backend.authConfigured) || !backend.catalogOK
+  const attention = enabled.filter(needsAttention)
+  const ordered = [...attention, ...enabled.filter((backend) => !needsAttention(backend))]
+  return (
+    <aside className="overview-gateway" aria-label="Gateway configuration summary">
+      <div className="overview-gateway-heading"><Title order={2} fz={16} fw={650}>Gateway readiness</Title><IconServer size={18} aria-hidden /></div>
+      <Card className="overview-gateway-card" p="lg">
+        <Text size="xs" c="dimmed">Enabled providers</Text>
+        <div className="overview-gateway-total"><Text className="stat-value" fz={36} fw={650} lh={1.2}>{enabled.length}</Text><Text size="sm" c="dimmed">/ {overview.backends.length} configured</Text></div>
+        <Badge color={attention.length ? 'yellow' : 'gray'} variant="light" tt="none" mt="sm">{attention.length ? `${attention.length} need attention` : enabled.length ? 'Catalogs ready' : 'No enabled providers'}</Badge>
+        <Text size="xs" c="dimmed" mt="md" lh={1.5}>Authentication and catalog availability. Request success is shown in the traffic breakdown.</Text>
+        <div className="overview-readiness-list">
+          {ordered.slice(0, 4).map((backend) => <div key={backend.name} className="overview-readiness-row">
+            <Text size="sm" fw={550} className="overview-identifier">{backend.name}</Text>
+            <Text size="xs" className="overview-readiness-status" data-attention={needsAttention(backend)}>{!backend.hasKey && !backend.authConfigured ? 'Auth needed' : !backend.catalogOK ? 'Catalog unavailable' : 'Catalog ready'}</Text>
+          </div>)}
+        </div>
+        <Button component={Link} to="/providers" fullWidth variant="default" size="sm" mt="md" rightSection={<IconArrowUpRight size={15} />}>Manage providers{ordered.length > 4 ? ` (${enabled.length})` : ''}</Button>
+        <div className="overview-gateway-auth"><IconShieldCheck size={16} aria-hidden /><Text size="xs">Client auth <Text span inherit fw={600}>{overview.authEnabled ? 'on' : 'off'}</Text></Text></div>
+      </Card>
+      <Card p="lg" className="overview-connect-card">
+        <IconTerminal2 size={20} aria-hidden />
+        <Text size="sm" fw={650} mt="sm">One gateway. Every client.</Text>
+        <Text size="xs" c="dimmed" lh={1.6} mt={4}>Connect Claude Code, Codex CLI, or any compatible API client.</Text>
+        <Button component={Link} to="/setup" variant="light" fullWidth mt="md" size="sm" rightSection={<IconArrowUpRight size={15} />}>Connect a client</Button>
+      </Card>
+    </aside>
   )
 }
