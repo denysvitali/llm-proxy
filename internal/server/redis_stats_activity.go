@@ -91,7 +91,9 @@ func (r *redisStats) activity(ctx context.Context, failures bool) ([]redisActivi
 	if failures {
 		key = r.errorsKey()
 	}
-	members, err := r.client.ZRevRange(ctx, key, 0, maxRecentErrors-1).Result()
+	members, err := r.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key: key, Start: 0, Stop: maxRecentErrors - 1, Rev: true,
+	}).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -154,8 +156,12 @@ func (st *Stats) request(ctx context.Context, id string) (InspectedRequest, bool
 	// Read both retained feeds in one transaction so concurrent completions
 	// cannot move a request between the snapshots during detail lookup.
 	pipe := st.redis.client.TxPipeline()
-	requests := pipe.ZRevRange(ctx, st.redis.requestsKey(), 0, maxRecentErrors-1)
-	failures := pipe.ZRevRange(ctx, st.redis.errorsKey(), 0, maxRecentErrors-1)
+	requests := pipe.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key: st.redis.requestsKey(), Start: 0, Stop: maxRecentErrors - 1, Rev: true,
+	})
+	failures := pipe.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key: st.redis.errorsKey(), Start: 0, Stop: maxRecentErrors - 1, Rev: true,
+	})
 	if _, err := pipe.Exec(ctx); err != nil {
 		return InspectedRequest{}, false, err
 	}

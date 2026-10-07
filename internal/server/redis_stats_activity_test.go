@@ -248,7 +248,7 @@ type activityContextHook struct {
 func (h *activityContextHook) DialHook(next redis.DialHook) redis.DialHook { return next }
 func (h *activityContextHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
-		if cmd.Name() == "zrevrange" {
+		if cmd.Name() == "zrange" {
 			h.deadline, _ = ctx.Deadline()
 			if h.wait {
 				<-ctx.Done()
@@ -261,7 +261,7 @@ func (h *activityContextHook) ProcessHook(next redis.ProcessHook) redis.ProcessH
 func (h *activityContextHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		for _, cmd := range cmds {
-			if cmd.Name() == "zrevrange" {
+			if cmd.Name() == "zrange" {
 				h.deadline, _ = ctx.Deadline()
 			}
 		}
