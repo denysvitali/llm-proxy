@@ -163,6 +163,18 @@ func runServe(cfg *config.Config) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if minimaxAutoCheckinEnabled(cfg) {
+		checkinCtx, cancelCheckin := context.WithCancel(ctx)
+		checkinDone := make(chan struct{})
+		go func() {
+			defer close(checkinDone)
+			accounts.MiniMaxCode.RunAutoCheckin(checkinCtx, log)
+		}()
+		defer func() {
+			cancelCheckin()
+			<-checkinDone
+		}()
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		log.WithField("listen", cfg.Server.Listen).
@@ -183,6 +195,18 @@ func runServe(cfg *config.Config) error {
 		}
 		return err
 	}
+}
+
+func minimaxAutoCheckinEnabled(cfg *config.Config) bool {
+	if cfg.MiniMaxCodeAutoCheckin != nil && !*cfg.MiniMaxCodeAutoCheckin {
+		return false
+	}
+	for _, bc := range cfg.EnabledBackends() {
+		if bc.Type == "minimax-code" {
+			return true
+		}
+	}
+	return false
 }
 
 func zcodeEnabled(cfg *config.Config) bool {

@@ -230,6 +230,12 @@ func (m *Manager) checkinStatus(ctx context.Context, token, userID string) (*Che
 // ClaimCheckin is the only reward mutation. It validates fresh eligibility and
 // sends at most one POST, even if the upstream response is lost or unauthorized.
 func (m *Manager) ClaimCheckin(ctx context.Context) (*CheckinClaim, error) {
+	return m.claimCheckin(ctx, nil)
+}
+
+// claimCheckin runs beforeClaim after fresh eligibility and account checks,
+// immediately before the only reward mutation.
+func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID string) error) (*CheckinClaim, error) {
 	if !m.claimMu.TryLock() {
 		return nil, ErrCheckinInProgress
 	}
@@ -258,6 +264,14 @@ func (m *Manager) ClaimCheckin(ctx context.Context) (*CheckinClaim, error) {
 	current, err := m.Store.Load()
 	if err != nil || current == nil || current.AccessToken != token {
 		return nil, errors.New("MiniMax Code account changed; refresh before checking in")
+	}
+	if beforeClaim != nil {
+		if err := beforeClaim(userID); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	body, err := m.accountRequest(ctx, "/minimax-cloud/api/v1/signin/claim", http.MethodPost, "{}", token, userID, true)
 	if err != nil {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/denysvitali/llm-proxy/internal/config"
 )
 
 func TestExecuteNoArgs(t *testing.T) {
@@ -56,5 +58,25 @@ func TestVersionCommand(t *testing.T) {
 
 	if got := strings.TrimSpace(string(out)); got != "llm-proxy dev" {
 		t.Errorf("version output = %q, want %q", got, "llm-proxy dev")
+	}
+}
+
+func TestMiniMaxAutoCheckinEnabled(t *testing.T) {
+	no := false
+	for _, tc := range []struct {
+		name string
+		cfg  config.Config
+		want bool
+	}{
+		{"absent backend", config.Config{}, false},
+		{"enabled by default", config.Config{Backends: []config.BackendConfig{{Type: "minimax-code"}}}, true},
+		{"disabled backend", config.Config{Backends: []config.BackendConfig{{Type: "minimax-code", Enabled: &no}}}, false},
+		{"opt out", config.Config{Backends: []config.BackendConfig{{Type: "minimax-code"}}, MiniMaxCodeAutoCheckin: &no}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := minimaxAutoCheckinEnabled(&tc.cfg); got != tc.want {
+				t.Fatalf("enabled = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

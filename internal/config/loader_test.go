@@ -374,3 +374,31 @@ func TestIsEnabledNilMeansTrue(t *testing.T) {
 		t.Error("Enabled=false should be disabled")
 	}
 }
+
+func TestLoadMiniMaxAutoCheckin(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml, env string
+		want            bool
+	}{
+		{"default", "", "", true},
+		{"file opt out", "minimax_code_auto_checkin: false\n", "", false},
+		{"environment opt out", "", "false", false},
+		{"environment overrides file", "minimax_code_auto_checkin: false\n", "true", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateEnv(t)
+			isolateHome(t)
+			t.Setenv("LLM_PROXY_CONFIG", writeFile(t, "config.yaml", "log_level: warn\n"+tc.yaml))
+			if tc.env != "" {
+				t.Setenv("LLM_PROXY_MINIMAX_CODE_AUTO_CHECKIN", tc.env)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.MiniMaxCodeAutoCheckin == nil || *cfg.MiniMaxCodeAutoCheckin != tc.want {
+				t.Fatalf("auto check-in = %v, want %v", cfg.MiniMaxCodeAutoCheckin, tc.want)
+			}
+		})
+	}
+}

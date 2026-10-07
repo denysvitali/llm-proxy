@@ -106,11 +106,13 @@ type Config struct {
 	// backend. It is populated by browser login and is not an API key.
 	ZCodeAuthFile string `mapstructure:"zcode_auth_file"`
 	// MiniMaxCodeAuthFile stores the MiniMax Code OAuth device session.
-	MiniMaxCodeAuthFile string          `mapstructure:"minimax_code_auth_file"`
-	Server              ServerConfig    `mapstructure:"server"`
-	Auth                AuthConfig      `mapstructure:"auth"`
-	Backends            []BackendConfig `mapstructure:"backends"`
-	Stats               StatsConfig     `mapstructure:"stats"`
+	MiniMaxCodeAuthFile string `mapstructure:"minimax_code_auth_file"`
+	// MiniMaxCodeAutoCheckin defaults to true for an enabled MiniMax backend.
+	MiniMaxCodeAutoCheckin *bool           `mapstructure:"minimax_code_auto_checkin"`
+	Server                 ServerConfig    `mapstructure:"server"`
+	Auth                   AuthConfig      `mapstructure:"auth"`
+	Backends               []BackendConfig `mapstructure:"backends"`
+	Stats                  StatsConfig     `mapstructure:"stats"`
 
 	// Routes maps inbound model name -> explicit route. Models not listed are
 	// matched against each enabled backend's catalog (first match wins in

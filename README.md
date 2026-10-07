@@ -153,8 +153,11 @@ snapshot cannot be fetched, the catalog falls back to `MiniMax-M3`,
 The dashboard shows MiniMax credit balances, Token Plan remaining quota and reset
 times, and the seven-day check-in schedule. Open **Overview → Subscription usage**
 or inspect MiniMax on **Providers** to check in and claim the available daily
-reward. Check-in only happens when you click the button; dashboard reads never
-claim rewards. Reward amounts, promotional bonuses, eligibility, expiry, and
+reward. The server also automatically checks in at startup and checks eligibility
+every hour while the MiniMax backend is enabled and signed in. Dashboard reads
+never claim rewards. Set `minimax_code_auto_checkin: false` (or
+`LLM_PROXY_MINIMAX_CODE_AUTO_CHECKIN=false`) to disable the background schedule.
+Reward amounts, promotional bonuses, eligibility, expiry, and
 quota resets come from MiniMax. Displayed reward totals already include bonuses.
 Unknown balances or unavailable quota are shown separately from zero.
 
@@ -164,6 +167,13 @@ so one can remain visible when the other service is unavailable.
 automatically retrying it. Both endpoints use the configured proxy authentication
 and stored MiniMax session. Account services use MiniMax's global account and
 platform hosts; `base_url` only overrides the inference gateway.
+
+Automatic claims use an account-specific UTC daily attempt marker in
+`<minimax_code_auth_file>.checkin/`, created before submitting the claim. Keep this
+directory on the same shared persistent volume as the session so replicas and
+restarts cannot repeat an automatic claim after an uncertain response. Failures
+before submission can be checked again on the next hourly run; an uncertain
+submission waits until the next UTC day. The manual button remains available.
 
 These account integrations follow the MIT-licensed
 [MiniMax Code source](https://github.com/MiniMax-AI/minimax-code/tree/0f6ad5229ff1f144c72dd15a4b2d520feb26cd3d),
@@ -776,6 +786,7 @@ flags are applied afterwards.
 | `codex_auth_file`            | `LLM_PROXY_CODEX_AUTH_FILE`        | `~/.config/llm-proxy/codex-auth.json` | ChatGPT session created by the Codex device-code sign-in flow. |
 | `zcode_auth_file`            | `LLM_PROXY_ZCODE_AUTH_FILE`        | `~/.config/llm-proxy/zcode-auth.json` | ZCode session created by the browser sign-in flow. |
 | `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
+| `minimax_code_auto_checkin` | `LLM_PROXY_MINIMAX_CODE_AUTO_CHECKIN` | `true` | Automatically claim eligible MiniMax daily rewards at startup and on hourly checks. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
 | `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |

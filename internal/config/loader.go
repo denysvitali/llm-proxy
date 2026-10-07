@@ -39,6 +39,7 @@ func Load() (*Config, error) {
 		v.SetDefault("minimax_code_auth_file", filepath.Join(home, ".config", "llm-proxy", "minimax-code-auth.json"))
 	}
 	v.SetDefault("log_level", "info")
+	v.SetDefault("minimax_code_auto_checkin", true)
 	v.SetDefault("log_format", "text")
 
 	path := os.Getenv("LLM_PROXY_CONFIG")
