@@ -11,7 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// redisStats stores the dashboard's aggregate counters and time buckets in a
+// redisStats stores the dashboard's counters, time buckets, and activity in a
 // shared Redis instance. Prometheus metrics remain process-local because the
 // ServiceMonitor already scrapes every proxy pod independently.
 type redisStats struct {
@@ -27,6 +27,7 @@ func newRedisStats(url, prefix string) (*redisStats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse stats.redis_url: %w", err)
 	}
+	options.ContextTimeoutEnabled = true
 	if prefix == "" {
 		prefix = "llm-proxy:stats:"
 	}
@@ -93,6 +94,9 @@ func (r *redisStats) record(ctx context.Context, a completedAttempt, retentionDa
 	}
 	if a.throughput > 0 {
 		pipe.HIncrBy(ctx, r.modelKey(modelName), bucketPrefix+"tps:"+strconv.Itoa(histIndex(tpsEdges, a.throughput)), 1)
+	}
+	if err := r.queueActivity(ctx, pipe, a); err != nil {
+		return err
 	}
 	return r.commit(ctx, pipe, modelName, retentionDays)
 }

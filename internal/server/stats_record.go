@@ -33,6 +33,17 @@ func (a completedAttempt) counters() map[string]int64 {
 	return counters
 }
 
+func (a completedAttempt) errorEvent() UpstreamErrorEvent {
+	message := a.message
+	if message == "" {
+		message = "upstream returned status " + a.status
+	}
+	return UpstreamErrorEvent{
+		At: a.at, Backend: a.backend, Model: a.model, Status: a.status,
+		Message: message, RequestID: a.request.ID,
+	}
+}
+
 func (st *Stats) recordAttempt(a completedAttempt) {
 	st.recordAttemptMetrics(a)
 	st.recordAttemptMemory(a)
@@ -40,15 +51,8 @@ func (st *Stats) recordAttempt(a completedAttempt) {
 	a.request.At, a.request.Status, a.request.Error = a.at, a.status, a.message
 	st.recordRequest(a.request)
 	if !a.success {
-		message := a.message
-		if message == "" {
-			message = "upstream returned status " + a.status
-		}
 		st.recentMu.Lock()
-		st.recent = append(st.recent, UpstreamErrorEvent{
-			At: a.at, Backend: a.backend, Model: a.model, Status: a.status,
-			Message: message, RequestID: a.request.ID,
-		})
+		st.recent = append(st.recent, a.errorEvent())
 		if n := len(st.recent); n > maxRecentErrors {
 			st.recent = st.recent[n-maxRecentErrors:]
 		}

@@ -104,7 +104,7 @@ export default function OverviewPage() {
 
         {statsQ.data && <OverviewTraffic models={models} />}
 
-        <PageSection title="Recent activity" description="Instance-local upstream attempts · refreshes every 30 seconds · independent of chart range">
+        <PageSection title="Recent activity" description="Retained upstream attempts · updates live and every 30 seconds · independent of chart range">
           <div className="overview-activity-grid">
             <Stack gap="sm">
               {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}

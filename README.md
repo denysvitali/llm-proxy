@@ -815,11 +815,15 @@ attempt's outcome; the access log gains the matching `trace_id`.
 
 For an HA deployment, configure every proxy instance with the same
 `stats.redis_url` and `stats.redis_key_prefix`. Redis/Valkey becomes the
-shared source for dashboard counters, latency histograms, time series, and
+shared source for dashboard counters, latency histograms, time series, recent
+failure and request feeds, request inspection details, and
 cross-instance live-update notifications. Prometheus metrics remain
 per-instance and should continue to be scraped from every replica. If Redis is
-not configured or becomes unavailable, the proxy continues serving requests
-and dashboard reads fall back to process-local metrics.
+not configured, dashboard reads use process-local stats. If Redis becomes
+unavailable, the proxy continues serving requests; aggregate statistics fall
+back to process-local metrics, while the shared failure feed, request feed, and
+inspection endpoints return HTTP 503 rather than an incomplete local history
+or a misleading missing-request response.
 
 Per-backend fields have no flat environment-variable form; configure them in
 the YAML file.
@@ -903,6 +907,12 @@ The dashboard's recent-request history retains only request metadata and
 bounded upstream error summaries. Request bodies are never retained or exposed
 through the dashboard, so prompts, tool inputs, and client credentials do not
 become proxy-owned history.
+With Redis configured, every replica serves the same latest 50 requests and
+latest 50 failures, ordered by completion timestamp with a stable ID tie-break.
+Inspection details for retained failures remain available even after successful
+traffic evicts them from the recent-request feed. Once an inspection has left
+both bounded feeds, its detail endpoint returns HTTP 404. Without Redis, these
+feeds retain their existing process-local behavior.
 
 ## Development
 

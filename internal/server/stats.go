@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -37,13 +38,13 @@ type Stats struct {
 	models map[string]*modelStats
 	cfg    config.StatsConfig
 
-	// recentMu protects recent. It is a bounded ring of the latest upstream
+	// recentMu protects the local failure and inspection rings. It retains
+	// the latest upstream
 	// failures for the dashboard's "recent errors" view; older entries roll
 	// off instead of growing without bound.
-	recentMu   sync.Mutex
-	recent     []UpstreamErrorEvent
-	inspected  []InspectedRequest
-	requestSeq atomic.Uint64
+	recentMu  sync.Mutex
+	recent    []UpstreamErrorEvent
+	inspected []InspectedRequest
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -279,13 +280,12 @@ type InspectedRequest struct {
 	Error          string    `json:"error,omitempty"`
 }
 
-// maxRecentErrors caps the shared ring of recent upstream failures.
+// maxRecentErrors caps each recent failure or inspection feed.
 const maxRecentErrors = 50
 
 func (st *Stats) inspect(tr *tracker, proxyID, kind string) {
-	seq := st.requestSeq.Add(1)
 	tr.request = InspectedRequest{
-		ID: fmt.Sprintf("%d-%d", time.Now().UnixNano(), seq), ProxyRequestID: proxyID,
+		ID: rand.Text(), ProxyRequestID: proxyID,
 		Backend: tr.labels[0], Model: tr.labels[1], Kind: kind,
 	}
 }

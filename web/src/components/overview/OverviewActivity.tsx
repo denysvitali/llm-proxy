@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Alert, Badge, Box, Button, Card, Group, Loader, Modal, Paper, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconClock, IconListDetails, IconPointFilled, IconServerOff, IconShieldCheck } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchRequest, type InspectedRequest, type UpstreamErrorEvent } from '../../api'
+import { ApiError, fetchRequest, type InspectedRequest, type UpstreamErrorEvent } from '../../api'
 import { fmtInt } from '../../format'
 import { EmptyState } from '../EmptyState'
 import { statusSeverity, severityColor, statusDescription } from '../../lib/httpStatus'
@@ -57,7 +57,7 @@ export function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] })
       </div>
       {errors.length === 0 ? (
         <EmptyState icon={<IconShieldCheck size={20} />} title="No recent upstream errors"
-          hint="No failures are present in this instance's retained error history. This is separate from the chart time range." />
+          hint="No failures are present in the retained error history. This is separate from the chart time range." />
       ) : (
         <Stack gap={6}>
           {shown.map((e, i) => (
@@ -122,7 +122,7 @@ export function RecentRequestsCard({
         <EmptyState
           icon={<IconListDetails size={20} stroke={1.6} />}
           title="No requests captured yet"
-          hint="The latest upstream attempts appear here once this proxy instance serves traffic."
+          hint="The latest upstream attempts appear here once the proxy serves traffic."
         />
       ) : isMobile ? (
         <Stack gap={6}>
@@ -190,7 +190,16 @@ function RequestInspectButton({ id }: { id: string }) {
         closeButtonProps={{ 'aria-label': 'Close request inspection' }}
       >
         {query.isPending ? <Group justify="center" py="xl" role="status"><Loader size="sm" aria-hidden="true" /></Group> : query.isError ? (
-          <Alert color="red">This request is no longer available. The in-memory history keeps the latest 50 attempts per instance.</Alert>
+          query.error instanceof ApiError && query.error.status === 404 ? (
+            <Alert color="red">This request is no longer available in the retained history.</Alert>
+          ) : (
+            <Alert color="red" title="Couldn't load request details">
+              <Stack gap="xs" align="flex-start">
+                <Text size="sm">Request history is temporarily unavailable. Try again.</Text>
+                <Button variant="light" onClick={() => query.refetch({ cancelRefetch: false })} loading={query.isFetching}>Retry</Button>
+              </Stack>
+            </Alert>
+          )
         ) : query.data ? <RequestDetail request={query.data} /> : null}
       </Modal>
     </>

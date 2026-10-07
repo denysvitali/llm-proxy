@@ -14,16 +14,30 @@ func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 
 // handleStatsErrors serves GET /api/stats/errors with the most recent
 // upstream failures (newest first), for the dashboard's error feed.
-func (s *Server) handleStatsErrors(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"errors": s.stats.RecentUpstreamErrors()})
+func (s *Server) handleStatsErrors(w http.ResponseWriter, r *http.Request) {
+	events, err := s.stats.recentUpstreamErrors(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shared request history unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"errors": events})
 }
 
-func (s *Server) handleRequests(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"requests": s.stats.RecentRequests()})
+func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
+	requests, err := s.stats.recentRequests(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shared request history unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requests": requests})
 }
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
-	req, ok := s.stats.Request(r.PathValue("id"))
+	req, ok, err := s.stats.request(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shared request history unavailable"})
+		return
+	}
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "request not found"})
 		return
