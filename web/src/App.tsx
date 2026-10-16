@@ -99,13 +99,13 @@ export default function App() {
       <Anchor href="#main" className="app-skip-link">Skip to content</Anchor>
       {!isMobile && (
         <AppShell.Navbar component="aside" className="app-sidebar" p="md">
-          <HeaderBrand />
-          <Text className="nav-caption" mt={36} mb="sm">Gateway workspace</Text>
+          <div className="sidebar-identity"><HeaderBrand /><span className="sidebar-edition">CONTROL CENTER</span></div>
+          <Text className="nav-caption" mt={36} mb="sm">WORKSPACE / 01—04</Text>
           <Navigation />
           <Stack mt="auto" gap="md" pt="xl">
             <Anchor component={NavLink} to="/setup" className="sidebar-connect" underline="never">
               <IconTerminal2 size={18} aria-hidden />
-              <span><strong>Connect a client</strong><span>Endpoints & examples</span></span>
+              <span className="sidebar-connect-copy"><small>READY TO BUILD?</small><strong>Connect a client</strong><span>Get your endpoint & snippets</span></span>
               <IconArrowUpRight size={15} aria-hidden />
             </Anchor>
             <UnstyledButton className="shortcut-trigger" onClick={() => setShortcutsOpen(true)}>
@@ -209,7 +209,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   const { pathname } = useLocation()
   return (
     <Box component="nav" aria-label="Main navigation" className={mobile ? 'bottom-navigation' : 'side-navigation'}>
-      {NAV.map(({ path, label, description, icon: Icon }) => (
+      {NAV.map(({ path, label, description, icon: Icon }, index) => (
         <UnstyledButton key={path} component={NavLink} to={path}
           className={mobile ? 'bottom-nav-link' : 'side-nav-link'}
           data-active={isActiveNavPath(pathname, path) || undefined}
@@ -218,6 +218,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
           aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
           <span className="nav-icon"><Icon size={20} stroke={1.7} aria-hidden /></span>
           <span className="nav-label"><span>{label}</span>{!mobile && <span className="nav-description">{description}</span>}</span>
+          {!mobile && <span className="nav-route-index" aria-hidden>0{index + 1}</span>}
         </UnstyledButton>
       ))}
     </Box>

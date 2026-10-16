@@ -32,7 +32,7 @@ export default function SetupPage() {
 
   return (
     <Fade pending={q.isPending}>
-      <Stack gap="lg" miw={0}>
+      <Stack gap="lg" miw={0} className="setup-page">
         <PageHeader title="Setup" subtitle="Connect a coding client to your gateway in three steps." />
         {q.isError && (
           <Alert color="red" variant="light" icon={<IconInfoCircle size={16} />} title={ov ? 'Setup details could not be refreshed' : 'Setup details unavailable'}>
@@ -52,9 +52,14 @@ export default function SetupPage() {
         )}
         {ov && (
           <>
+            <nav className="setup-sequence" aria-label="Connection steps">
+              <a href="#setup-client"><span>01</span><div><strong>Choose a client</strong><small>Copy a configuration</small></div></a>
+              <a href="#setup-auth"><span>02</span><div><strong>Set authentication</strong><small>Use your gateway key</small></div></a>
+              <a href="#setup-verify"><span>03</span><div><strong>Verify connection</strong><small>Check your first request</small></div></a>
+            </nav>
             <div className="setup-layout">
               <Stack gap="lg" miw={0}>
-                <Card className="setup-client-card" p={0}>
+                <Card className="setup-client-card" id="setup-client" p={0}>
                   <Box className="setup-section-heading">
                     <Group gap="sm" align="flex-start" wrap="nowrap">
                       <span className="setup-step-number" aria-hidden="true">1</span>
@@ -81,7 +86,7 @@ export default function SetupPage() {
                       <Snippet title="Other / curl" description="Replace the placeholders, then run from a terminal that can reach this address." snippet={curlSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
                     </Tabs.Panel>
                   </Tabs>
-                  <Box className="setup-key-note" p="lg">
+                  <Box className="setup-key-note" id="setup-auth" p="lg">
                     <Group gap="sm" align="flex-start" wrap="nowrap" mb="sm">
                       <span className="setup-step-number setup-step-number-small" aria-hidden="true">2</span>
                       <Box>
@@ -180,7 +185,7 @@ function ConnectionCheck() {
     }
   }
   return (
-    <Card className="setup-connection-check" p="lg">
+    <Card className="setup-connection-check" id="setup-verify" p="lg">
       <Group gap="sm" align="flex-start" wrap="nowrap" mb="sm">
         <span className="setup-step-number setup-step-number-small" aria-hidden="true">3</span>
         <Box>

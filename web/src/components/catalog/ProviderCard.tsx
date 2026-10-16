@@ -65,10 +65,13 @@ export default function ProviderCard({
             </Group>
           </Stack>
         </div>
+        <div className="provider-traffic-region">
+        <Text className="workspace-kicker">RECORDED TRAFFIC</Text>
         <div className="catalog-provider-metrics">
           <Metric label="Requests" value={ready ? fmtInt(aggregate.requests) : '—'} />
           <Metric label="Success" value={ready && aggregate.requests > 0 ? pct(aggregate.uptime) : '—'} />
           <Metric label="Tokens" value={ready ? fmtInt(tokenTotal) : '—'} />
+        </div>
         </div>
         <Button
           aria-label={`Inspect ${backend.name}`}

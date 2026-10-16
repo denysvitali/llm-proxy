@@ -99,10 +99,13 @@ export default function ModelsPage() {
       <Stack gap="lg" className="models-page">
         <PageHeader title="Models" subtitle="Explore available models and inspect their recorded performance." />
         <Tabs defaultValue="catalog" className="catalog-workspace-tabs">
-          <Tabs.List mb="md" aria-label="Model workspace">
-            <Tabs.Tab value="catalog">Available models</Tabs.Tab>
-            <Tabs.Tab value="traffic">Recorded traffic</Tabs.Tab>
+          <div className="discovery-workspace-heading">
+            <div><Text className="workspace-kicker">MODEL WORKSPACE</Text><Title order={2} size="h3">Discover. Compare. Route.</Title><Text size="sm" c="dimmed" mt={4}>Browse configured availability or investigate real request performance.</Text></div>
+          <Tabs.List aria-label="Model workspace">
+            <Tabs.Tab value="catalog"><span className="workspace-tab-number" aria-hidden>01</span>Available models</Tabs.Tab>
+            <Tabs.Tab value="traffic"><span className="workspace-tab-number" aria-hidden>02</span>Recorded traffic</Tabs.Tab>
           </Tabs.List>
+          </div>
           <Tabs.Panel value="catalog"><ModelCatalog /></Tabs.Panel>
           <Tabs.Panel value="traffic">
             <CatalogSummary label="Model traffic summary" items={[

@@ -63,9 +63,10 @@ export default function OverviewPage() {
         {ovQ.isError && <ErrorRetryCard title="Instance details unavailable" message="Configuration and subscription visibility could not be refreshed. Traffic statistics are loaded separately."
           onRetry={() => ovQ.refetch({ cancelRefetch: false })} retrying={ovQ.isFetching} />}
 
+        <div className="overview-command-grid">
         <PageSection title="Traffic summary" description="All recorded traffic · independent of the chart range">
           {statsQ.data ? <>
-            <SimpleGrid cols={{ base: 2, md: 4 }} spacing={0} className="overview-metric-band">
+            <SimpleGrid cols={{ base: 2, md: 2 }} spacing={0} className="overview-metric-band">
               <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={17} />} />
               <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
                 hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={17} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
@@ -80,10 +81,12 @@ export default function OverviewPage() {
           {statsQ.isError ? <ErrorRetryCard title="Couldn't load proxy statistics" message={statsQ.error instanceof Error ? `Model statistics are temporarily unavailable. ${statsQ.error.message}` : 'Model statistics are temporarily unavailable.'}
             onRetry={() => statsQ.refetch({ cancelRefetch: false })} retrying={statsQ.isFetching} /> : models.length === 0 && !statsQ.isPending ? <EmptyState icon={<IconInboxOff size={20} />} title="No model traffic yet" hint="Send a request through the proxy and per-model stats will land here." /> : null}
         </PageSection>
+        {ov && <GatewaySnapshot overview={ov} />}
+        </div>
 
         <div className="overview-monitoring-grid">
+          <div className="workspace-section-label"><span>TRAFFIC INTELLIGENCE</span><Text size="xs" c="dimmed">Explore request volume over time</Text></div>
           <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />
-          {ov && <GatewaySnapshot overview={ov} />}
         </div>
 
         {usageNames.length > 0 && <Accordion variant="separated" radius="lg" className="overview-subscriptions">
