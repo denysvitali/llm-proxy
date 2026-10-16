@@ -17,6 +17,9 @@
   margin: 5px 0;
 }
 .catalog-summary-item[data-attention='true'] .catalog-summary-number { color: var(--data-warning); }
+.catalog-workspace-tabs > .mantine-Tabs-list { gap: 6px; border-bottom: 1px solid var(--hairline); }
+.catalog-workspace-tabs > .mantine-Tabs-list .mantine-Tabs-tab { padding-inline: 18px; }
+.catalog-workspace-tabs > .mantine-Tabs-list .mantine-Tabs-tab[data-active] { background: var(--nav-active); border-radius: 8px 8px 0 0; }
 .catalog-workspace-tabs .mantine-Tabs-tab { min-height: 44px; font-weight: 600; }
 .catalog-section-icon {
   display: grid;
@@ -30,6 +33,13 @@
 }
 .catalog-heading-title { flex: 1; min-width: 0; }
 .catalog-search-row { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 10px; }
+.catalog-search-row, .catalog-traffic-toolbar, .catalog-provider-toolbar { padding: 12px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--sunken); }
+.catalog-summary-item { background: var(--card); }
+.catalog-summary-item > :first-child { letter-spacing: .04em; }
+.catalog-model-entry { transition: background-color 120ms ease; }
+@media (hover: hover) {
+  .catalog-model-entry:hover { border-color: var(--mantine-primary-color-filled); background: var(--interactive-card-hover); }
+}
 .catalog-search-row input,
 .catalog-traffic-toolbar input,
 .catalog-provider-toolbar input { min-height: 44px; }
@@ -80,6 +90,10 @@
 .catalog-mobile-metrics { padding: 12px 0 0; border-top: 1px solid var(--hairline); }
 .catalog-provider-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 190px 170px; gap: 10px; }
 .catalog-provider-card { overflow: hidden; }
+.catalog-provider-topline { padding-bottom: 14px; border-bottom: 1px solid var(--hairline); }
+.catalog-provider-card .catalog-provider-avatar { width: 40px; height: 40px; color: var(--mantine-primary-color-filled); background: var(--nav-active); border-color: transparent; }
+.catalog-provider-card .catalog-provider-metrics { border-top: 0; padding-top: 0; }
+.catalog-provider-card:focus-within { border-color: var(--mantine-primary-color-filled); }
 .catalog-provider-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .catalog-provider-main {
   display: grid;

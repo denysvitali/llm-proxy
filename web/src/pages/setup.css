@@ -9,7 +9,11 @@
 .setup-gateway-card,
 .setup-accounts-card,
 .setup-connection-check { border-color: var(--hairline); }
-.setup-section-heading { padding: 20px 24px; }
+.setup-section-heading { padding: 20px 24px; background: color-mix(in srgb, var(--sunken) 45%, var(--card)); }
+.setup-client-card { border-top: 3px solid color-mix(in srgb, var(--mantine-primary-color-filled) 45%, var(--hairline)); }
+.setup-gateway-card .setup-context-row + .setup-context-row { border-top: 1px solid var(--hairline); padding-top: 8px; margin-top: 8px; }
+.setup-accounts-card .setup-account { padding: 14px 0; }
+.setup-connection-check { border-style: dashed; }
 .setup-step-number {
   display: grid;
   place-items: center;

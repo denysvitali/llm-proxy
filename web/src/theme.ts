@@ -30,16 +30,16 @@ const dark: [string, string, string, string, string, string, string, string, str
 
 // Indigo carries interaction; charts use palette.ts.
 const brand: [string, string, string, string, string, string, string, string, string, string] = [
-  '#f0f1ff',
-  '#e1e2ff',
-  '#c6c7ff',
-  '#aeacff',
-  '#9693ff', // 4 — dark-mode accent
-  '#7b73ed',
-  '#5b51df', // 6 — light-mode accent
-  '#4d42c5',
-  '#4036a2',
-  '#352f80',
+  '#eef2ff',
+  '#e0e7ff',
+  '#c7d2fe',
+  '#a5b4fc',
+  '#9298f8', // 4 — dark-mode accent
+  '#7478ee',
+  '#5556d9', // 6 — light-mode accent
+  '#4646bc',
+  '#393b96',
+  '#303278',
 ]
 
 export const theme = createTheme({

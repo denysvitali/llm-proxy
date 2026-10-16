@@ -1,16 +1,21 @@
 /* Overview page — refined control-room layout. Surfaces and hairlines
    come from the shared tokens so light and dark schemes both hold. */
 .overview-metric-band { border: 1px solid var(--hairline); border-radius: var(--mantine-radius-lg); overflow: hidden; background: var(--card); }
-.overview-metric-band .stat-tile { border: 0; border-radius: 0; background: transparent; padding: 20px 24px; }
+.overview-metric-band .stat-tile { border: 0; border-radius: 0; background: transparent; padding: 22px 24px; }
+.overview-metric-band .stat-tile::before { content: ''; position: absolute; top: 0; left: 24px; right: 24px; height: 2px; background: var(--hairline); }
+.overview-metric-band .stat-tile .stat-icon { width: 30px; height: 30px; border-radius: 8px; background: var(--sunken); color: var(--mantine-color-dimmed); }
 .overview-metric-band .stat-tile + .stat-tile { border-left: 1px solid var(--hairline); }
-.overview-metric-band .stat-tile .stat-value { font-size: 36px; }
-.overview-monitoring-grid { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 24px; align-items: start; }
+.overview-metric-band .stat-tile .stat-value { font-size: 36px; font-weight: 650; }
+.overview-monitoring-grid { display: grid; grid-template-columns: minmax(0, 1fr) 286px; gap: 20px; align-items: start; }
 .overview-gateway { display: grid; gap: 16px; min-width: 0; }
 .overview-gateway-heading { display: flex; align-items: center; justify-content: space-between; min-height: 48px; color: var(--mantine-color-dimmed); }
 .overview-gateway-heading h2 { color: var(--mantine-color-text); }
 .overview-gateway-total { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .overview-readiness-list { margin-top: 18px; }
 .overview-readiness-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+.overview-gateway-card { border-top: 3px solid color-mix(in srgb, var(--mantine-primary-color-filled) 45%, var(--hairline)); }
+.overview-readiness-row:last-child { border-bottom: 0; }
+.overview-readiness-status { font-size: 12px; font-weight: 600; }
 .overview-readiness-row > :first-child { min-width: 0; }
 .overview-readiness-status { flex-shrink: 0; color: var(--data-good); }
 .overview-readiness-status[data-attention='true'] { color: var(--data-warning); }

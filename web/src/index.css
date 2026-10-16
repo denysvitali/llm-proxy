@@ -82,10 +82,11 @@ body { min-width: 280px; }
   border-color: var(--hairline);
 }
 .mantine-AppShell-footer { padding-bottom: env(safe-area-inset-bottom, 0px); }
-.page-container { padding: 28px 32px; }
+.page-container { padding: 30px 32px; }
+.page-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .13em; line-height: 1.2; color: var(--mantine-color-dimmed); }
 .page-title { font-size: 36px; font-weight: 700; letter-spacing: -0.045em; color: var(--mantine-color-text); }
 .page-subtitle { font-size: 14px; }
-.page-header { padding-bottom: 8px; }
+.page-header { padding-bottom: 22px; border-bottom: 1px solid var(--hairline); }
 .page-header > * { min-width: 0; }
 .page-section { min-width: 0; }
 .page-section-heading { min-height: 36px; }
@@ -96,15 +97,19 @@ body { min-width: 280px; }
 .footer-divider { margin: 0 8px; color: var(--hairline); }
 
 .app-sidebar {
-  background: var(--sidebar);
+  background: color-mix(in srgb, var(--sidebar) 92%, var(--sunken));
   border-right-color: var(--hairline);
   color: var(--sidebar-text);
   overflow-y: auto;
   scrollbar-width: thin;
 }
 .app-sidebar .brand-link { color: var(--sidebar-text); }
-.header-workspace-dot { width: 7px; height: 7px; border: 2px solid var(--mantine-color-dimmed); border-radius: 50%; }
-.header-connect { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--mantine-color-text); }
+.app-sidebar .brand-link { padding: 8px 6px 20px; border-bottom: 1px solid var(--hairline); border-radius: 0; }
+.side-nav-link .nav-icon { width: 32px; height: 32px; border: 1px solid transparent; border-radius: 8px; color: var(--sidebar-dimmed); }
+.side-nav-link[data-active] .nav-icon { background: var(--card); border-color: color-mix(in srgb, var(--sidebar-active-text) 16%, var(--hairline)); }
+.side-nav-link[data-active] .nav-description { color: var(--sidebar-active-text); opacity: .8; }
+.header-workspace-dot { width: 9px; height: 9px; border: 2px solid var(--mantine-primary-color-filled); border-radius: 3px; }
+.header-connect { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--sunken); color: var(--mantine-color-text); }
 .header-connect:hover { color: var(--mantine-primary-color-filled); }
 .brand-link { display: flex; align-items: center; gap: 10px; min-height: 44px; border-radius: 8px; }
 .brand-mark {
@@ -142,7 +147,7 @@ body { min-width: 280px; }
 .side-nav-link[data-active] { background: var(--sidebar-active); color: var(--sidebar-active-text); font-weight: 600; }
 .side-nav-link[data-active] .nav-icon { color: var(--sidebar-active-text); }
 .side-nav-link[data-active]::before { content: ''; position: absolute; left: 0; width: 3px; height: 18px; border-radius: 2px; background: var(--sidebar-active-text); }
-.sidebar-connect { display: flex; align-items: center; gap: 9px; padding: 14px 0; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); color: var(--sidebar-text); font-size: 12px; }
+.sidebar-connect { display: flex; align-items: center; gap: 9px; padding: 14px 12px; border: 1px solid var(--hairline); border-radius: 9px; background: var(--card); color: var(--sidebar-text); font-size: 12px; }
 .sidebar-connect > span { flex: 1; min-width: 0; }
 .sidebar-connect strong { display: block; color: var(--sidebar-text); font-weight: 600; }
 .sidebar-connect > span > span { display: block; margin-top: 3px; color: var(--sidebar-dimmed); font-size: 11px; }
@@ -221,7 +226,8 @@ a, .mantine-UnstyledButton-root { -webkit-tap-highlight-color: transparent; }
 @media (max-width: 48em) {
   .page-container { padding: 22px 16px; }
   .page-subtitle { font-size: 13px; }
-  .page-header { padding-bottom: 2px; }
+  .page-header { padding-bottom: 18px; }
+  .page-eyebrow { font-size: 10px; }
   .page-loading-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .page-header-actions { width: 100%; }
   .page-title { font-size: 28px; }
@@ -245,6 +251,7 @@ a, .mantine-UnstyledButton-root { -webkit-tap-highlight-color: transparent; }
   .provider-summary-note { font-size: 11px; }
 }
 @media (pointer: coarse) {
+  .header-connect { min-height: 44px; }
   .mantine-Drawer-close { width: 44px; height: 44px; }
   .mantine-SegmentedControl-label { min-height: 38px; min-width: 36px; }
   .color-scheme-control .mantine-SegmentedControl-label { min-height: 44px; min-width: 44px; padding-inline: 0; }

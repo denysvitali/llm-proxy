@@ -25,6 +25,7 @@ export function PageHeader({
       className="page-header"
     >
       <Stack gap={10} style={{ flex: '1 1 16rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
+        <Text component="span" className="page-eyebrow">{title === 'Overview' ? 'WORKSPACE / MONITOR' : title === 'Setup' ? 'WORKSPACE / CONNECT' : 'WORKSPACE / EXPLORE'}</Text>
         <Title order={1} size="h1" mb={0} lh={1.15} className="page-title">
           {title}
         </Title>
