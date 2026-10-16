@@ -499,6 +499,10 @@ async function capture(outDir, base, shots, opts) {
     if (opts.regression) {
       const { checkRegressions } = await import('./ui-shots/regressions.mjs');
       written.push(...await checkRegressions(browser, base, outDir));
+      if (!opts.baseURL) {
+        const { checkLazyCatalogRegressions } = await import('./ui-shots/catalog-regressions.mjs');
+        await checkLazyCatalogRegressions(browser, base);
+      }
     }
   } finally {
     for (const c of Object.values(contexts)) await c.close().catch(() => {});

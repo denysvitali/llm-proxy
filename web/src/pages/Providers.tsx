@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -23,10 +23,11 @@ import { EmptyState } from '../components/EmptyState'
 import { providerSegments, healthState } from '../lib/stats'
 import ProviderCard from '../components/catalog/ProviderCard'
 import { CatalogSummary } from '../components/catalog/CatalogSummary'
-import ProviderDetail from '../components/catalog/ProviderDetail'
-import { backendAgg, type StatsState } from '../components/catalog/providerData'
+import { emptyProviderUsage, indexProviderRouteCounts, indexProviderUsage, type StatsState } from '../components/catalog/providerData'
 import { Fade } from '../App'
 import './catalog.css'
+
+const ProviderDetail = lazy(() => import('../components/catalog/ProviderDetail'))
 
 export default function ProvidersPage() {
   const overview = useQuery(dashboardQueries.overview())
@@ -41,15 +42,16 @@ export default function ProvidersPage() {
   const [sort, setSort] = useState('name')
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [historyRange, setHistoryRange] = useState('24h')
-  const backends = useMemo(() => overview.data?.backends ?? [], [overview.data])
-  const models = useMemo(() => stats.data?.models ?? [], [stats.data])
+  const backends = useMemo(() => overview.data?.backends ?? [], [overview.data?.backends])
+  const models = useMemo(() => stats.data?.models ?? [], [stats.data?.models])
+  const routeCounts = useMemo(() => indexProviderRouteCounts(overview.data?.routes), [overview.data?.routes])
+  const usageIndex = useMemo(() => indexProviderUsage(models), [models])
   const statsState: StatsState = stats.data ? 'ready' : stats.isPending ? 'loading' : 'unavailable'
   const segments = useMemo(() => new Map(providerSegments(models, palette.series)), [models, palette.series])
   const providers = useMemo(
     () =>
       backends.map((backend) => {
-        const providerModels = models.filter((model) => model.backend === backend.name)
-        const aggregate = backendAgg(providerModels, backend.name)
+        const { models: providerModels, aggregate } = usageIndex.get(backend.name) ?? emptyProviderUsage()
         const health = statsState === 'ready' ? healthState(aggregate.requests, aggregate.uptime) : 'unknown'
         const attention =
           !backend.catalogOK ||
@@ -58,19 +60,19 @@ export default function ProvidersPage() {
           health === 'unhealthy'
         return { backend, models: providerModels, aggregate, health, attention }
       }),
-    [backends, models, statsState],
+    [backends, usageIndex, statsState],
   )
+  const needle = search.trim().toLowerCase()
+  const activeFilter = statsState === 'ready' ? healthFilter : 'all'
   const visible = useMemo(
     () =>
       providers
         .filter(({ backend, health, attention }) => {
-          const needle = search.trim().toLowerCase()
           const matchesSearch =
             !needle ||
             [backend.name, backend.host, ...(backend.models ?? [])].some((value) =>
               value.toLowerCase().includes(needle),
             )
-          const activeFilter = statsState === 'ready' ? healthFilter : 'all'
           return (
             matchesSearch &&
             (activeFilter === 'all' ||
@@ -88,7 +90,7 @@ export default function ProvidersPage() {
               ? Number(b.attention) - Number(a.attention) || a.backend.name.localeCompare(b.backend.name)
               : a.backend.name.localeCompare(b.backend.name),
         ),
-    [providers, search, healthFilter, sort, statsState],
+    [providers, needle, activeFilter, sort, statsState],
   )
   const selected = providers.find(({ backend }) => backend.name === selectedName) ?? null
   const history = useQuery(dashboardQueries.backendSeries(selected?.backend.name ?? null, historyRange))
@@ -211,14 +213,12 @@ export default function ProvidersPage() {
               </Stack>
             ) : (
               <div className="catalog-provider-list">
-                {visible.map(({ backend, models: providerModels }) => (
+                {visible.map(({ backend, aggregate }) => (
                   <ProviderCard
                     key={backend.name}
                     backend={backend}
-                    models={providerModels}
-                    routeCount={
-                      (overview.data?.routes ?? []).filter((route) => route.backend === backend.name).length
-                    }
+                    aggregate={aggregate}
+                    routeCount={routeCounts.get(backend.name) ?? 0}
                     segments={segments.get(backend.name) ?? []}
                     statsState={statsState}
                     grokUsage={backend.name === 'grok' ? grokUsage.data : undefined}
@@ -261,21 +261,28 @@ export default function ProvidersPage() {
         }
       >
         {selected && (
-          <ProviderDetail
-            backend={selected.backend}
-            routes={(overview.data?.routes ?? []).filter((route) => route.backend === selected.backend.name)}
-            models={selected.models}
-            statsState={statsState}
-            grokUsage={selected.backend.name === 'grok' ? grokUsage.data : undefined}
-            minimaxUsageQuery={
-              selected.backend.name === 'minimax-code' && minimaxEnabled ? minimaxUsage : undefined
-            }
-            series={history.data?.series}
-            seriesLoading={history.isPending}
-            seriesError={history.error?.message}
-            range={historyRange}
-            onRangeChange={setHistoryRange}
-          />
+          <Suspense fallback={(
+            <Group justify="center" py="xl" role="status" aria-label="Loading provider details">
+              <Loader size="sm" />
+            </Group>
+          )}>
+            <ProviderDetail
+              backend={selected.backend}
+              routes={(overview.data?.routes ?? []).filter((route) => route.backend === selected.backend.name)}
+              models={selected.models}
+              aggregate={selected.aggregate}
+              statsState={statsState}
+              grokUsage={selected.backend.name === 'grok' ? grokUsage.data : undefined}
+              minimaxUsageQuery={
+                selected.backend.name === 'minimax-code' && minimaxEnabled ? minimaxUsage : undefined
+              }
+              series={history.data?.series}
+              seriesLoading={history.isPending}
+              seriesError={history.error?.message}
+              range={historyRange}
+              onRangeChange={setHistoryRange}
+            />
+          </Suspense>
         )}
       </Drawer>
     </Fade>

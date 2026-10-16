@@ -12,18 +12,16 @@ export function providerSegments(models: ModelStat[], colors: string[]): [string
     (m: ModelStat) => m.cache_write_tokens,
   ]
   const names = ['input', 'output', 'cache read', 'cache write']
-  const byBackend = new Map<string, ModelStat[]>()
-  for (const m of models) {
-    byBackend.set(m.backend, [...(byBackend.get(m.backend) ?? []), m])
+  const byBackend = new Map<string, MixSegment[]>()
+  for (const model of models) {
+    let segments = byBackend.get(model.backend)
+    if (!segments) {
+      segments = names.map((name, i) => ({ name, color: colors[i], value: 0 }))
+      byBackend.set(model.backend, segments)
+    }
+    kinds.forEach((get, i) => { segments[i].value += get(model) })
   }
-  return [...byBackend.entries()].map(([backend, ms]) => [
-    backend,
-    kinds.map((get, i) => ({
-      name: names[i],
-      color: colors[i],
-      value: ms.reduce((s, m) => s + get(m), 0),
-    })),
-  ])
+  return [...byBackend.entries()]
 }
 
 export function providerAggregates(models: ModelStat[]) {

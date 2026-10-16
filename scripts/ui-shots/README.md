@@ -84,3 +84,12 @@ explicit health checks and failure recovery, plus keyboard navigation that
 ignores typing, modified keys, and open dialogs. Health responses are intercepted;
 these checks never send inference. Catalog checks cover pagination, provider
 filtering, empty results, and model/provider detail navigation.
+
+Against the harness-owned local production server only, `--regression` also
+intercepts each lazy model/provider detail JS chunk in a fresh browser context.
+Delayed chunks must announce loading while preserving the drawer title and
+keyboard close/reopen behavior. Rejected chunks must reach the page boundary,
+leave shell navigation usable, and recover after **Reload page**. Rejected
+`React.lazy` imports remain cached across navigation or **Try again**; these
+checks deliberately require a full reload. Chunk fault injection is skipped
+when `--base-url` is supplied, so it never targets the reference service.

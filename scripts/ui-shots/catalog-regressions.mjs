@@ -36,6 +36,89 @@ const overview = {
   minimaxUsage: { configured: false },
 }
 // All dashboard APIs are intercepted; this suite never sends inference or changes configuration.
+// Only invoked for the harness-owned local production server, never --base-url.
+// Fresh contexts prevent React.lazy and the browser module cache hiding failures.
+export async function checkLazyCatalogRegressions(browser, base) {
+  for (const kind of ['model', 'provider']) {
+    for (const failure of [false, true]) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+      let release
+      const gate = new Promise((resolve) => { release = resolve })
+      let intercepted = 0
+      const errors = []
+      try {
+        await context.route(/\/(api\/|stats(?:\?|$))/, async (route) => {
+          const path = new URL(route.request().url()).pathname
+          if (path === '/api/overview') return route.fulfill({ json: overview })
+          if (path === '/stats') return route.fulfill({ json: { models: [model('alpha', 10, 10)] } })
+          if (path.startsWith('/api/stats')) return route.fulfill({ json: { models: [], series: {} } })
+          return route.fulfill({ json: {} })
+        })
+        await context.routeWebSocket(/\/api\/updates\/ws/, (ws) => ws.close())
+        const chunk = new RegExp(`/assets/${kind === 'model' ? 'ModelDetail' : 'ProviderDetail'}-[^/]+\\.js$`)
+        await context.route(chunk, async (route) => {
+          intercepted++
+          await gate
+          if (failure) await route.abort('failed')
+          else await route.continue()
+        })
+        const page = await context.newPage()
+        page.on('pageerror', (error) => errors.push(error.message))
+        const open = async () => {
+          if (kind === 'model') {
+            await page.getByRole('tab', { name: 'Recorded traffic', exact: true }).click()
+            await page.getByRole('button', { name: 'Open details for alpha alpha-model', exact: true }).click()
+          } else {
+            await page.getByRole('button', { name: 'Inspect alpha', exact: true }).click()
+          }
+        }
+        const loaded = () => kind === 'model'
+          ? page.getByRole('heading', { name: 'All recorded traffic', exact: true })
+          : page.getByRole('button', { name: 'Performance history', exact: true })
+        await page.goto(`${base}/${kind}s`)
+        await open()
+        await page.getByRole('status', { name: `Loading ${kind} details`, exact: true }).waitFor()
+        const dialog = page.getByRole('dialog')
+        assert.match(await dialog.innerText(), /alpha/, 'drawer title remains available while its body loads')
+        await page.waitForFunction((label) => document.activeElement?.getAttribute('aria-label') === label, `Close ${kind} details`)
+        await page.keyboard.press('Escape')
+        await dialog.waitFor({ state: 'hidden' })
+        await open()
+        await page.getByRole('status', { name: `Loading ${kind} details`, exact: true }).waitFor()
+        release()
+        if (failure) {
+          await page.getByRole('alert').filter({ hasText: "This page couldn't be displayed" }).waitFor()
+          await context.unroute(chunk)
+          await page.getByRole('link', { name: 'Overview', exact: true }).click()
+          await page.getByRole('heading', { name: 'Overview', exact: true }).waitFor()
+          await page.getByRole('link', { name: kind === 'model' ? 'Models' : 'Providers', exact: true }).click()
+          await open()
+          // A rejected lazy import is cached. Navigation/Try again cannot reset it.
+          await page.getByRole('button', { name: 'Reload page', exact: true }).waitFor()
+          await Promise.all([
+            page.waitForEvent('load'),
+            page.getByRole('button', { name: 'Reload page', exact: true }).click(),
+          ])
+          await open()
+          await loaded().waitFor()
+        } else {
+          await loaded().waitFor()
+          await page.keyboard.press('Escape')
+          await dialog.waitFor({ state: 'hidden' })
+          await open()
+          await loaded().waitFor()
+          assert.deepEqual(errors, [])
+        }
+        assert.equal(intercepted, 1, 'detail module is requested once before full reload')
+        console.error(`[ui-check] PASS ${kind} lazy detail: ${failure ? 'rejected chunk boundary, shell navigation, cached rejection, full Reload page recovery' : 'delayed announcement, title, keyboard close, reopen, resolved detail'}`)
+      } finally {
+        release()
+        await context.close()
+      }
+    }
+  }
+}
+
 export async function checkCatalogRegressions(browser, base) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
   try {

@@ -24,12 +24,13 @@ import UptimeBadge from '../UptimeBadge'
 import { TimeRangeControl } from '../TimeRangeControl'
 import { HistoryBarChart, HistoryLineChart, historyData, historyFormatters } from '../HistoryCharts'
 import { AuthStatus, StatusDot, CardSection } from './ProviderStatus'
-import { pct, type StatsState } from './providerData'
+import { pct, type ProviderAggregate, type StatsState } from './providerData'
 
 export default function ProviderDetail({
   backend,
   routes,
   models,
+  aggregate,
   statsState,
   grokUsage,
   minimaxUsageQuery,
@@ -42,6 +43,7 @@ export default function ProviderDetail({
   backend: OverviewBackend
   routes: { model: string; backend: string; upstream: string }[]
   models: ModelStat[]
+  aggregate: ProviderAggregate
   statsState: StatsState
   grokUsage?: GrokUsage
   minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
@@ -51,11 +53,7 @@ export default function ProviderDetail({
   range: string
   onRangeChange: (value: string) => void
 }) {
-  const requests = models.reduce((sum, model) => sum + model.requests, 0)
-  const successes = models.reduce((sum, model) => sum + model.successes, 0)
-  const toolCalls = models.reduce((sum, model) => sum + model.tool_calls, 0)
-  const toolErrors = models.reduce((sum, model) => sum + model.tool_errors, 0)
-  const uptime = requests ? successes / requests : 0
+  const { requests, toolCalls, toolErrors, uptime } = aggregate
   const statsReady = statsState === 'ready'
 
   // Health verdict only exists when stats are actually loaded; "no traffic"

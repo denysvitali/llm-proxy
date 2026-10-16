@@ -1,18 +1,18 @@
 import { Badge, Box, Button, Card, Group, Stack, Text, Title } from '@mantine/core'
 import { IconChevronRight, IconKey, IconUser } from '@tabler/icons-react'
 import type { UseQueryResult } from '@tanstack/react-query'
-import type { GrokUsage, MiniMaxUsage, ModelStat, OverviewBackend } from '../../api'
+import type { GrokUsage, MiniMaxUsage, OverviewBackend } from '../../api'
 import { fmtInt } from '../../format'
 import UptimeBadge from '../UptimeBadge'
 import GrokUsageCompact from '../GrokUsageCompact'
 import { MiniMaxUsageCompact } from '../MiniMaxUsageCard'
 import TokenMixBar from '../TokenMixBar'
-import { backendAgg, pct, type StatsState } from './providerData'
+import { pct, type ProviderAggregate, type StatsState } from './providerData'
 import { StatusDot } from './ProviderStatus'
 
 export default function ProviderCard({
   backend,
-  models,
+  aggregate,
   segments,
   routeCount,
   statsState,
@@ -21,7 +21,7 @@ export default function ProviderCard({
   onInspect,
 }: {
   backend: OverviewBackend
-  models: ModelStat[]
+  aggregate: ProviderAggregate
   segments: Parameters<typeof TokenMixBar>[0]['segments']
   routeCount: number
   statsState: StatsState
@@ -29,7 +29,6 @@ export default function ProviderCard({
   minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
   onInspect: () => void
 }) {
-  const aggregate = backendAgg(models, backend.name)
   const ready = statsState === 'ready'
   const tokenTotal = segments.reduce((sum, segment) => sum + segment.value, 0)
   const hasAccount = ['grok', 'workbuddy', 'codex', 'zcode', 'minimax-code'].includes(backend.name)

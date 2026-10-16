@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import {
   ActionIcon,
   Alert,
@@ -33,7 +33,6 @@ import { EmptyState } from '../components/EmptyState'
 import SearchInput from '../components/SearchInput'
 import UptimeBadge from '../components/UptimeBadge'
 import ModelCatalog from '../components/catalog/ModelCatalog'
-import ModelDetail from '../components/catalog/ModelDetail'
 import ModelTraffic from '../components/catalog/ModelTraffic'
 import {
   compareModels,
@@ -45,9 +44,11 @@ import {
 import { Fade } from '../App'
 import './catalog.css'
 
+const ModelDetail = lazy(() => import('../components/catalog/ModelDetail'))
+
 export default function ModelsPage() {
   const query = useQuery(dashboardQueries.stats())
-  const models = useMemo(() => query.data?.models ?? [], [query.data])
+  const models = useMemo(() => query.data?.models ?? [], [query.data?.models])
   const palette = useChartPalette()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const [filter, setFilter] = useState('')
@@ -242,17 +243,23 @@ export default function ModelsPage() {
         }
       >
         {selected && (
-          <ModelDetail
-            stat={selected}
-            colors={palette.series}
-            series={history.data?.series}
-            historyPending={history.isPending}
-            historyError={history.isError}
-            historyFetching={history.isFetching}
-            onRetryHistory={() => history.refetch({ cancelRefetch: false })}
-            range={historyRange}
-            onRangeChange={setHistoryRange}
-          />
+          <Suspense fallback={(
+            <Group justify="center" py="xl" role="status" aria-label="Loading model details">
+              <Loader size="sm" />
+            </Group>
+          )}>
+            <ModelDetail
+              stat={selected}
+              colors={palette.series}
+              series={history.data?.series}
+              historyPending={history.isPending}
+              historyError={history.isError}
+              historyFetching={history.isFetching}
+              onRetryHistory={() => history.refetch({ cancelRefetch: false })}
+              range={historyRange}
+              onRangeChange={setHistoryRange}
+            />
+          </Suspense>
         )}
       </Drawer>
     </Fade>
