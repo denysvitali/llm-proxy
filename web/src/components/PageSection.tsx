@@ -29,8 +29,8 @@ export function PageSection({
           <Title
             order={2}
             id={titleId}
-            fz={16}
-            fw={650}
+            fz={14}
+            fw={600}
             m={0}
             lh={1.3}
           >

@@ -194,12 +194,27 @@ function ChartDataTable({ title, data, series }: {
   )
 }
 
-export const HistoryLineChart = memo(function HistoryLineChart({ title, description, data, series, height = 132 }: {
+const assistiveOnly: CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: 0,
+  overflow: 'hidden',
+  clipPath: 'inset(50%)',
+  whiteSpace: 'nowrap',
+  border: 0,
+}
+
+export const HistoryLineChart = memo(function HistoryLineChart({ title, description, data, series, height = 132, compact = false }: {
   title: string
   description: string
   data: HistoryChartData[]
   series: HistorySeries[]
   height?: number
+  // Overview cards already show a headline. Hide this chart's own title,
+  // description, and single-series legend visually; keep the names for AT.
+  compact?: boolean
 }) {
   const pal = useChartPalette()
   const id = useId()
@@ -283,10 +298,10 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
   }
 
   return (
-    <Box miw={0} role="group" aria-labelledby={id} aria-describedby={`${id}-description`}>
-      <Text id={id} size="sm" fw={650} lh={1.25}>{title}</Text>
-      <Text id={`${id}-description`} size="xs" c="dimmed" mt={1} mb={10} lh={1.3}>{description}</Text>
-      {hasData && (
+    <Box miw={0} pos="relative" role="group" aria-labelledby={id} aria-describedby={`${id}-description`}>
+      <Text id={id} size="sm" fw={650} lh={1.25} style={compact ? assistiveOnly : undefined}>{title}</Text>
+      <Text id={`${id}-description`} size="xs" c="dimmed" mt={compact ? 0 : 1} mb={compact ? 0 : 10} lh={1.3} style={compact ? assistiveOnly : undefined}>{description}</Text>
+      {hasData && (!compact || !single) && (
         <Group gap="md" mb="sm" aria-label="Latest sampled values and chart legend">
           {coloredSeries.map((item) => {
             const index = lastIndexBySeries.get(item.name)
@@ -340,13 +355,14 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
   )
 })
 
-export const HistoryBarChart = memo(function HistoryBarChart({ title, description, points, formatter = fmtInt, color, height = 112 }: {
+export const HistoryBarChart = memo(function HistoryBarChart({ title, description, points, formatter = fmtInt, color, height = 112, compact = false }: {
   title: string
   description: string
   points: SeriesPoint[]
   formatter?: HistoryFormatter
   color?: string
   height?: number
+  compact?: boolean
 }) {
   const pal = useChartPalette()
   const id = useId()
@@ -361,9 +377,9 @@ export const HistoryBarChart = memo(function HistoryBarChart({ title, descriptio
   })
   const hasData = data.some((point) => typeof point.value === 'number')
   return (
-    <Box miw={0} role="group" aria-labelledby={id} aria-describedby={`${id}-description`}>
-      <Text id={id} size="sm" fw={650} lh={1.25}>{title}</Text>
-      <Text id={`${id}-description`} size="xs" c="dimmed" mt={1} mb={10} lh={1.3}>{description}</Text>
+    <Box miw={0} pos="relative" role="group" aria-labelledby={id} aria-describedby={`${id}-description`}>
+      <Text id={id} size="sm" fw={650} lh={1.25} style={compact ? assistiveOnly : undefined}>{title}</Text>
+      <Text id={`${id}-description`} size="xs" c="dimmed" mt={compact ? 0 : 1} mb={compact ? 0 : 10} lh={1.3} style={compact ? assistiveOnly : undefined}>{description}</Text>
       {!hasData ? (
         <Box h={height} style={{ display: 'grid', placeItems: 'center' }}>
           <Text size="sm" c="dimmed" ta="center">No recorded samples in this range</Text>

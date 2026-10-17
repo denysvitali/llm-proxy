@@ -124,8 +124,7 @@ export default function ProvidersPage() {
           />
         ) : (
           <>
-            <section className="provider-health-strip" aria-label="Connection overview">
-            <div className="provider-health-intro"><Text className="workspace-kicker">CONNECTION OVERVIEW</Text><Text fw={650} size="lg">Upstream network</Text><Text size="xs" c="dimmed">Configuration + recorded health</Text></div>
+            <section aria-label="Connection overview">
             <CatalogSummary label="Provider summary" items={[
               { label: 'Providers', value: fmtInt(configured), hint: `${enabled} enabled` },
               { label: 'Healthy', value: statsState === 'ready' ? fmtInt(healthy) : '—', hint: 'From recorded requests' },
@@ -148,8 +147,7 @@ export default function ProvidersPage() {
                 )}
               </Alert>
             )}
-            <Stack gap="sm" className="provider-directory">
-              <div className="workspace-section-label"><span>PROVIDER DIRECTORY</span><Text size="xs" c="dimmed">Inspect a connection for models, traffic, and account details</Text></div>
+            <Stack gap="sm">
               <div className="catalog-provider-toolbar">
                 <SearchInput
                   label="Search providers"

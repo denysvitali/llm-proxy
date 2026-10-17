@@ -4,7 +4,7 @@ import {
   Skeleton, Stack, Text, Tooltip, UnstyledButton, useMantineColorScheme,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { IconArrowUpRight, IconDeviceDesktop, IconKeyboard, IconMoonStars, IconSun, IconTerminal2 } from '@tabler/icons-react'
+import { IconDeviceDesktop, IconKeyboard, IconMoonStars, IconSun, IconTerminal2 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -99,15 +99,9 @@ export default function App() {
       <Anchor href="#main" className="app-skip-link">Skip to content</Anchor>
       {!isMobile && (
         <AppShell.Navbar component="aside" className="app-sidebar" p="md">
-          <div className="sidebar-identity"><HeaderBrand /><span className="sidebar-edition">CONTROL CENTER</span></div>
-          <Text className="nav-caption" mt={36} mb="sm">WORKSPACE / 01—04</Text>
+          <HeaderBrand />
           <Navigation />
-          <Stack mt="auto" gap="md" pt="xl">
-            <Anchor component={NavLink} to="/setup" className="sidebar-connect" underline="never">
-              <IconTerminal2 size={18} aria-hidden />
-              <span className="sidebar-connect-copy"><small>READY TO BUILD?</small><strong>Connect a client</strong><span>Get your endpoint & snippets</span></span>
-              <IconArrowUpRight size={15} aria-hidden />
-            </Anchor>
+          <Stack mt="auto" gap="sm" pt="lg">
             <UnstyledButton className="shortcut-trigger" onClick={() => setShortcutsOpen(true)}>
               <IconKeyboard size={17} aria-hidden />
               <span>Keyboard shortcuts</span>
@@ -120,7 +114,6 @@ export default function App() {
         <Group h="100%" justify="space-between" px={{ base: 'md', sm: 'xl' }} wrap="nowrap">
           {isMobile ? <HeaderBrand subtitle={pageName} /> : (
             <Group gap="sm" className="header-breadcrumb">
-              <span className="header-workspace-dot" aria-hidden />
               <Text size="sm" c="dimmed">Gateway</Text>
               <Text size="sm" c="dimmed" aria-hidden>/</Text>
               <Text size="sm" fw={600}>{pageName}</Text>
@@ -146,7 +139,7 @@ export default function App() {
               </Routes>
             </PageErrorBoundary>
           </Suspense>
-          <Group className="app-footer" justify="space-between" gap="sm" mt={40}>
+          <Group className="app-footer" justify="space-between" gap="sm" mt="lg">
             <Text size="xs" c="dimmed">llm-proxy <span className="footer-divider" aria-hidden>/</span> Model gateway</Text>
             <Group gap="md">
               <Anchor href="/stats" size="xs" c="dimmed">Statistics JSON</Anchor>
@@ -174,9 +167,9 @@ export default function App() {
 function PageLoading({ name }: { name: string }) {
   return (
     <Stack className="page-loading" gap="lg" role="status" aria-label={`Loading ${name.toLowerCase()}`}>
-      <Stack gap="sm"><Skeleton height={36} width={180} /><Skeleton height={16} width="min(100%, 380px)" /></Stack>
-      <div className="page-loading-metrics">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} height={120} radius="lg" />)}</div>
-      <Skeleton height={260} radius="lg" />
+      <Skeleton height={22} width={180} radius="sm" />
+      <Skeleton height={168} radius="md" />
+      <Skeleton height={220} radius="md" />
     </Stack>
   )
 }
@@ -209,16 +202,15 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   const { pathname } = useLocation()
   return (
     <Box component="nav" aria-label="Main navigation" className={mobile ? 'bottom-navigation' : 'side-navigation'}>
-      {NAV.map(({ path, label, description, icon: Icon }, index) => (
+      {NAV.map(({ path, label, description, icon: Icon }) => (
         <UnstyledButton key={path} component={NavLink} to={path}
           className={mobile ? 'bottom-nav-link' : 'side-nav-link'}
           data-active={isActiveNavPath(pathname, path) || undefined}
           aria-label={label}
           title={description}
           aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
-          <span className="nav-icon"><Icon size={20} stroke={1.7} aria-hidden /></span>
-          <span className="nav-label"><span>{label}</span>{!mobile && <span className="nav-description">{description}</span>}</span>
-          {!mobile && <span className="nav-route-index" aria-hidden>0{index + 1}</span>}
+          <span className="nav-icon"><Icon size={18} stroke={1.75} aria-hidden /></span>
+          <span className="nav-label">{label}</span>
         </UnstyledButton>
       ))}
     </Box>

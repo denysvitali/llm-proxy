@@ -1,262 +1,126 @@
-# llm-proxy dashboard — design system
+# llm-proxy dashboard design
 
-**Read this before you touch a file in `web/src/`.** It is the contract. If your
-component contradicts something here, you are wrong; if the contract is wrong,
-raise it with the lead rather than silently diverging.
+Signal is a dense operational console on Mantine. Tokens live in `index.css`
+and map through `theme.ts`. Do not hard-code surface colors in components.
+Do not add a second component library. The screenshot harness drives Mantine
+comboboxes, tabs, and scroll areas.
 
-## 1. The direction in one paragraph
+## Color
 
-A compact gateway workspace with a scheme-aware sidebar, indigo interaction
-accents, and a clear hierarchy from page title to sections to data. Light and
-dark schemes share layouts. Cards use flat surfaces, quiet borders, and restrained
-rounding; charts and tables emphasize readable values.
+Light: canvas `#eef1f6`, sidebar `#f6f7fa`, card `#ffffff`, border `#d5dbe6`,
+ink `#141820`, muted `#5e6876`, accent `#2457d6`.
 
-Desktop navigation is a 232px rail with a label and short description. Its surface
-follows the selected scheme. The app bar is 60px high with live-update state,
-client setup, and appearance controls. Mobile uses bottom navigation and shows
-the current page below the brand. Keep the first screen useful: key statistics,
-primary controls, and the start of content appear before secondary details.
+Dark: canvas `#0c0e13`, sidebar `#10131a`, card `#171a21`, border `#2c3240`,
+ink `#f3f5f8`, muted `#a3adbd`, accent `#8eabff`.
 
-Page headers keep actions alongside the title on desktop. Overview metrics form
-one divided band; history sits beside provider readiness on wide screens. Provider
-cards and model entries form responsive grids, and Setup presents a numbered client
-connection workflow. Authentication/catalog readiness is distinct from measured
-request success. Preserve all-time versus selected-range labels and unknown values.
+Accent is for interaction (links, focus, active nav, primary buttons). It is
+not a card fill and not a chart series. The only gradient is the small brand
+mark. Cards are flat: 1px border, no drop shadow, no hover lift.
 
-Metrics use neutral icons, strong values, and secondary explanatory text; reserve
-status color for actual operational states. Initial route loads use content-shaped
-skeletons so the shell and page hierarchy stay stable. Group related controls,
-disclose dense detail, and preserve complete model IDs. Gradients are limited to
-the small brand mark.
+Semantic status (`--data-good`, `--data-warning`, `--data-serious`,
+`--data-critical`) stays separate from chart series. Chart colors come only
+from `palette.ts` / `useChartPalette()`. Never paint a card or plot background
+with a series color. Do not recolor series when a filter changes. A fifth
+series aggregates to Other through the existing palette helper.
 
-## 2. Color tokens
+Switching color scheme crossfades background and text over 150ms. Motion is
+120ms for color and 200ms for opacity. `prefers-reduced-motion` disables both.
 
-Defined in `web/src/index.css` per color-scheme, and mirrored as Mantine ramps in
-`theme.ts` (`colors.brand`, `colors.dark`).
+## Type and shape
 
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--canvas` | `#f6f7fa` | `#0f1117` | `body` background |
-| `--card` | `#ffffff` | `#14161a` | Card/Paper surface — **the exact value charts are validated against** |
-| `--sunken` | `#f0f2f6` | `#1c202b` | Code blocks, inset wells |
-| `--hairline` | `#e3e6ed` | `#2b303d` | All borders/dividers |
-| `--segmented-track` | `#edf0f7` | `#1c202b` | Segmented control track |
-| `--segmented-thumb` | `#ffffff` | `#303644` | Segmented control selected |
-| `--chart-grid-color` | `rgba(37,51,78,.08)` | `rgba(196,210,236,.10)` | Chart gridlines |
-| `--chart-cursor-fill` | `rgba(37,51,78,.04)` | `rgba(196,210,236,.06)` | Chart crosshair band |
+Inter. Page titles are 22px/600 on desktop and 20px/600 below 48em. Section
+titles are 14px/600. Do not shrink type to fit a layout. Controls use an 8px
+radius; cards use 12px. Numbers that are measured values use tabular figures.
+Model IDs wrap with `overflow-wrap: anywhere` and are never truncated.
 
-The sidebar uses scheme-aware `--sidebar`, `--sidebar-text`, and related tokens in `index.css`.
-Other components must follow the selected scheme. **Do not hard-code surface hexes in components.** Use `var(--card)`, `var(--hairline)`,
-`var(--canvas)`, or Mantine semantic colors (`--mantine-color-text`,
-`-dimmed`, `-default-border`). A hard-coded hex is a bug: it will not follow the
-scheme.
+Focus-visible is a 2px accent ring with a 2px offset. Interactive targets are
+at least 44px on coarse pointers. The shell keeps a skip link, `#main`, and a
+pathname-keyed page error boundary.
 
-### Accent (interaction only — never data)
+## Shell
 
-`brand` ramp in `theme.ts`; primary shade is `6` on light, `4` on dark. Use it
-for active nav, primary buttons, focus rings, links. **Never use it as a chart
-series color.**
+Sidebar is 232px and theme-aware. Below `48em` (768px) it collapses and the
+bottom navigation shows; at 769px and up the sidebar shows. Keep the classes
+`.app-sidebar`, `.bottom-navigation`, and `.page-container`.
 
-### Chart palette — DO NOT TOUCH, DO NOT EYEBALL
+Nav items are an icon plus a label, with a clear active state. The product
+name is “llm-proxy”. Keyboard shortcuts stay: `g` then `o`/`m`/`p`/`s`, and
+`?` opens a dialog titled “Keyboard shortcuts”, with the existing focus and
+search guards. The header theme control is a `SegmentedControl` labeled
+“Color scheme”.
 
-`web/src/palette.ts` is machine-validated. Get colors from
-`useChartPalette()` (`{ dark, series, ramp, magnitude, surface }`); never import
-a hex directly into a component.
+There is no marketing chrome: no “CONTROL CENTER”, workspace indexes, giant
+hero, decorative network diagram, or theme-invariant slabs.
 
-| | light | dark |
-|---|---|---|
-| `categorical` | `#036eae` `#48a260` `#8a3400` `#8b54a2` | `#0083cf` `#3aa85b` `#af4803` `#8c4ca6` |
-| `ordinal` (one hue) | `#8cb2dd` `#4383c8` `#00539a` | `#1d4f82` `#2773c0` `#649cda` |
-| `magnitude` | `#036eae` | `#0083cf` |
-| `status` | good `#1a9e5f` · warning `#c98a00` · serious `#e07b1a` · critical `#d63b30` | same (validated per surface) |
+## Pages
 
-Validator verdicts (all PASS, no warn/relief bands): categorical light worst
-adjacent CVD ΔE **19.3**, normal-vision **20.6**; dark **11.8** / **21.2**.
+Overview’s `h1` is “Overview”. The first content band is four `StatTile`s
+(two-up on narrow screens): requests, success rate, tokens, median tok/s.
+Then a history block in normal surface cards (plot about 150px, card near
+240px) beside upstream errors, then “Subscription usage”, then recent
+requests, then a compact gateway-readiness strip. Readiness must not open a
+tall empty column. Recent-request inspection keeps `Inspect …` and
+“Close request inspection”.
 
-**If you must change a chart color, run the validator** — do not eyeball:
-```
-node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode light --surface #ffffff
-node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode dark  --surface #14161a
-node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode light --surface #ffffff --ordinal
-```
+Models’ `h1` is “Models”. Visible tabs stay “Available models” and
+“Recorded traffic”. Search label is “Find an available model”. The table
+class is `models-table`. Catalog rows keep `catalog-model-entry` and
+`[aria-label^="Open details for"]`. Pagination reads like
+“1–18 of 40 available models” with “Next catalog page”. The details drawer
+title closes with “Close model details”, loading is “Loading model details”,
+and the provider filter is “Filter available models by provider”. The drawer
+scrolls internally and is full-width on mobile. The History tab inside a
+model still shows “Performance history”.
 
-### Status color duality
+Providers’ `h1` is “Providers”. Search label is “Search providers”. The health
+combobox is “Filter provider health” and includes “All providers” and
+“Needs attention”. Counts read “1 of 2 providers” / “2 of 2 providers”; the
+empty filter state is “No matching providers”. Inspect buttons are named
+“Inspect …”. The drawer closes with “Close provider details” and loads with
+“Loading provider details”. Providers are a wrapping card grid: three columns
+on a wide desktop, two before that, one column on mobile.
 
-There are two sets of status colors, intentionally divergent:
+Setup’s `h1` stays “Setup” (the harness asserts it). The section heading is
+“Choose your client”. Buttons: “Copy Claude Code snippet”, “Copy Codex CLI
+snippet”, “Check connection”. Tabs: “Codex CLI”, “HTTP / curl”. Regions:
+“Codex CLI setup snippet”, “Other / curl setup snippet”. The switch is
+“Wrap Other / curl snippet lines”; wrap off keeps `white-space: pre`.
+Health copy is exact: “Gateway is reachable.”, “Gateway returned HTTP 503.”,
+“Could not reach the gateway. Check your connection and try again.”
+The check is `GET /healthz` on click only. Never call inference or `/v1` on
+load. The snippet and the gateway/account details share one column flow so
+neither side is a dead band.
 
-- **`palette.ts` status colors** — saturated, for chart data points. These are
-  machine-validated for contrast against the card surface.
-- **`index.css` `--data-*` colors** — muted, for UI badges and indicators.
-  These are designed for small text and icons on card surfaces.
+## Unknown versus zero
 
-Never use a chart status color for a UI badge, or vice versa.
+An unknown statistic is an em dash (`—`), never `0`, `0%`, or an empty chart
+that implies a measured zero. Loading uses skeletons that match the loaded
+layout. Empty states say what is missing. A failed request is an error with
+retry, not a zero.
 
-### Dark mode toggle
+## Charts
 
-- `"auto"` follows `prefers-color-scheme`.
-- Transition is a 150ms crossfade on `background-color` only.
+- No dual axes.
+- Grid lines use `--chart-grid-color`. Plot background is the card surface.
+- Series names and order come from the data, colors from `colorForSeries`.
+- Latency charts say whether the value is p50.
 
-## 3. Type
+## Copy that must survive
 
-- UI/body: Inter with system fallbacks; monospace for code and identifiers.
-- Use tabular figures for numbers compared in columns (`tabular` or `stat-value`).
-- Scale: `xs 12 · sm 13 · md 14 · lg 16`; page titles are 36px on desktop
-  and 28px on mobile. Section titles remain 15–18px.
-- Keep paragraph line lengths readable. Do not reduce text sizes to fit a layout;
-  let controls wrap or switch to a single column.
+“Reload page”, “This page couldn't be displayed”, “No plan usage is available
+for this account.”, “Regression plan”, “No recent upstream errors”,
+“Request stats unavailable”, “No model traffic yet”, “All recorded traffic”,
+“Performance history”, “Live updates”, “Couldn't refresh upstream errors”,
+“Couldn't load request details”, “This request is no longer available in the
+retained history.”, “Retry”.
 
-## 4. Spacing / radius / elevation
+ZCode `plans: null` renders the empty usage state and must not crash Overview.
+Normalize nullable collections at the boundary (`?? []`). One page-level error
+when every overview query fails; partial failures keep their own retry.
 
-- Mantine spacing: `xs 6 · sm 10 · md 16 · lg 24 · xl 32`.
-- Radius: `xs 2 · sm 4 · md 8 · lg 10 · xl 14`; default controls use `md`,
-  cards use `lg`. Badges can be rounded. Avoid nested oversized cards.
-- Borders use `var(--hairline)`. Cards are flat, with no shadow; do not add
-  independent shadows or animated lifts to static data cards.
+## Accessibility
 
-## 5. Chart rules (hard rules)
-
-- **No dual-axis charts. Ever.** Two measures of different scale ⇒ two charts,
-  small multiples, or index to a common base. This is the single most common
-  chart mistake.
-- **Form follows the job**: magnitude → horizontal bar; identity → categorical
-  color in fixed order; ordered data (percentiles) → the one-hue `ordinal`
-  ramp; polarity → a two-hue diverging scale with a neutral gray midpoint.
-- **Color follows the entity, never its rank.** Slot 0 is always `input`, slot 1
-  `output`, slot 2 `cache read`, slot 3 `cache write` (`seriesNames`). A filter
-  that removes a series must not repaint the survivors. A 5th series folds into
-  "Other" or becomes small multiples — never a generated hue.
-- **Persistent named keys for multiple series.** History charts show the latest
-  sampled value beside each key above the plot. Do not place end labels inside
-  narrow plots, where they overlap. Keep tooltips and accessible data tables.
-- **Hover layer is mandatory**: crosshair + tooltip on line/area, per-mark
-  tooltip on bar/dot/cell. Hit target ≥ the mark.
-- **Grid and axes are recessive**; never a number on every point. Selectively
-  direct-label the extremes.
-- **State is never color alone** — always icon or text too.
-
-## 6. Motion
-
-Fast and functional. Durations `120ms` (hover/tint) and `200ms` (drawer/modal);
-easing `ease-out` for entrances, `ease-in` for exits. Animate `opacity`,
-`transform`, and `background-color` only — never `width`/`height`/`top`.
-`prefers-reduced-motion` is already wired globally; don't fight it.
-
-## 7. Responsive
-
-- `48em` (768px) is the single breakpoint. Below it: AppShell shows a bottom tab
-  bar (`App.tsx` owns it — **your CSS must not fight it**), tables become cards,
-  multi-column grids collapse to one column, drawers go full-width.
-- Touch targets ≥44×44px on coarse pointers.
-- `overflow-x` on data tables; long identifiers use `overflow-wrap: anywhere`
-  and MUST NOT be truncated — the model name is the identity.
-
-## 8. Component contracts you must preserve
-
-Other pages import these. Do not rename props.
-
-```ts
-PageHeader   ({ title, subtitle?, extra? })
-PageSection  ({ title, description?, extra? })
-EmptyState   ({ icon, title, hint? })
-```
-
-Pages also share `StatTile`, `UptimeBadge`, `StatusChips`, `TokenMixBar` /
-`TokenLegend`, `PercentileBars`, `TimeRangeControl`, `HistoryCharts`. Read the
-component before using it; if you change a signature, grep for every caller and
-update them in the same commit.
-
-**`Fade`** is exported from `App.tsx` (`{ pending, children }`) and imported by
-all four pages. Leave that export alone.
-
-## 9. Do / Don't
-
-| Do | Don't |
-|---|---|
-| Use `var(--card)`, `var(--hairline)` | Hard-code surface hexes |
-| Tabular figures for comparable values | Proportional figures in a scanned column |
-| Quiet shared borders and elevation | Per-component shadows or hover lifts |
-| Fixed categorical slot order | Assign colors by rank/sort order |
-| One axis per chart | Dual-axis charts |
-| Icon **or** label with status color | Color-only state |
-| `overflow-wrap: anywhere` on identifiers | Truncating model names |
-| Reuse shared components | Forking a near-copy per page |
-| Re-run the validator if you touch chart color | Eyeballing palette changes |
-
-## 10. Accessibility floor
-
-- Body text ≥4.5:1; large text and UI edges ≥3:1.
-- Visible `:focus-visible` ring on everything interactive (2px, 2px offset).
-  Do not `outline: none` without a replacement.
-- Every icon-only control needs an `aria-label`.
-- Filters/results announce via `aria-live`; charts expose a text/table
-  equivalent or a complete `aria-label`.
-- Never convey state by color alone.
-
-## 11. Z-index scale
-
-| Layer | z-index |
-|---|---|
-| base | 0 |
-| sticky | 10 |
-| dropdown | 100 |
-| drawer | 200 |
-| modal | 300 |
-| toast | 400 |
-| skip-link | 500 |
-
-## 12. Skeleton pattern
-
-- Use `var(--sunken)` background with a subtle pulse animation.
-- Match the dimensions of the content being loaded.
-- No spinner for initial load — use skeleton placeholders.
-
-## 13. Toast / notification pattern
-
-- Placement: bottom-right.
-- Duration: 4s for success, 6s for error.
-- Variant colors: success → `--data-good`, error → `--data-critical`.
-
-## 14. Form input styling
-
-- Radius: `md`.
-- Border: `1px solid var(--hairline)`.
-- Focus ring: `2px solid var(--mantine-primary-color-filled)`.
-- Error state: `border-color: var(--data-critical)`.
-
-## 15. Error state pattern
-
-- Icon + message + retry action.
-- Use `--data-critical` for critical failures.
-- Use `--data-warning` for recoverable errors.
-- Never show a wall of identical error cards — consolidate into a single
-  banner when all queries fail.
-
-## 16. Icon size scale
-
-| Size | Value | Use |
-|---|---|---|
-| xs | 12px | inline text |
-| sm | 14px | buttons |
-| md | 16px | nav |
-| lg | 20px | standalone |
-| xl | 24px | hero |
-
-## 17. Verify before you finish
-
-```bash
-cd web && npx tsc -b          # must pass
-cd web && npm run lint        # no new errors
-node scripts/ui-shots.mjs --out /tmp/ui-shots/current   # shoot your pages
-```
-`lint` has two existing `only-export-components` warnings in `HistoryCharts`.
-Do not introduce new warnings. Run the regression harness for behavior changes:
-
-```bash
-node scripts/ui-shots.mjs --base-url http://127.0.0.1:5173 --regression --out /tmp/llm-proxy-review
-```
-
-Page orchestration lives in `pages/`; detailed views and helpers live in
-`components/catalog/`, `components/overview/`, and `components/setup/`. Keep
-page styles in the corresponding CSS file. Usage cards share `UsageCardShell`
-and `UsageMeter`. Setup connection checks must use `GET /healthz`; loading the
-page or checking connectivity must never send inference or claim rewards.
+- Name icon-only buttons.
+- Do not rely on color alone for status; pair it with text.
+- Honor `prefers-reduced-motion`.
+- Keep light and dark themes and 320px layouts free of horizontal page overflow.

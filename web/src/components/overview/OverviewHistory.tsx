@@ -1,4 +1,4 @@
-import { Card, Code, SimpleGrid, Skeleton, Text, Title } from '@mantine/core'
+import { Card, Code, Skeleton, Text, Title } from '@mantine/core'
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { SeriesPoint, StatsSeriesResponse } from '../../api'
 import { PageSection } from '../PageSection'
@@ -63,26 +63,32 @@ export default function OverviewHistory({ query, range, onRangeChange }: {
     <PageSection title="Performance over time"
       description={query.isError ? 'History unavailable' : requestCount === undefined ? 'Volume, reliability, latency and tokens' : `${requestCount.toLocaleString('en-US')} requests in range`}
       extra={<TimeRangeControl value={range} onChange={onRangeChange} />}>
-      {query.isPending ? <SimpleGrid cols={{ base: 1, md: 2 }}>{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={280} radius="lg" />)}</SimpleGrid> : query.isError ? (
+      {query.isPending ? <div className="overview-history-grid">{Array.from({ length: 4 }, (_, i) => (
+        <Card key={i} withBorder radius="lg" p="lg" className="overview-chart-card" aria-hidden>
+          <Skeleton height={13} width={88} radius="sm" />
+          <Skeleton height={22} width={132} radius="sm" mt={12} mb={14} />
+          <Skeleton height={210} radius="sm" />
+        </Card>
+      ))}</div> : query.isError ? (
         <ErrorRetryCard title="Couldn't load time history"
           message={<>History is unavailable. Check connectivity and whether <Code>stats.persist_file</Code> or Redis history is configured.</>}
           onRetry={() => query.refetch({ cancelRefetch: false })} retrying={query.isFetching} />
       ) : (
         <div className="overview-history-grid">
           <ChartCard title="Requests" headline={requestCount === undefined ? '—' : historyFormatters.count(requestCount)} caption="upstream attempts in range">
-            <HistoryBarChart title="Request volume" description="Upstream attempts per interval" points={requests ?? []} height={150} />
+            <HistoryBarChart title="Request volume" description="Upstream attempts per interval" points={requests ?? []} height={210} compact />
           </ChartCard>
           <ChartCard title="Success rate" headline={successRate === undefined ? '—' : historyFormatters.percent(successRate)} caption="request-weighted average">
             <HistoryLineChart title="Success rate" description="Share of attempts that succeeded" data={successData}
-              series={[{ name: 'series0', label: 'Success', formatter: historyFormatters.percent }]} height={150} />
+              series={[{ name: 'series0', label: 'Success', formatter: historyFormatters.percent }]} height={210} compact />
           </ChartCard>
           <ChartCard title="Latency" headline={e2e === undefined ? '—' : historyFormatters.seconds(e2e)} caption={ttft === undefined ? 'median full response, latest' : `median full response · ${historyFormatters.seconds(ttft)} to first byte`}>
             <HistoryLineChart title="Latency" description="Median time to first byte and full response" data={latency}
-              series={[{ name: 'series0', label: 'First byte', formatter: historyFormatters.seconds }, { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds }]} height={150} />
+              series={[{ name: 'series0', label: 'First byte', formatter: historyFormatters.seconds }, { name: 'series1', label: 'Full response', formatter: historyFormatters.seconds }]} height={210} compact />
           </ChartCard>
           <ChartCard title="Tokens" headline={tokenLabel(tokenCount)} caption={`${tokenLabel(tokensIn)} in · ${tokenLabel(tokensOut)} out${tps === undefined ? '' : ` · ${historyFormatters.tps(tps)} tok/s`}`}>
             <HistoryLineChart title="Token volume" description="Input and output tokens per interval" data={tokens}
-              series={[{ name: 'series0', label: 'Input', formatter: historyFormatters.count }, { name: 'series1', label: 'Output', formatter: historyFormatters.count }]} height={150} />
+              series={[{ name: 'series0', label: 'Input', formatter: historyFormatters.count }, { name: 'series1', label: 'Output', formatter: historyFormatters.count }]} height={210} compact />
           </ChartCard>
         </div>
       )}

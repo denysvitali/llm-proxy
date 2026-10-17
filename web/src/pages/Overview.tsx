@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Skeleton, Stack, Text, Title } from '@mantine/core'
-import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, IconShieldCheck, IconWallet, IconServer, IconTerminal2 } from '@tabler/icons-react'
+import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, IconShieldCheck, IconWallet } from '@tabler/icons-react'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -54,44 +54,69 @@ export default function OverviewPage() {
   }, [models])
   const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax'].filter(Boolean)
 
+  const coreFailed = statsQ.isError && ovQ.isError && seriesQ.isError && errorsQ.isError && requestsQ.isError
   return (
     <Fade pending={statsQ.isPending || ovQ.isPending}>
-      <Stack gap="lg" className="overview-page">
+      <Stack gap="md" className="overview-page">
         <PageHeader title="Overview" subtitle="Traffic, performance, and the health of your gateway."
           extra={<Button component={Link} to="/models" variant="default" size="sm" rightSection={<IconArrowUpRight size={16} />}>Explore models</Button>} />
 
-        {ovQ.isError && <ErrorRetryCard title="Instance details unavailable" message="Configuration and subscription visibility could not be refreshed. Traffic statistics are loaded separately."
-          onRetry={() => ovQ.refetch({ cancelRefetch: false })} retrying={ovQ.isFetching} />}
+        {coreFailed ? (
+          <ErrorRetryCard title="Couldn't load the overview"
+            message="Traffic, configuration, and recent activity could not be refreshed."
+            onRetry={() => {
+              void statsQ.refetch({ cancelRefetch: false })
+              void ovQ.refetch({ cancelRefetch: false })
+              void seriesQ.refetch({ cancelRefetch: false })
+              void errorsQ.refetch({ cancelRefetch: false })
+              void requestsQ.refetch({ cancelRefetch: false })
+            }}
+            retrying={statsQ.isFetching || ovQ.isFetching || seriesQ.isFetching || errorsQ.isFetching || requestsQ.isFetching} />
+        ) : ovQ.isError ? (
+          <ErrorRetryCard title="Instance details unavailable" message="Configuration and subscription visibility could not be refreshed. Traffic statistics are loaded separately."
+            onRetry={() => ovQ.refetch({ cancelRefetch: false })} retrying={ovQ.isFetching} />
+        ) : null}
 
-        <div className="overview-command-grid">
-        <PageSection title="Traffic summary" description="All recorded traffic · independent of the chart range">
+        <section aria-label="Traffic summary">
           {statsQ.data ? <>
-            <SimpleGrid cols={{ base: 2, md: 2 }} spacing={0} className="overview-metric-band">
-              <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={17} />} />
+            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm" className="overview-stat-grid">
+              <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={16} />} />
               <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
-                hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={17} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
-              <StatTile label="Tokens served" value={fmtInt(totals.input + totals.output)} hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`} icon={<IconCoins size={17} />} />
-              <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={17} />} />
+                hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={16} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
+              <StatTile label="Tokens served" value={fmtInt(totals.input + totals.output)} hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`} icon={<IconCoins size={16} />} />
+              <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={16} />} />
             </SimpleGrid>
             <Group className="overview-summary-footer" justify="space-between" gap="xs">
               <Text size="xs" c="dimmed">{models.filter((model) => model.requests > 0).length} {models.filter((model) => model.requests > 0).length === 1 ? 'model' : 'models'} with traffic</Text>
               <Group gap="md"><Text size="xs" c="dimmed"><Text span inherit fw={600}>{fmtInt(totals.toolCalls)}</Text> tool calls</Text><Text size="xs" style={{ color: totals.toolErrors ? 'var(--data-critical)' : undefined }} c={totals.toolErrors ? undefined : 'dimmed'}><Text span inherit fw={600}>{fmtInt(totals.toolErrors)}</Text> tool errors{totals.toolCalls > 0 ? ` · ${(100 * clampRate(totals.toolErrors / totals.toolCalls)).toFixed(1)}%` : ''}</Text></Group>
             </Group>
-          </> : statsQ.isPending ? <SimpleGrid cols={{ base: 2, md: 4 }}>{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={122} radius="lg" />)}</SimpleGrid> : null}
-          {statsQ.isError ? <ErrorRetryCard title="Couldn't load proxy statistics" message={statsQ.error instanceof Error ? `Model statistics are temporarily unavailable. ${statsQ.error.message}` : 'Model statistics are temporarily unavailable.'}
-            onRetry={() => statsQ.refetch({ cancelRefetch: false })} retrying={statsQ.isFetching} /> : models.length === 0 && !statsQ.isPending ? <EmptyState icon={<IconInboxOff size={20} />} title="No model traffic yet" hint="Send a request through the proxy and per-model stats will land here." /> : null}
-        </PageSection>
-        {ov && <GatewaySnapshot overview={ov} />}
-        </div>
+          </> : statsQ.isPending ? (
+            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm" className="overview-stat-grid">
+              {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={108} radius="md" />)}
+            </SimpleGrid>
+          ) : null}
+          {!coreFailed && statsQ.isError ? (
+            <ErrorRetryCard title="Couldn't load proxy statistics" message={statsQ.error instanceof Error ? `Model statistics are temporarily unavailable. ${statsQ.error.message}` : 'Model statistics are temporarily unavailable.'}
+              onRetry={() => statsQ.refetch({ cancelRefetch: false })} retrying={statsQ.isFetching} />
+          ) : !coreFailed && models.length === 0 && !statsQ.isPending ? (
+            <EmptyState icon={<IconInboxOff size={20} />} title="No model traffic yet" hint="Send a request through the proxy and per-model stats will land here." />
+          ) : null}
+        </section>
 
-        <div className="overview-monitoring-grid">
-          <div className="workspace-section-label"><span>TRAFFIC INTELLIGENCE</span><Text size="xs" c="dimmed">Explore request volume over time</Text></div>
-          <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />
-        </div>
+        {!coreFailed && (
+          <div className="overview-monitor">
+            <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />
+            <Stack gap="sm" className="overview-errors">
+              {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
+                onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
+              {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={240} radius="md" /> : null}
+            </Stack>
+          </div>
+        )}
 
-        {usageNames.length > 0 && <Accordion variant="separated" radius="lg" className="overview-subscriptions">
+        {!coreFailed && usageNames.length > 0 && <Accordion variant="separated" radius="md" className="overview-subscriptions" value="subscriptions" onChange={() => {}}>
           <Accordion.Item value="subscriptions">
-            <Accordion.Control icon={<IconWallet size={20} stroke={1.6} />}>
+            <Accordion.Control icon={<IconWallet size={18} stroke={1.6} />}>
               <Group justify="space-between" gap="xs" pr="sm">
                 <Box><Text size="sm" fw={600}>Subscription usage</Text><Text size="xs" c="dimmed">{usageNames.join(' · ')} account quotas</Text></Box>
                 <Badge variant="light" color="gray" tt="none">{usageNames.length} accounts</Badge>
@@ -105,22 +130,18 @@ export default function OverviewPage() {
           </Accordion.Item>
         </Accordion>}
 
-        {statsQ.data && <OverviewTraffic models={models} />}
-
-        <PageSection title="Recent activity" description="Retained upstream attempts · updates live and every 30 seconds · independent of chart range">
-          <div className="overview-activity-grid">
+        {!coreFailed && (
+          <PageSection title="Recent requests" description="Retained upstream attempts · updates live and every 30 seconds · independent of chart range">
             <Stack gap="sm">
               {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
                 onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />}
               {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} isMobile={isMobile} />}
             </Stack>
-            <Stack gap="sm">
-              {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
-                onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
-              {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={180} radius="lg" /> : null}
-            </Stack>
-          </div>
-        </PageSection>
+          </PageSection>
+        )}
+
+        {!coreFailed && ov && <GatewaySnapshot overview={ov} />}
+        {!coreFailed && statsQ.data && <OverviewTraffic models={models} />}
       </Stack>
     </Fade>
   )
@@ -133,26 +154,26 @@ function GatewaySnapshot({ overview }: { overview: Overview }) {
   const ordered = [...attention, ...enabled.filter((backend) => !needsAttention(backend))]
   return (
     <aside className="overview-gateway" aria-label="Gateway configuration summary">
-      <div className="overview-gateway-heading"><Title order={2} fz={16} fw={650}>Gateway readiness</Title><IconServer size={18} aria-hidden /></div>
-      <Card className="overview-gateway-card" p="lg">
-        <Text size="xs" c="dimmed">Enabled providers</Text>
-        <div className="overview-gateway-total"><Text className="stat-value" fz={36} fw={650} lh={1.2}>{enabled.length}</Text><Text size="sm" c="dimmed">/ {overview.backends.length} configured</Text></div>
-        <Badge color={attention.length ? 'yellow' : 'gray'} variant="light" tt="none" mt="sm">{attention.length ? `${attention.length} need attention` : enabled.length ? 'Catalogs ready' : 'No enabled providers'}</Badge>
-        <Text size="xs" c="dimmed" mt="md" lh={1.5}>Authentication and catalog availability. Request success is shown in the traffic breakdown.</Text>
-        <div className="overview-readiness-list">
-          {ordered.slice(0, 4).map((backend) => <div key={backend.name} className="overview-readiness-row">
-            <Text size="sm" fw={550} className="overview-identifier">{backend.name}</Text>
-            <Text size="xs" className="overview-readiness-status" data-attention={needsAttention(backend)}>{!backend.hasKey && !backend.authConfigured ? 'Auth needed' : !backend.catalogOK ? 'Catalog unavailable' : 'Catalog ready'}</Text>
-          </div>)}
-        </div>
-        <Button component={Link} to="/providers" fullWidth variant="default" size="sm" mt="md" rightSection={<IconArrowUpRight size={15} />}>Manage providers{ordered.length > 4 ? ` (${enabled.length})` : ''}</Button>
-        <div className="overview-gateway-auth"><IconShieldCheck size={16} aria-hidden /><Text size="xs">Client auth <Text span inherit fw={600}>{overview.authEnabled ? 'on' : 'off'}</Text></Text></div>
-      </Card>
-      <Card p="lg" className="overview-connect-card">
-        <IconTerminal2 size={20} aria-hidden />
-        <Text size="sm" fw={650} mt="sm">One gateway. Every client.</Text>
-        <Text size="xs" c="dimmed" lh={1.6} mt={4}>Connect Claude Code, Codex CLI, or any compatible API client.</Text>
-        <Button component={Link} to="/setup" variant="light" fullWidth mt="md" size="sm" rightSection={<IconArrowUpRight size={15} />}>Connect a client</Button>
+      <div className="overview-gateway-heading">
+        <Title order={2}>Gateway readiness</Title>
+        <Group gap="xs">
+          <Badge color={attention.length ? 'yellow' : 'gray'} variant="light" tt="none">{attention.length ? `${attention.length} need attention` : enabled.length ? 'Catalogs ready' : 'No enabled providers'}</Badge>
+          <Text size="xs" c="dimmed">{enabled.length} / {overview.backends.length} enabled · client auth {overview.authEnabled ? 'on' : 'off'}</Text>
+        </Group>
+      </div>
+      <Card className="overview-gateway-card" withBorder p="md">
+        {ordered.length === 0 ? <Text size="sm" c="dimmed">No enabled providers.</Text> : (
+          <div className="overview-readiness-list">
+            {ordered.slice(0, 8).map((backend) => <div key={backend.name} className="overview-readiness-row">
+              <Text size="sm" fw={550} className="overview-identifier">{backend.name}</Text>
+              <Text size="xs" className="overview-readiness-status" data-attention={needsAttention(backend)}>{!backend.hasKey && !backend.authConfigured ? 'Auth needed' : !backend.catalogOK ? 'Catalog unavailable' : 'Catalog ready'}</Text>
+            </div>)}
+          </div>
+        )}
+        <Group gap="sm" mt="sm">
+          <Button component={Link} to="/providers" variant="default" size="compact-sm" rightSection={<IconArrowUpRight size={14} />}>Manage providers{ordered.length > 8 ? ` (${enabled.length})` : ''}</Button>
+          <Button component={Link} to="/setup" variant="subtle" size="compact-sm">Connect a client</Button>
+        </Group>
       </Card>
     </aside>
   )

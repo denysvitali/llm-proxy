@@ -1,34 +1,49 @@
 /* Overview page — refined control-room layout. Surfaces and hairlines
    come from the shared tokens so light and dark schemes both hold. */
-.overview-metric-band { border: 1px solid var(--hairline); border-radius: var(--mantine-radius-lg); overflow: hidden; background: var(--card); }
-.overview-metric-band .stat-tile { border: 0; border-radius: 0; background: transparent; padding: 22px 24px; }
-.overview-metric-band .stat-tile::before { content: ''; position: absolute; top: 0; left: 24px; right: 24px; height: 2px; background: var(--hairline); }
-.overview-metric-band .stat-tile .stat-icon { width: 30px; height: 30px; border-radius: 8px; background: var(--sunken); color: var(--mantine-color-dimmed); }
-.overview-metric-band .stat-tile + .stat-tile { border-left: 1px solid var(--hairline); }
-.overview-metric-band .stat-tile .stat-value { font-size: 36px; font-weight: 650; }
-.overview-monitoring-grid { display: grid; grid-template-columns: minmax(0, 1fr) 286px; gap: 20px; align-items: start; }
-.overview-gateway { display: grid; gap: 16px; min-width: 0; }
-.overview-gateway-heading { display: flex; align-items: center; justify-content: space-between; min-height: 48px; color: var(--mantine-color-dimmed); }
-.overview-gateway-heading h2 { color: var(--mantine-color-text); }
-.overview-gateway-total { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
-.overview-readiness-list { margin-top: 18px; }
-.overview-readiness-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
-.overview-gateway-card { border-top: 3px solid color-mix(in srgb, var(--mantine-primary-color-filled) 45%, var(--hairline)); }
-.overview-readiness-row:last-child { border-bottom: 0; }
-.overview-readiness-status { font-size: 12px; font-weight: 600; }
-.overview-readiness-row > :first-child { min-width: 0; }
-.overview-readiness-status { flex-shrink: 0; color: var(--data-good); }
-.overview-readiness-status[data-attention='true'] { color: var(--data-warning); }
-.overview-gateway-auth { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; color: var(--mantine-color-dimmed); }
-.overview-connect-card { background: var(--sunken); }
-.overview-connect-card > svg { color: var(--mantine-primary-color-filled); }
-.overview-summary-footer {
-  padding: 10px 2px 0;
+.overview-stat-grid { align-items: stretch; }
+.overview-stat-grid .stat-tile { height: 100%; }
+.overview-summary-footer { padding: 8px 2px 0; }
+.overview-monitor {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(240px, 0.8fr);
+  gap: 16px;
+  align-items: start;
 }
+.overview-monitor > * { min-width: 0; }
+.overview-errors .mantine-Card-root,
+.overview-chart-card { box-shadow: none; }
+.overview-gateway { display: grid; gap: 8px; min-width: 0; }
+.overview-gateway-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 28px;
+}
+.overview-gateway-heading h2 { font-size: 14px; font-weight: 600; }
+.overview-readiness-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+}
+.overview-readiness-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.overview-readiness-row > :first-child { min-width: 0; }
+.overview-readiness-status { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--data-good); }
+.overview-readiness-status[data-attention='true'] { color: var(--data-warning); }
+
 .overview-history-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--mantine-spacing-md);
+  gap: 12px;
 }
 .overview-chart-headline {
   display: flex;
@@ -38,10 +53,11 @@
   margin: 10px 0 14px;
 }
 .overview-chart-headline > span {
-  font-size: 1.65rem;
-  font-weight: 700;
+  font-size: 22px;
+  font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 .overview-breakdown-grid {
   display: grid;
@@ -49,9 +65,6 @@
   gap: var(--mantine-spacing-md);
 }
 .overview-chart-card { min-width: 0; }
-/* The card heading supplies the visible title; retain the chart's own label for assistive technology. */
-.overview-chart-card > [role='group'] > :first-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.overview-chart-card > [role='group'] > :nth-child(2) { margin-bottom: 12px; }
 .overview-card-header {
   display: flex;
   align-items: center;
@@ -239,18 +252,12 @@
   margin-top: 2px;
 }
 @media (max-width: 80em) {
-  .overview-monitoring-grid { grid-template-columns: minmax(0, 1fr); }
-  .overview-gateway { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .overview-gateway-heading { grid-column: 1 / -1; min-height: 24px; }
-}
-@media (max-width: 61.99em) {
-  .overview-metric-band .stat-tile:nth-child(odd) { border-left: 0; }
-  .overview-metric-band .stat-tile:nth-child(n + 3) { border-top: 1px solid var(--hairline); }
+  .overview-monitor { grid-template-columns: minmax(0, 1fr); }
+  .overview-readiness-list { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 48em) {
-  .overview-monitoring-grid, .overview-gateway { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  .overview-metric-band .stat-tile { padding: 16px; }
-  .overview-metric-band .stat-tile .stat-value { font-size: 28px; }
+  .overview-monitor, .overview-gateway { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .overview-readiness-list { grid-template-columns: minmax(0, 1fr); }
   .overview-activity-grid,
   .overview-history-grid,
   .overview-breakdown-grid {

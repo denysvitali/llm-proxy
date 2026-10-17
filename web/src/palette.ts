@@ -7,7 +7,7 @@
 // WCAG contrast against the actual card surface each mode renders on.
 //
 //   node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode light --surface #ffffff
-//   node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode dark  --surface #14161a
+//   node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode dark  --surface #171a21
 //   node <dataviz>/scripts/validate_palette.js "<hex,...>" --mode light --surface #ffffff --ordinal
 //
 // Current results (all PASS, no relief/warn bands):
@@ -59,8 +59,8 @@ export const seriesNames = ['input', 'output', 'cache read', 'cache write'] as c
 // Resolved UI surfaces, exposed so chart axes/grid can dress themselves to the
 // same card the chart actually sits on instead of guessing.
 export const surfaces = {
-  light: { canvas: '#f4f5f7', card: '#ffffff', hairline: 'rgba(0, 0, 0, 0.10)' },
-  dark: { canvas: '#0b0d10', card: '#14161a', hairline: 'rgba(255, 255, 255, 0.10)' },
+  light: { canvas: '#eef1f6', card: '#ffffff', hairline: '#d5dbe6' },
+  dark: { canvas: '#0c0e13', card: '#171a21', hairline: '#2c3240' },
 } as const
 
 // Resolves the active color scheme ('auto' included) and returns the validated

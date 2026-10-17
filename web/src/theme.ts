@@ -16,30 +16,30 @@ import {
 // Shared typography and controls; chart colors live in palette.ts.
 
 const dark: [string, string, string, string, string, string, string, string, string, string] = [
-  '#edf1f8', // 0 — primary text on dark
-  '#dce3f0', // 1
-  '#c0cbdc', // 2 — secondary text
-  '#a1adc3', // 3 — tertiary / disabled
-  '#74829a', // 4 — muted
-  '#354159', // 5 — disabled borders
-  '#2b303d', // 6 — raised borders
-  '#1c202b', // 7 — raised surface
-  '#14161a', // 8 — card / drawer surface (chart contrast reference)
-  '#0f1117', // 9 — canvas
+  '#f3f5f8', // 0 — ink
+  '#d7dee8', // 1
+  '#a3adbd', // 2 — muted
+  '#7d8898', // 3
+  '#2c3240', // 4 — border
+  '#242a36', // 5
+  '#171a21', // 6 — card
+  '#10131a', // 7 — sidebar / body
+  '#0c0e13', // 8 — canvas
+  '#090b10', // 9
 ]
 
-// Indigo carries interaction; charts use palette.ts.
+// Signal accent is interaction only. Chart series stay in palette.ts.
 const brand: [string, string, string, string, string, string, string, string, string, string] = [
-  '#eef2ff',
-  '#e0e7ff',
-  '#c7d2fe',
-  '#a5b4fc',
-  '#9298f8', // 4 — dark-mode accent
-  '#7478ee',
-  '#5556d9', // 6 — light-mode accent
-  '#4646bc',
-  '#393b96',
-  '#303278',
+  '#eef3ff',
+  '#dce6ff',
+  '#c5d4ff',
+  '#a9c0ff',
+  '#8eabff', // 4 — dark accent
+  '#5b82f0',
+  '#2457d6', // 6 — light accent
+  '#1c46b0',
+  '#173890',
+  '#122c70',
 ]
 
 export const theme = createTheme({
@@ -55,10 +55,10 @@ export const theme = createTheme({
   fontFamilyMonospace:
     'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
   headings: {
-    fontWeight: '650',
+    fontWeight: '600',
     sizes: {
-      h1: { fontSize: rem(34), lineHeight: '1.2', fontWeight: '650' },
-      h2: { fontSize: rem(18), lineHeight: '1.3', fontWeight: '650' },
+      h1: { fontSize: rem(22), lineHeight: '1.2', fontWeight: '600' },
+      h2: { fontSize: rem(14), lineHeight: '1.3', fontWeight: '600' },
       h3: { fontSize: rem(15), lineHeight: '1.35', fontWeight: '650' },
       h4: { fontSize: rem(13), lineHeight: '1.4', fontWeight: '600' },
       h5: { fontSize: rem(12), lineHeight: '1.45', fontWeight: '600' },
@@ -70,7 +70,7 @@ export const theme = createTheme({
     xs: rem(2),
     sm: rem(4),
     md: rem(8),
-    lg: rem(10),
+    lg: rem(12),
     xl: rem(14),
   },
   components: {

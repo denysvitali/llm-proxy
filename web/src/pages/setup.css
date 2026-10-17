@@ -1,16 +1,44 @@
 .setup-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(245px, 0.38fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
+.setup-layout > :last-child {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  position: static;
+}
+.setup-sequence {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  overflow: hidden;
+}
+.setup-sequence a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  color: var(--mantine-color-text);
+  text-decoration: none;
+  min-width: 0;
+  min-height: 44px;
+}
+.setup-sequence a + a { border-left: 1px solid var(--hairline); }
+.setup-sequence a > span { color: var(--accent); font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.setup-sequence strong { display: block; font-size: 13px; font-weight: 600; }
+.setup-sequence small { display: block; color: var(--mantine-color-dimmed); font-size: 11px; margin-top: 2px; }
 .setup-layout > * { min-width: 0; }
 .setup-client-card,
 .setup-gateway-card,
 .setup-accounts-card,
 .setup-connection-check { border-color: var(--hairline); }
 .setup-section-heading { padding: 20px 24px; background: color-mix(in srgb, var(--sunken) 45%, var(--card)); }
-.setup-client-card { border-top: 3px solid color-mix(in srgb, var(--mantine-primary-color-filled) 45%, var(--hairline)); }
+.setup-client-card { border-top: 0; }
 .setup-gateway-card .setup-context-row + .setup-context-row { border-top: 1px solid var(--hairline); padding-top: 8px; margin-top: 8px; }
 .setup-accounts-card .setup-account { padding: 14px 0; }
 .setup-connection-check { border-style: dashed; }
@@ -49,7 +77,9 @@
 .setup-connection-check { background: var(--card); }
 @media (max-width: 48em) {
   .setup-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .setup-layout > :nth-child(2) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
+  .setup-sequence { grid-template-columns: minmax(0, 1fr); }
+  .setup-sequence a + a { border-left: 0; border-top: 1px solid var(--hairline); }
+  .setup-layout > :nth-child(2) { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); align-items: start; gap: 12px; }
   .setup-section-heading { padding: 16px; }
   .setup-client-card .snippet-block { padding: 16px; }
   .setup-client-tabs { padding-inline: 6px; }

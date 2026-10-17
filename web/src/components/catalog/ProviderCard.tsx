@@ -65,7 +65,6 @@ export default function ProviderCard({
           </Stack>
         </div>
         <div className="provider-traffic-region">
-        <Text className="workspace-kicker">RECORDED TRAFFIC</Text>
         <div className="catalog-provider-metrics">
           <Metric label="Requests" value={ready ? fmtInt(aggregate.requests) : '—'} />
           <Metric label="Success" value={ready && aggregate.requests > 0 ? pct(aggregate.uptime) : '—'} />
