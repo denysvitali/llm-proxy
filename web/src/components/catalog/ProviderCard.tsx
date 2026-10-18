@@ -2,7 +2,7 @@ import { Badge, Box, Button, Card, Group, Stack, Text, Title } from '@mantine/co
 import { IconChevronRight, IconKey, IconUser } from '@tabler/icons-react'
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { GrokUsage, MiniMaxUsage, OverviewBackend } from '../../api'
-import { fmtInt } from '../../format'
+import { fmtInt, plural } from '../../format'
 import UptimeBadge from '../UptimeBadge'
 import GrokUsageCompact from '../GrokUsageCompact'
 import { MiniMaxUsageCompact } from '../MiniMaxUsageCard'
@@ -48,7 +48,7 @@ export default function ProviderCard({
               </Group>
               <Text size="xs" c="dimmed" className="catalog-provider-host" mt={3}>{backend.host}</Text>
               <Text size="xs" c="dimmed" mt={4}>
-                {backend.catalogOK ? `${fmtInt(backend.models?.length ?? 0)} models` : 'Models unavailable'}
+                {backend.catalogOK ? plural(backend.models?.length ?? 0, 'model') : 'Models unavailable'}
                 {routeCount > 0 && ` · ${routeCount} explicit route${routeCount === 1 ? '' : 's'}`}
               </Text>
             </Box>

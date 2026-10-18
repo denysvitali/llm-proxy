@@ -47,3 +47,8 @@ export function fmtTime(d: Date): string {
   if (!Number.isFinite(d.getTime())) return '—'
   return d.toLocaleTimeString('en-US', { hour12: false })
 }
+
+// "1 model" / "3 models"; the count is formatted like every other integer.
+export function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${fmtInt(n)} ${n === 1 ? singular : pluralForm}`
+}

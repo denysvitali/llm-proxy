@@ -99,15 +99,26 @@ type NullableStatsSeriesResponse = {
   series?: { [Key in keyof StatsSeries]?: StatsSeries[Key] | null } | null
 }
 
+// The server zero-fills every interval. For ratios and percentiles a zero in
+// an interval without requests is not a measurement, so it becomes NaN: the
+// timestamp stays on the axis, while charts and tables show no sample.
+function maskIdle(points: SeriesPoint[] | null | undefined, idle: Set<string>): SeriesPoint[] {
+  if (!points) return []
+  if (!idle.size) return points
+  return points.map((point) => idle.has(point.ts) ? { ts: point.ts, value: Number.NaN } : point)
+}
+
 function normalizeStatsSeries(data: NullableStatsSeriesResponse): StatsSeriesResponse {
+  const requests = data.series?.requests ?? []
+  const idle = new Set(requests.filter((point) => point.value === 0).map((point) => point.ts))
   return {
     models: data.models ?? [],
     series: {
-      requests: data.series?.requests ?? [],
-      success_rate: data.series?.success_rate ?? [],
-      ttft_p50: data.series?.ttft_p50 ?? [],
-      e2e_p50: data.series?.e2e_p50 ?? [],
-      throughput_p50: data.series?.throughput_p50 ?? [],
+      requests,
+      success_rate: maskIdle(data.series?.success_rate, idle),
+      ttft_p50: maskIdle(data.series?.ttft_p50, idle),
+      e2e_p50: maskIdle(data.series?.e2e_p50, idle),
+      throughput_p50: maskIdle(data.series?.throughput_p50, idle),
       tokens_in: data.series?.tokens_in ?? [],
       tokens_out: data.series?.tokens_out ?? [],
       tool_calls: data.series?.tool_calls ?? [],

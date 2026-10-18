@@ -60,7 +60,7 @@ export default function OverviewTraffic({ models }: { models: ModelStat[] }) {
               })}
             </ol>
           )}
-          {ranked.length > 0 && <Text size="xs" c="dimmed" mt="md">Top {ranked.length} models · share of all requests</Text>}
+          {ranked.length > 0 && <Text size="xs" c="dimmed" mt="md">{ranked.length === 1 ? 'Top model' : `Top ${ranked.length} models`} · share of all requests</Text>}
         </Card>
         <Card withBorder radius="lg" p="lg">
           <div className="overview-card-header">

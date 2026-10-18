@@ -20,6 +20,8 @@ html:root[data-mantine-color-scheme='light'] {
   --ink: #141820;
   --muted: #5e6876;
   --accent: #2457d6;
+  /* Subtle/light buttons are links: keep them on the accent, not brand-0/9. */
+  --mantine-color-brand-light-color: var(--accent);
   --grad: linear-gradient(145deg, #5d84f2 0%, #2457d6 100%);
   --brand-mark-ink: #ffffff;
   --mantine-color-text: var(--ink);
@@ -55,6 +57,7 @@ html:root[data-mantine-color-scheme='dark'] {
   --ink: #f3f5f8;
   --muted: #a3adbd;
   --accent: #8eabff;
+  --mantine-color-brand-light-color: var(--accent);
   --grad: linear-gradient(145deg, #c5d4ff 0%, #8eabff 100%);
   --brand-mark-ink: #141820;
   --mantine-color-text: var(--ink);

@@ -302,16 +302,20 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
       <Text id={id} size="sm" fw={650} lh={1.25} style={compact ? assistiveOnly : undefined}>{title}</Text>
       <Text id={`${id}-description`} size="xs" c="dimmed" mt={compact ? 0 : 1} mb={compact ? 0 : 10} lh={1.3} style={compact ? assistiveOnly : undefined}>{description}</Text>
       {hasData && (!compact || !single) && (
-        <Group gap="md" mb="sm" aria-label="Latest sampled values and chart legend">
+        <Group gap={compact ? 'sm' : 'md'} mb="sm" aria-label={compact ? 'Chart legend' : 'Latest sampled values and chart legend'}>
           {coloredSeries.map((item) => {
             const index = lastIndexBySeries.get(item.name)
             const point = index === undefined ? undefined : data[index]
             const value = point ? sampleValue(point[item.name], item.formatter) : undefined
+            // Compact cards carry the values in their headline; the legend
+            // only has to name the marks so it stays on one line.
             return <Group key={item.name} gap={6} wrap="nowrap" miw={0} title={point ? `Latest sample: ${formatTooltipTime(String(point.time))}` : 'No sample'}>
               <LineKey item={item} />
               <Text size="xs" c="dimmed">{item.label}</Text>
-              <Text size="xs" fw={600} className="tabular">{value === undefined ? '—' : item.formatter(value)}</Text>
-              <Text size="xs" c="dimmed">latest</Text>
+              {!compact && <>
+                <Text size="xs" fw={600} className="tabular">{value === undefined ? '—' : item.formatter(value)}</Text>
+                <Text size="xs" c="dimmed">latest</Text>
+              </>}
             </Group>
           })}
         </Group>

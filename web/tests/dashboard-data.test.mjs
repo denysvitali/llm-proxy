@@ -34,6 +34,23 @@ test('global and scoped histories normalize null, absent, and partial series equ
   }
 })
 
+test('idle intervals carry no ratio or percentile sample', async (t) => {
+  const idle = '2030-01-01T00:00:00Z'
+  const busy = '2030-01-01T01:00:00Z'
+  const pair = (a, b) => [{ ts: idle, value: a }, { ts: busy, value: b }]
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ series: {
+    requests: pair(0, 4), success_rate: pair(0, 0.75), e2e_p50: pair(0, 0.2),
+    ttft_p50: pair(0, 0.1), throughput_p50: pair(0, 40), tokens_in: pair(0, 12),
+  } }))
+  const { series } = await fetchStatsSeries('24h')
+  for (const key of ['success_rate', 'e2e_p50', 'ttft_p50', 'throughput_p50']) {
+    assert.equal(series[key][0].ts, idle, `${key} keeps the idle timestamp`)
+    assert.ok(Number.isNaN(series[key][0].value), `${key} idle value is not a measured zero`)
+    assert.ok(series[key][1].value > 0)
+  }
+  assert.deepEqual(series.tokens_in, pair(0, 12), 'counts keep their real zeros')
+})
+
 test('transport does not retry a failed read or an ambiguous check-in', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({ error: 'unavailable' }, { status: 503 }))
   await assert.rejects(fetchStats(), { status: 503 })

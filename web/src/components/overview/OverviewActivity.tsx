@@ -35,6 +35,18 @@ function EventTime({ at }: { at: string }) {
   )
 }
 
+const wireLabels: Record<string, string> = {
+  anthropic: 'Anthropic',
+  'openai-chat': 'Chat',
+  'openai-responses': 'Responses',
+}
+
+// The upstream wire format the attempt used; an unrecorded kind is unknown.
+function WireLabel({ kind }: { kind?: string }) {
+  if (!kind) return <Text size="xs" c="dimmed" aria-label="Wire format unknown">—</Text>
+  return <Text size="xs" c="dimmed" title={kind}>{wireLabels[kind] ?? kind}</Text>
+}
+
 // UpstreamErrorsCard lists the most recent upstream failures newest-first:
 // when it happened, which backend/model, the HTTP status (or "no response"),
 // and what the upstream said about it.
@@ -151,6 +163,7 @@ export function RecentRequestsCard({
             <Table.Tr>
               <Table.Th scope="col">Time</Table.Th>
               <Table.Th scope="col">Backend / model</Table.Th>
+              <Table.Th scope="col">Wire</Table.Th>
               <Table.Th scope="col">Status</Table.Th>
               <Table.Th aria-hidden="true" />
             </Table.Tr>
@@ -164,6 +177,7 @@ export function RecentRequestsCard({
                 <Table.Td>
                   <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{request.backend} / {request.model}</Text>
                 </Table.Td>
+                <Table.Td><WireLabel kind={request.kind} /></Table.Td>
                 <Table.Td><StatusBadge status={request.status} /></Table.Td>
                 <Table.Td ta="right"><RequestInspectButton id={request.id} /></Table.Td>
               </Table.Tr>

@@ -13,7 +13,9 @@ ink `#141820`, muted `#5e6876`, accent `#2457d6`.
 Dark: canvas `#0c0e13`, sidebar `#10131a`, card `#171a21`, border `#2c3240`,
 ink `#f3f5f8`, muted `#a3adbd`, accent `#8eabff`.
 
-Accent is for interaction (links, focus, active nav, primary buttons). It is
+Accent is for interaction (links, focus, active nav, primary buttons).
+`--mantine-color-brand-light-color` maps to the accent so subtle and light
+buttons read as links in both schemes. It is
 not a card fill and not a chart series. The only gradient is the small brand
 mark. Cards are flat: 1px border, no drop shadow, no hover lift.
 
@@ -56,9 +58,12 @@ hero, decorative network diagram, or theme-invariant slabs.
 
 Overview’s `h1` is “Overview”. The first content band is four `StatTile`s
 (two-up on narrow screens): requests, success rate, tokens, median tok/s.
-Then a history block in normal surface cards (plot about 150px, card near
-240px) beside upstream errors, then “Subscription usage”, then recent
-requests, then a compact gateway-readiness strip. Readiness must not open a
+Then a full-width history block of four normal surface cards (plot about
+150px; one row from 85em, two-up below, one column on mobile). Compact chart
+legends name the marks only; the card headline carries the values. Then
+“Subscription usage”, then “Recent activity”: the recent-requests table
+(time, backend/model, wire, status) beside upstream errors, stacked below
+80em. Then a compact gateway-readiness strip. Readiness must not open a
 tall empty column. Recent-request inspection keeps `Inspect …` and
 “Close request inspection”.
 
@@ -100,6 +105,9 @@ retry, not a zero.
 
 ## Charts
 
+- The server zero-fills idle intervals. `normalizeStatsSeries` turns success
+  rate and percentile points in zero-request intervals into `NaN`, so they
+  plot as gaps and read “No sample”; counts keep their real zeros.
 - No dual axes.
 - Grid lines use `--chart-grid-color`. Plot background is the card surface.
 - Series names and order come from the data, colors from `colorForSeries`.

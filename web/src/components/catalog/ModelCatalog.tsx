@@ -16,6 +16,7 @@ import {
 import { useClipboard, useMediaQuery } from '@mantine/hooks'
 import { IconCheck, IconChevronLeft, IconChevronRight, IconCopy, IconCube } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
+import { plural } from '../../format'
 import { dashboardQueries } from '../../queries'
 import SearchInput from '../SearchInput'
 
@@ -68,7 +69,7 @@ export default function ModelCatalog() {
           </Box>
         </Group>
         <Badge variant="light" color="brand">
-          {query.data ? catalog.length : '—'} models
+          {query.data ? plural(catalog.length, 'model') : '— models'}
         </Badge>
       </Group>
       <div className="catalog-search-row">
@@ -119,7 +120,7 @@ export default function ModelCatalog() {
           <Group justify="space-between" gap="xs" mt="md" className="catalog-result-summary">
             <Text size="sm" fw={600}>Model catalog</Text>
             <Text size="xs" c="dimmed" aria-live="polite">
-              {visible.length ? `${visible.length} available` : 'No results'} · {enabled.length} enabled providers
+              {visible.length ? `${visible.length} available` : 'No results'} · {plural(enabled.length, 'enabled provider')}
             </Text>
           </Group>
           <div className="catalog-model-grid">

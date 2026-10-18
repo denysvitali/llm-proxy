@@ -103,16 +103,7 @@ export default function OverviewPage() {
           ) : null}
         </section>
 
-        {!coreFailed && (
-          <div className="overview-monitor">
-            <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />
-            <Stack gap="sm" className="overview-errors">
-              {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
-                onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
-              {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={240} radius="md" /> : null}
-            </Stack>
-          </div>
-        )}
+        {!coreFailed && <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />}
 
         {!coreFailed && usageNames.length > 0 && <Accordion variant="separated" radius="md" className="overview-subscriptions" value="subscriptions" onChange={() => {}}>
           <Accordion.Item value="subscriptions">
@@ -131,12 +122,19 @@ export default function OverviewPage() {
         </Accordion>}
 
         {!coreFailed && (
-          <PageSection title="Recent requests" description="Retained upstream attempts · updates live and every 30 seconds · independent of chart range">
-            <Stack gap="sm">
-              {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
-                onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />}
-              {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} isMobile={isMobile} />}
-            </Stack>
+          <PageSection title="Recent activity" description="Retained upstream attempts and failures · updates live and every 30 seconds · independent of chart range">
+            <div className="overview-activity-grid">
+              <Stack gap="sm">
+                {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
+                  onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />}
+                {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} isMobile={isMobile} />}
+              </Stack>
+              <Stack gap="sm" className="overview-errors">
+                {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
+                  onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
+                {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={240} radius="md" /> : null}
+              </Stack>
+            </div>
           </PageSection>
         )}
 
