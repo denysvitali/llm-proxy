@@ -10,9 +10,9 @@ import (
 func TestClaudeCodeRequestToOpenAIChat(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-code-model","max_tokens":1024,"stream":true,
-		"system":[{"type":"text","text":"You are Claude Code."},{"type":"text","text":"Use tools carefully.","cache_control":{"type":"ephemeral"}}],
+		"system":[{"type":"text","text":"You are Claude Code."},{"type":"text","text":"Use tools carefully."}],
 		"messages":[
-			{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"Checking."},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/tmp/a"}}]},
+			{"role":"assistant","content":[{"type":"text","text":"Checking."},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/tmp/a"}}]},
 			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"line one"},{"type":"text","text":"line two"}]},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWJj"}}]}
 		],
 		"tools":[{"name":"Read","description":"Read a file","input_schema":{"$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"file_path":{"type":"string"}},"required":["file_path"]}}],
@@ -33,21 +33,23 @@ func TestClaudeCodeRequestToOpenAIChat(t *testing.T) {
 	if got.Model != "hy3-free" || !got.Stream || got.StreamOptionsUsage == nil || !got.StreamOptionsUsage.IncludeUsage {
 		t.Fatalf("streaming request fields not preserved: %+v", got)
 	}
-	if len(got.Messages) != 4 || got.Messages[0].Role != "system" || got.Messages[0].Content != "You are Claude Code.\n\nUse tools carefully." {
+	if len(got.Messages) != 4 || got.Messages[0].Role != "system" {
 		t.Fatalf("translated messages = %#v", got.Messages)
 	}
+	assertContentBlocks(t, got.Messages[0].Content.([]any), []map[string]any{{"type": "text", "text": "You are Claude Code."}, {"type": "text", "text": "Use tools carefully."}})
 	if len(got.Messages[1].ToolCalls) != 1 || got.Messages[1].ToolCalls[0].Function.Name != "Read" || got.Messages[1].ToolCalls[0].Function.Arguments != `{"file_path":"/tmp/a"}` {
 		t.Fatalf("assistant tool call = %#v", got.Messages[1])
 	}
-	if got.Messages[2].Role != "tool" || got.Messages[2].ToolCallID != "toolu_1" || got.Messages[2].Content != "line one\nline two" {
+	if got.Messages[2].Role != "tool" || got.Messages[2].ToolCallID != "toolu_1" {
 		t.Fatalf("tool result = %#v", got.Messages[2])
 	}
+	assertContentBlocks(t, got.Messages[2].Content.([]any), []map[string]any{{"type": "text", "text": "line one"}, {"type": "text", "text": "line two"}})
 	parts, ok := got.Messages[3].Content.([]any)
 	if !ok || len(parts) != 1 {
 		t.Fatalf("image message content = %#v", got.Messages[3].Content)
 	}
-	if len(got.Tools) != 1 || bytes.Contains(got.Tools[0].Function.Parameters, []byte(`"$schema"`)) {
-		t.Fatalf("tool schema was not normalized: %s", got.Tools[0].Function.Parameters)
+	if len(got.Tools) != 1 || !bytes.Equal(got.Tools[0].Function.Parameters, req.Tools[0].InputSchema) {
+		t.Fatalf("tool schema was not preserved: %s", got.Tools[0].Function.Parameters)
 	}
 	choice, ok := got.ToolChoice.(map[string]any)
 	if !ok || choice["type"] != "function" || got.ParallelToolCalls == nil || *got.ParallelToolCalls {
@@ -66,14 +68,13 @@ func TestClaudeCodeStreamingChatResponse(t *testing.T) {
 	}, "\n\n")
 	var output bytes.Buffer
 	flushes := 0
-	stream := NewStreamWriter(&output, func() { flushes++ }, "fallback", true)
+	stream := NewStreamWriter(&output, func() { flushes++ }, "fallback", false)
 	if err := stream.Consume(strings.NewReader(input)); err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()
 	for _, want := range []string{
-		`event: message_start`, `"model":"hy3-free"`, `"type":"thinking_delta"`,
-		`"type":"signature_delta"`, `"text":"done","type":"text_delta"`,
+		`event: message_start`, `"model":"hy3-free"`, `"text":"done","type":"text_delta"`,
 		`"id":"toolu_call_1","input":{},"name":"Read","type":"tool_use"`,
 		`"partial_json":"{\"file_path\":"`, `"partial_json":"\"/tmp/a\"}"`,
 		`"stop_reason":"tool_use"`, `"cache_read_input_tokens":12`, `event: message_stop`,
@@ -90,7 +91,7 @@ func TestClaudeCodeStreamingChatResponse(t *testing.T) {
 func TestChatStreamRejectsTruncation(t *testing.T) {
 	var output bytes.Buffer
 	stream := NewStreamWriter(&output, nil, "model", false)
-	err := stream.Consume(strings.NewReader(`data: {"id":"x","choices":[{"delta":{"content":"partial"}}]}`))
+	err := stream.Consume(strings.NewReader(`data: {"id":"x","choices":[{"delta":{"content":"partial"}}]}` + "\n\n"))
 	if err == nil || !strings.Contains(err.Error(), "completion marker") {
 		t.Fatalf("Consume error = %v", err)
 	}

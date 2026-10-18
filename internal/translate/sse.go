@@ -1,36 +1,18 @@
 package translate
 
 import (
-	"bufio"
 	"io"
-	"strings"
+
+	"github.com/denysvitali/llm-proxy/internal/sse"
 )
 
-const maxStreamLine = 8 << 20
-
-// scanSSE passes nonempty data lines to decode until it reports a terminal
-// event or the reader ends. All translators share framing and size limits;
-// each decoder owns malformed JSON handling, completion markers and errors.
-// The supported upstream dialects carry one JSON payload per data line.
+// scanSSE dispatches complete data frames until the decoder reports a terminal
+// event. Payload whitespace is retained and multiline data is joined by SSE rules.
 func scanSSE(body io.Reader, decode func([]byte) (bool, error)) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
+	return sse.Scan(body, func(event sse.Event) (bool, error) {
+		if len(event.Data) == 0 {
+			return false, nil
 		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		stop, err := decode([]byte(payload))
-		if err != nil {
-			return err
-		}
-		if stop {
-			return nil
-		}
-	}
-	return scanner.Err()
+		return decode(event.Data)
+	})
 }

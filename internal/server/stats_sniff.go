@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/denysvitali/llm-proxy/internal/sse"
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
@@ -89,12 +90,7 @@ func (sn *sniffer) Finish() {
 	sn.tracker.rep.mergeMax(parseUsageReport(data, sn.sse))
 	success := sn.attemptStatus != statusError && strings.HasPrefix(sn.attemptStatus, "2")
 	if success && sn.sse {
-		for _, line := range bytes.Split(data, []byte("\n")) {
-			line = bytes.TrimSpace(line)
-			if !bytes.HasPrefix(line, []byte("data:")) {
-				continue
-			}
-			payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		for _, payload := range sseDataPayloads(data) {
 			var event struct {
 				Type string `json:"type"`
 			}
@@ -172,7 +168,9 @@ type wireUsageFields struct {
 // wireTyped is any {type: ...} discriminator: content blocks, Responses
 // output items, streamed item announcements.
 type wireTyped struct {
-	Type string `json:"type"`
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	CallID string `json:"call_id"`
 }
 
 type wireToolRef struct {
@@ -185,6 +183,7 @@ type wireDelta struct {
 }
 
 type wireChoice struct {
+	Index   int        `json:"index"`
 	Delta   *wireDelta `json:"delta"`   // streaming chunks
 	Message *wireDelta `json:"message"` // non-streaming
 }
@@ -193,8 +192,10 @@ type wireChoice struct {
 // calls across the three dialects. Everything is optional; unknown shapes
 // contribute nothing.
 type wireDoc struct {
-	Type    string           `json:"type"`
-	Usage   *wireUsageFields `json:"usage"` // Anthropic root, chat chunk, Responses root
+	Type        string           `json:"type"`
+	Index       int              `json:"index"`
+	OutputIndex int              `json:"output_index"`
+	Usage       *wireUsageFields `json:"usage"` // Anthropic root, chat chunk, Responses root
 	Message *struct {
 		Usage *wireUsageFields `json:"usage"` // Anthropic message_start
 	} `json:"message"`
@@ -324,28 +325,13 @@ func (d *wireDoc) hasSignal() bool {
 		len(d.Choices) > 0 || len(d.Content) > 0 || d.ContentBlock != nil || d.Item != nil
 }
 
-// sseDataPayloads splits an SSE byte stream into the concatenated data lines
-// of each event.
+// sseDataPayloads returns data from complete frames using the same bounded
+// framing rules as translation and native completion detection.
 func sseDataPayloads(data []byte) [][]byte {
 	var out [][]byte
-	var cur bytes.Buffer
-	flush := func() {
-		if cur.Len() > 0 {
-			out = append(out, append([]byte(nil), bytes.TrimSpace(cur.Bytes())...))
-			cur.Reset()
-		}
-	}
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		line = bytes.TrimSuffix(line, []byte("\r"))
-		if len(line) == 0 {
-			flush()
-			continue
-		}
-		if field, value, ok := bytes.Cut(line, []byte(":")); ok && string(field) == "data" {
-			cur.Write(bytes.TrimPrefix(value, []byte(" ")))
-			cur.WriteByte('\n')
-		}
-	}
-	flush()
+	_ = sse.Scan(bytes.NewReader(data), func(event sse.Event) (bool, error) {
+		out = append(out, append([]byte(nil), event.Data...))
+		return false, nil
+	})
 	return out
 }

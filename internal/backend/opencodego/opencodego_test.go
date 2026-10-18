@@ -250,7 +250,7 @@ func TestReadError(t *testing.T) {
 	}
 }
 
-func TestSendStripsAdditionalToolsOnResponses(t *testing.T) {
+func TestSendPreservesAdditionalToolsOnNativeResponses(t *testing.T) {
 	c, rec := newRecordingClient(t, http.StatusOK, `{}`)
 	body := []byte(`{
 		"model":"grok-4.6",
@@ -268,10 +268,7 @@ func TestSendStripsAdditionalToolsOnResponses(t *testing.T) {
 		t.Fatalf("Send returned error: %v", err)
 	}
 	_ = resp.Body.Close()
-	if strings.Contains(string(rec.body), `"additional_tools"`) {
-		t.Fatalf("additional_tools was forwarded: %s", rec.body)
-	}
-	if !strings.Contains(string(rec.body), `"hello"`) {
-		t.Fatalf("user message missing after normalize: %s", rec.body)
+	if string(rec.body) != string(body) {
+		t.Fatalf("native extension was rewritten: %s", rec.body)
 	}
 }

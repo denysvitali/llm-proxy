@@ -4,26 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // This file translates between the Anthropic Messages API and the OpenAI
 // Responses API, so Anthropic clients can talk to backends that only expose
 // /v1/responses. Requests become Responses "input" item arrays (the system
-// prompt travels as "instructions", tool results as function_call_output
+// prompt travels as a leading message, tool results as function_call_output
 // items) and Responses responses become Anthropic content blocks again.
 // Streaming lives in responses_stream.go; the Chat* helpers adapt OpenAI
 // chat-completions clients onto the same Responses-only backends.
 
 type responsesRequest struct {
 	Model             string                  `json:"model"`
-	Instructions      string                  `json:"instructions,omitempty"`
+	Instructions      *string                 `json:"instructions,omitempty"`
 	Input             json.RawMessage         `json:"input,omitempty"`
 	Tools             []responsesFunctionTool `json:"tools,omitempty"`
 	ToolChoice        any                     `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool                   `json:"parallel_tool_calls,omitempty"`
 	Reasoning         *responsesReasoning     `json:"reasoning,omitempty"`
-	Store             bool                    `json:"store"`
+	Store             *bool                   `json:"store,omitempty"`
 	Stream            bool                    `json:"stream,omitempty"`
 	MaxOutputTokens   int                     `json:"max_output_tokens,omitempty"`
 	Temperature       *float64                `json:"temperature,omitempty"`
@@ -47,62 +46,24 @@ func (r *responsesRequest) inputItems() ([]responsesInputItem, error) {
 			Content: mustMarshal([]responsesInputContent{{Type: "input_text", Text: text}}),
 		}}, nil
 	}
-	var items []responsesInputItem
-	if err := json.Unmarshal(r.Input, &items); err != nil {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(r.Input, &rawItems); err != nil {
 		return nil, err
+	}
+	items := make([]responsesInputItem, 0, len(rawItems))
+	for i, raw := range rawItems {
+		item, err := decodeResponsesInputItem(raw)
+		if err != nil {
+			return nil, fmt.Errorf("input item %d: %w", i, err)
+		}
+		items = append(items, item)
 	}
 	return items, nil
 }
 
-// isPromptRole reports whether a Responses message item belongs in the system
-// prompt rather than the conversation. Codex sends its skills and permissions
-// preamble as a "developer" item, a role only the Responses and OpenAI
-// chat-completions APIs know: relaying it verbatim makes stricter upstreams
-// reject the whole request ("Incorrect role information"), so those items are
-// folded into the system prompt instead.
+// isPromptRole reports whether a message carries system or developer instructions.
 func isPromptRole(role string) bool {
 	return role == "system" || role == "developer"
-}
-
-// itemText flattens a message item's content down to its text, which is all a
-// system prompt can carry. Separate content parts are joined with a blank line
-// because each one is a self-contained block.
-func itemText(item responsesInputItem) string {
-	if text, ok := plainString(item.Content); ok {
-		return strings.TrimSpace(text)
-	}
-	if len(item.Content) == 0 {
-		return ""
-	}
-	var parts []responsesInputContent
-	if err := json.Unmarshal(item.Content, &parts); err != nil {
-		return ""
-	}
-	var builder strings.Builder
-	for _, part := range parts {
-		switch part.Type {
-		case "input_text", "output_text":
-			if part.Text == "" {
-				continue
-			}
-			if builder.Len() > 0 {
-				builder.WriteString("\n\n")
-			}
-			builder.WriteString(part.Text)
-		}
-	}
-	return strings.TrimSpace(builder.String())
-}
-
-// appendPrompt adds a section to a system prompt, separated by a blank line.
-func appendPrompt(prompt, section string) string {
-	if section == "" {
-		return prompt
-	}
-	if prompt == "" {
-		return section
-	}
-	return prompt + "\n\n" + section
 }
 
 type responsesReasoning struct {
@@ -126,6 +87,18 @@ type responsesInputContent struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+func (p responsesInputContent) MarshalJSON() ([]byte, error) {
+	if p.Type == "input_text" || p.Type == "output_text" {
+		return json.Marshal(struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}{p.Type, p.Text})
+	}
+	type content responsesInputContent
+	return json.Marshal(content(p))
 }
 
 type responsesFunctionTool struct {
@@ -133,17 +106,18 @@ type responsesFunctionTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
-	Strict      bool            `json:"strict,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 type responsesResponse struct {
+	responseEnvelope
 	ID                string                `json:"id"`
 	Status            string                `json:"status"`
 	Model             string                `json:"model"`
 	Output            []responsesOutputItem `json:"output"`
 	Usage             responsesUsage        `json:"usage"`
-	IncompleteDetails json.RawMessage       `json:"incomplete_details,omitempty"`
-	Error             *responsesErrorBody   `json:"error,omitempty"`
+	IncompleteDetails json.RawMessage       `json:"incomplete_details"`
+	Error             *responsesErrorBody   `json:"error"`
 }
 
 type responsesOutputItem struct {
@@ -160,20 +134,17 @@ type responsesOutputItem struct {
 }
 
 type responsesOutputContent struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type    string `json:"type"`
+	Text    string `json:"text,omitempty"`
+	Refusal string `json:"refusal,omitempty"`
 }
 
 type responsesUsage struct {
 	InputTokens         int64                 `json:"input_tokens"`
 	OutputTokens        int64                 `json:"output_tokens"`
-	TotalTokens         int64                 `json:"total_tokens,omitempty"`
-	InputTokensDetails  responsesTokenDetails `json:"input_tokens_details,omitempty"`
-	OutputTokensDetails responsesTokenDetails `json:"output_tokens_details,omitempty"`
-}
-
-type responsesTokenDetails struct {
-	CachedTokens int64 `json:"cached_tokens"`
+	TotalTokens         int64                 `json:"total_tokens"`
+	InputTokensDetails  cachedTokensDetail    `json:"input_tokens_details"`
+	OutputTokensDetails reasoningTokensDetail `json:"output_tokens_details"`
 }
 
 type responsesErrorBody struct {
@@ -189,13 +160,17 @@ func (e *responsesErrorBody) asUpstreamError() error {
 }
 
 // ToResponses renders an Anthropic Messages request as an OpenAI Responses
-// API request: system prompts become "instructions", conversation history
-// becomes the "input" item array, and tools are flattened to the Responses
-// function-tool shape.
+// API request: system prompts become leading system messages, conversation
+// history becomes the input item array, and tools use the function-tool shape.
 func ToResponses(request *Request, model string) ([]byte, error) {
+	if err := validateAnthropicTranslation(request, true); err != nil {
+		return nil, err
+	}
+	if err := validateAnthropicHistory(request.Messages); err != nil {
+		return nil, err
+	}
 	converted := responsesRequest{
 		Model:           model,
-		Instructions:    systemText(request.System),
 		Stream:          request.Stream,
 		MaxOutputTokens: request.MaxTokens,
 		Temperature:     request.Temperature,
@@ -203,6 +178,19 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 	}
 
 	var inputItems []responsesInputItem
+	system, err := anthropicSystemContent(request.System)
+	if err != nil {
+		return nil, err
+	}
+	if system != nil {
+		if _, ok := plainString(system); !ok {
+			system, err = openAIToolOutput(system, false)
+			if err != nil {
+				return nil, err
+			}
+		}
+		inputItems = append(inputItems, responsesInputItem{Type: "message", Role: "system", Content: system})
+	}
 	for _, message := range request.Messages {
 		items, err := responsesItems(message)
 		if err != nil {
@@ -219,17 +207,20 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 		if tool.Name == "" {
 			continue
 		}
+		schema, err := sanitizeSchema(tool.InputSchema)
+		if err != nil {
+			return nil, err
+		}
 		converted.Tools = append(converted.Tools, responsesFunctionTool{
 			Type:        "function",
 			Name:        tool.Name,
 			Description: tool.Description,
-			Parameters:  sanitizeSchema(tool.InputSchema),
+			Parameters:  schema,
 		})
 	}
-	converted.ToolChoice, converted.ParallelToolCalls = responsesToolChoice(request.ToolChoice)
-
-	if request.WantsThinking() {
-		converted.Reasoning = &responsesReasoning{Effort: "high", Summary: "auto"}
+	converted.ToolChoice, converted.ParallelToolCalls, err = anthropicToolChoice(request.ToolChoice, true)
+	if err != nil {
+		return nil, err
 	}
 
 	return json.Marshal(converted)
@@ -241,8 +232,8 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 // function_call_output items, keeping their relative order intact.
 func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 	role := message.Role
-	if role == "" {
-		role = "user"
+	if role != "user" && role != "assistant" {
+		return nil, fmt.Errorf("unsupported Messages role %q", role)
 	}
 	contentType := "input_text"
 	if role == "assistant" {
@@ -250,15 +241,15 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 	}
 
 	if text, ok := plainString(message.Content); ok {
-		if strings.TrimSpace(text) == "" {
-			return nil, nil
-		}
 		return []responsesInputItem{responsesMessageItem(role, contentType, text)}, nil
 	}
 
-	var blocks []anthropicBlock
-	if err := json.Unmarshal(message.Content, &blocks); err != nil {
-		return nil, fmt.Errorf("decode %s content: %w", role, err)
+	blocks, err := anthropicInputBlocks(message.Content)
+	if err != nil {
+		return nil, err
+	}
+	if len(blocks) == 0 {
+		return nil, fmt.Errorf("message content must not be an empty array")
 	}
 
 	var items []responsesInputItem
@@ -280,26 +271,37 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 		case "text":
 			parts = append(parts, responsesInputContent{Type: contentType, Text: block.Text})
 		case "image":
-			if url := imageURL(block.Source); url != "" {
-				parts = append(parts, responsesInputContent{Type: "input_image", ImageURL: url})
+			if role != "user" {
+				return nil, fmt.Errorf("responses cannot represent assistant images")
 			}
+			url, err := anthropicImageURL(block.Source)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, responsesInputContent{Type: "input_image", ImageURL: url})
 		case "tool_use":
+			arguments, err := compactJSON(block.Input)
+			if err != nil {
+				return nil, err
+			}
 			flushText()
 			items = append(items, responsesInputItem{
 				Type:      "function_call",
 				CallID:    block.ID,
 				Name:      block.Name,
-				Arguments: compactJSON(block.Input),
+				Arguments: arguments,
 			})
 		case "tool_result":
+			output, err := anthropicToolOutput(block, true)
+			if err != nil {
+				return nil, err
+			}
 			flushText()
 			items = append(items, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: block.ToolUseID,
-				Output: encodeToolResultOutput(block),
+				Output: output,
 			})
-		case "thinking", "redacted_thinking":
-			// Reasoning traces are provider-specific and are not replayed upstream.
 		}
 	}
 	flushText()
@@ -322,52 +324,22 @@ func encodeParts(parts []responsesInputContent) json.RawMessage {
 	return encoded
 }
 
-// responsesToolChoice maps an Anthropic tool_choice to its Responses
-// equivalent, which names forced functions at the top level rather than
-// under a "function" wrapper.
-func responsesToolChoice(raw json.RawMessage) (any, *bool) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var choice struct {
-		Type                   string `json:"type"`
-		Name                   string `json:"name"`
-		DisableParallelToolUse bool   `json:"disable_parallel_tool_use"`
-	}
-	if err := json.Unmarshal(raw, &choice); err != nil {
-		return nil, nil
-	}
-	var parallel *bool
-	if choice.DisableParallelToolUse {
-		disabled := false
-		parallel = &disabled
-	}
-	switch choice.Type {
-	case "auto":
-		return "auto", parallel
-	case "any":
-		return "required", parallel
-	case "none":
-		return "none", parallel
-	case "tool":
-		if choice.Name == "" {
-			return "auto", parallel
-		}
-		return map[string]any{"type": "function", "name": choice.Name}, parallel
-	}
-	return nil, parallel
-}
-
 // FromResponses converts a non-streaming Responses API response into an
-// Anthropic Messages response. Reasoning output is surfaced as a thinking
-// block only when the client asked for extended thinking.
+// Anthropic Messages response. Unsigned reasoning is suppressed unless requested,
+// in which case conversion fails rather than fabricating signed thinking state.
 func FromResponses(body []byte, model string, includeThinking bool) ([]byte, error) {
 	var response responsesResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
+	if err := validateResponsesUsage(response.Usage); err != nil {
+		return nil, err
+	}
 	if response.Error != nil {
 		return nil, response.Error.asUpstreamError()
+	}
+	if err := validateResponsesOutput(body, response.Status); err != nil {
+		return nil, err
 	}
 
 	out := AnthropicMessageOut{
@@ -376,24 +348,25 @@ func FromResponses(body []byte, model string, includeThinking bool) ([]byte, err
 		Role:    "assistant",
 		Model:   model,
 		Content: []map[string]any{},
-		Usage: AnthropicUsage{
-			InputTokens:          int(response.Usage.InputTokens),
-			OutputTokens:         int(response.Usage.OutputTokens),
-			CacheReadInputTokens: int(response.Usage.InputTokensDetails.CachedTokens),
-		},
+		Usage:   responsesUsageToAnthropic(response.Usage),
 	}
 	if response.Model != "" {
 		out.Model = response.Model
 	}
 
 	stopReason := "end_turn"
+	hasTools, hasRefusal := false, false
+	ids := responseCallIDs{}
 	for _, item := range response.Output {
 		switch item.Type {
 		case "message":
 			for _, part := range item.Content {
 				switch part.Type {
-				case "output_text", "refusal":
+				case "output_text":
 					out.Content = append(out.Content, map[string]any{"type": "text", "text": part.Text})
+				case "refusal":
+					out.Content = append(out.Content, map[string]any{"type": "text", "text": part.Refusal})
+					hasRefusal = true
 				}
 			}
 		case "reasoning":
@@ -401,28 +374,44 @@ func FromResponses(body []byte, model string, includeThinking bool) ([]byte, err
 				continue
 			}
 			if text := reasoningText(item.Summary, item.Content); text != "" {
-				out.Content = append(out.Content, map[string]any{
-					"type":      "thinking",
-					"thinking":  text,
-					"signature": thinkingSignature,
-				})
+				return nil, errUnsignedThinking
 			}
 		case "function_call":
-			stopReason = "tool_use"
-			input := json.RawMessage(strings.TrimSpace(item.Arguments))
-			if len(input) == 0 || !json.Valid(input) {
-				input = json.RawMessage(`{}`)
+			hasTools = true
+			input, err := argumentsJSON(item.Arguments)
+			if err != nil {
+				return nil, err
+			}
+			id, err := ids.resolve(item.CallID, "")
+			if err != nil {
+				return nil, err
 			}
 			out.Content = append(out.Content, map[string]any{
 				"type":  "tool_use",
-				"id":    item.CallID,
+				"id":    id,
 				"name":  item.Name,
 				"input": input,
 			})
 		}
 	}
+	finish, err := responsesFinish(response, hasTools)
+	if err != nil {
+		return nil, err
+	}
+	if finish != "stop" {
+		stopReason = map[string]string{"tool_calls": "tool_use", "length": "max_tokens", "content_filter": "refusal"}[finish]
+	}
+	if hasRefusal && (response.Status == "" || response.Status == "completed") {
+		stopReason = "refusal"
+	}
 	if response.Status == "incomplete" {
-		stopReason = "max_tokens"
+		var details struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(response.IncompleteDetails, &details)
+		if details.Reason == "model_context_window_exceeded" {
+			stopReason = details.Reason
+		}
 	}
 	out.StopReason = &stopReason
 
@@ -432,18 +421,12 @@ func FromResponses(body []byte, model string, includeThinking bool) ([]byte, err
 	return json.Marshal(out)
 }
 
-// reasoningText flattens the summary and raw reasoning parts of a Responses
-// reasoning output item into one thinking-block payload.
+// reasoningText concatenates the summary and raw display-reasoning parts of a
+// Responses reasoning output item without adding separators.
 func reasoningText(summary, content []responsesOutputContent) string {
 	var builder strings.Builder
 	appendParts := func(parts []responsesOutputContent) {
 		for _, part := range parts {
-			if part.Text == "" {
-				continue
-			}
-			if builder.Len() > 0 {
-				builder.WriteString("\n\n")
-			}
 			builder.WriteString(part.Text)
 		}
 	}
@@ -485,16 +468,26 @@ type chatToolCallIn struct {
 }
 
 // ChatToResponses renders an OpenAI chat-completions request as a Responses
-// API request: system/developer messages merge into "instructions", assistant
+// API request: message roles and positions are preserved, assistant
 // tool_calls become function_call items, and "tool" messages become
 // function_call_output items.
 func ChatToResponses(body []byte, model string) ([]byte, error) {
+	if err := validateGenerationControls(body, "openai-chat"); err != nil {
+		return nil, err
+	}
+	controls, err := translatedOpenAIControls(body, "openai-chat", "openai-responses")
+	if err != nil {
+		return nil, err
+	}
 	var chat chatRequestIn
 	if err := json.Unmarshal(body, &chat); err != nil {
 		return nil, err
 	}
 	if len(chat.Messages) == 0 {
 		return nil, fmt.Errorf("request contains no messages")
+	}
+	if err := validateChatHistory(chat.Messages); err != nil {
+		return nil, err
 	}
 
 	converted := responsesRequest{
@@ -510,21 +503,20 @@ func ChatToResponses(body []byte, model string) ([]byte, error) {
 		converted.MaxOutputTokens = chat.MaxTokens
 	}
 
-	var instructions strings.Builder
 	for _, message := range chat.Messages {
 		switch message.Role {
-		case "system", "developer":
-			if text := chatContentText(message.Content); text != "" {
-				if instructions.Len() > 0 {
-					instructions.WriteString("\n\n")
-				}
-				instructions.WriteString(text)
-			}
 		case "assistant":
-			if text := chatContentText(message.Content); text != "" {
-				inputItems = append(inputItems, responsesMessageItem("assistant", "output_text", text))
+			if len(message.Content) > 0 && string(message.Content) != "null" {
+				items, err := chatMessageItems(message)
+				if err != nil {
+					return nil, err
+				}
+				inputItems = append(inputItems, items...)
 			}
 			for _, call := range message.ToolCalls {
+				if _, err := argumentsJSON(call.Function.Arguments); err != nil {
+					return nil, err
+				}
 				inputItems = append(inputItems, responsesInputItem{
 					Type:      "function_call",
 					CallID:    call.ID,
@@ -533,102 +525,110 @@ func ChatToResponses(body []byte, model string) ([]byte, error) {
 				})
 			}
 		case "tool":
+			output, err := openAIToolOutput(message.Content, false)
+			if err != nil {
+				return nil, err
+			}
 			inputItems = append(inputItems, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: message.ToolCallID,
-				Output: encodeResponsesText(chatContentText(message.Content)),
+				Output: output,
 			})
 		default:
-			inputItems = append(inputItems, chatUserItems(message)...)
+			items, err := chatMessageItems(message)
+			if err != nil {
+				return nil, err
+			}
+			inputItems = append(inputItems, items...)
 		}
 	}
 	if len(inputItems) == 0 {
 		return nil, fmt.Errorf("request contains no translatable messages")
 	}
 	converted.Input = mustMarshal(inputItems)
-	converted.Instructions = instructions.String()
 
 	for _, tool := range chat.Tools {
 		if tool.Function.Name == "" {
 			continue
 		}
+		schema, err := sanitizeSchema(tool.Function.Parameters)
+		if err != nil {
+			return nil, err
+		}
 		converted.Tools = append(converted.Tools, responsesFunctionTool{
 			Type:        "function",
 			Name:        tool.Function.Name,
 			Description: tool.Function.Description,
-			Parameters:  sanitizeSchema(tool.Function.Parameters),
+			Parameters:  schema,
+			Strict:      tool.Function.Strict,
 		})
 	}
 	converted.ToolChoice = chatToolChoiceToResponses(chat.ToolChoice)
 
-	return json.Marshal(converted)
+	return marshalWithOpenAIControls(converted, controls)
 }
 
-// chatUserItems converts a user chat message (plain string or multipart
-// content) into Responses message items.
-func chatUserItems(message chatMessageIn) []responsesInputItem {
-	var parts []responsesInputContent
+// chatMessageItems preserves message roles and ordered text/image content.
+func chatMessageItems(message chatMessageIn) ([]responsesInputItem, error) {
+	switch message.Role {
+	case "system", "developer", "user", "assistant":
+	default:
+		return nil, fmt.Errorf("unsupported message role %q", message.Role)
+	}
+	textType := "input_text"
+	if message.Role == "assistant" {
+		textType = "output_text"
+	}
+	parts := make([]responsesInputContent, 0)
 	if text, ok := plainString(message.Content); ok {
-		parts = append(parts, responsesInputContent{Type: "input_text", Text: text})
-	} else if len(message.Content) > 0 {
-		var chunks []struct {
-			Type     string `json:"type"`
-			Text     string `json:"text"`
-			ImageURL struct {
-				URL string `json:"url"`
-			} `json:"image_url"`
+		parts = append(parts, responsesInputContent{Type: textType, Text: text})
+	} else {
+		var chunks []json.RawMessage
+		if err := json.Unmarshal(message.Content, &chunks); err != nil || len(chunks) == 0 {
+			return nil, fmt.Errorf("message content must be a string or a non-empty array")
 		}
-		if err := json.Unmarshal(message.Content, &chunks); err != nil {
-			return nil
-		}
-		for _, chunk := range chunks {
-			switch chunk.Type {
+		for _, raw := range chunks {
+			var header struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(raw, &header); err != nil {
+				return nil, fmt.Errorf("message content part must be an object")
+			}
+			switch header.Type {
 			case "text":
-				parts = append(parts, responsesInputContent{Type: "input_text", Text: chunk.Text})
-			case "image_url":
-				if chunk.ImageURL.URL != "" {
-					parts = append(parts, responsesInputContent{Type: "input_image", ImageURL: chunk.ImageURL.URL})
+				var chunk struct {
+					Type string  `json:"type"`
+					Text *string `json:"text"`
 				}
+				if err := decodeContentPart(raw, &chunk); err != nil || chunk.Text == nil {
+					return nil, fmt.Errorf("text part requires string text and supported fields")
+				}
+				parts = append(parts, responsesInputContent{Type: textType, Text: *chunk.Text})
+			case "image_url":
+				var chunk struct {
+					Type     string `json:"type"`
+					ImageURL struct {
+						URL    string `json:"url"`
+						Detail string `json:"detail"`
+					} `json:"image_url"`
+				}
+				if err := decodeContentPart(raw, &chunk); err != nil {
+					return nil, fmt.Errorf("unsupported image fields: %w", err)
+				}
+				if message.Role != "user" || chunk.ImageURL.URL == "" {
+					return nil, fmt.Errorf("image_url requires a user message and URL")
+				}
+				parts = append(parts, responsesInputContent{Type: "input_image", ImageURL: chunk.ImageURL.URL, Detail: chunk.ImageURL.Detail})
+			default:
+				return nil, fmt.Errorf("unsupported message content type %q", header.Type)
 			}
 		}
 	}
-	if len(parts) == 0 {
-		return nil
-	}
 	return []responsesInputItem{{
 		Type:    "message",
-		Role:    "user",
+		Role:    message.Role,
 		Content: encodeParts(parts),
-	}}
-}
-
-// chatContentText flattens chat message content, which may be a string or a
-// list of typed parts, into plain text.
-func chatContentText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	if text, ok := plainString(raw); ok {
-		return text
-	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return ""
-	}
-	var builder strings.Builder
-	for _, part := range parts {
-		if part.Type != "text" || part.Text == "" {
-			continue
-		}
-		if builder.Len() > 0 {
-			builder.WriteString("\n")
-		}
-		builder.WriteString(part.Text)
-	}
-	return builder.String()
+	}}, nil
 }
 
 // chatToolChoiceToResponses maps an OpenAI chat tool_choice (string, or an
@@ -681,6 +681,8 @@ type chatChoiceOut struct {
 type chatMessageOut struct {
 	Role             string            `json:"role"`
 	Content          string            `json:"content"`
+	ContentPresent   bool              `json:"-"`
+	Refusal          *string           `json:"refusal,omitempty"`
 	ReasoningContent string            `json:"reasoning_content,omitempty"`
 	ToolCalls        []chatToolCallOut `json:"tool_calls,omitempty"`
 }
@@ -697,15 +699,21 @@ type chatFuncOut struct {
 }
 
 type chatUsageOut struct {
-	PromptTokens        int64               `json:"prompt_tokens"`
-	CompletionTokens    int64               `json:"completion_tokens"`
-	TotalTokens         int64               `json:"total_tokens"`
-	PromptTokensDetails *cachedTokensDetail `json:"prompt_tokens_details,omitempty"`
+	PromptTokens            int64                  `json:"prompt_tokens"`
+	CompletionTokens        int64                  `json:"completion_tokens"`
+	TotalTokens             int64                  `json:"total_tokens"`
+	PromptTokensDetails     *cachedTokensDetail    `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *reasoningTokensDetail `json:"completion_tokens_details,omitempty"`
 }
 
-// cachedTokensDetail is the OpenAI usage detail carrying cache-hit counts.
+// CacheCreationTokens is a proxy extension: OpenAI has no standard cache-write count.
 type cachedTokensDetail struct {
-	CachedTokens int64 `json:"cached_tokens"`
+	CachedTokens        int64 `json:"cached_tokens"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens,omitempty"`
+}
+
+type reasoningTokensDetail struct {
+	ReasoningTokens int64 `json:"reasoning_tokens"`
 }
 
 // ChatFromResponses converts a non-streaming Responses API response into an
@@ -715,167 +723,80 @@ func ChatFromResponses(body []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
+	if err := validateResponsesUsage(response.Usage); err != nil {
+		return nil, err
+	}
 	if response.Error != nil {
 		return nil, response.Error.asUpstreamError()
 	}
+	if err := validateResponsesOutput(body, response.Status); err != nil {
+		return nil, err
+	}
 
 	var content strings.Builder
+	var reasoning strings.Builder
+	var refusal *string
 	var toolCalls []chatToolCallOut
+	ids := responseCallIDs{}
 	for _, item := range response.Output {
 		switch item.Type {
 		case "message":
 			for _, part := range item.Content {
-				if part.Type == "output_text" || part.Type == "refusal" {
+				switch part.Type {
+				case "output_text":
 					content.WriteString(part.Text)
+				case "refusal":
+					if refusal == nil {
+						value := ""
+						refusal = &value
+					}
+					*refusal += part.Refusal
 				}
 			}
+		case "reasoning":
+			reasoning.WriteString(reasoningText(item.Summary, item.Content))
 		case "function_call":
+			if response.Status != "incomplete" {
+				if _, err := argumentsJSON(item.Arguments); err != nil {
+					return nil, err
+				}
+			}
+			id, err := ids.resolve(item.CallID, "")
+			if err != nil {
+				return nil, err
+			}
 			toolCalls = append(toolCalls, chatToolCallOut{
-				ID:       item.CallID,
+				ID:       id,
 				Type:     "function",
 				Function: chatFuncOut{Name: item.Name, Arguments: item.Arguments},
 			})
 		}
 	}
 
-	finishReason := "stop"
-	if len(toolCalls) > 0 {
-		finishReason = "tool_calls"
-	}
-	if response.Status == "incomplete" {
-		finishReason = "length"
+	finishReason, err := responsesFinish(response, len(toolCalls) > 0)
+	if err != nil {
+		return nil, err
 	}
 
-	id := response.ID
-	if id == "" {
-		id = "chatcmpl-llm-proxy"
-	}
+	id := responseID(response.ID, "chatcmpl-")
 	if response.Model != "" {
 		model = response.Model
 	}
-	total := response.Usage.TotalTokens
-	if total == 0 {
-		total = response.Usage.InputTokens + response.Usage.OutputTokens
-	}
 
+	created := response.CreatedAt
+	if created == 0 {
+		created = nowUnix()
+	}
 	return json.Marshal(chatResponseOut{
 		ID:      id,
 		Object:  "chat.completion",
-		Created: time.Now().Unix(),
+		Created: created,
 		Model:   model,
 		Choices: []chatChoiceOut{{
 			Index:        0,
-			Message:      chatMessageOut{Role: "assistant", Content: content.String(), ToolCalls: toolCalls},
+			Message:      chatMessageOut{Role: "assistant", Content: content.String(), ReasoningContent: reasoning.String(), Refusal: refusal, ToolCalls: toolCalls},
 			FinishReason: finishReason,
 		}},
-		Usage: chatUsageOut{
-			PromptTokens:     response.Usage.InputTokens,
-			CompletionTokens: response.Usage.OutputTokens,
-			TotalTokens:      total,
-		},
+		Usage: responsesUsageToChat(response.Usage),
 	})
-}
-
-// encodeResponsesText stores a tool-result string as a JSON string payload,
-// matching the Responses API's string form of function_call_output.output.
-// Empty results still encode as "" so strict upstreams (Grok, OpenCode Go)
-// do not reject the item as "missing field `output`".
-func encodeResponsesText(text string) json.RawMessage {
-	return mustMarshal(text)
-}
-
-// encodeToolResultOutput renders an Anthropic tool_result as the Responses
-// function_call_output.output value: a JSON string for text, or an array of
-// input_text / input_image parts when the result carries images.
-func encodeToolResultOutput(block anthropicBlock) json.RawMessage {
-	if len(block.Content) == 0 {
-		return encodeResponsesText("")
-	}
-	if text, ok := plainString(block.Content); ok {
-		return encodeResponsesText(text)
-	}
-	var blocks []anthropicBlock
-	if err := json.Unmarshal(block.Content, &blocks); err != nil {
-		return encodeResponsesText(string(block.Content))
-	}
-	var parts []responsesInputContent
-	var text strings.Builder
-	hasImage := false
-	for _, nested := range blocks {
-		switch nested.Type {
-		case "text":
-			if nested.Text == "" {
-				continue
-			}
-			if text.Len() > 0 {
-				text.WriteString("\n")
-			}
-			text.WriteString(nested.Text)
-			parts = append(parts, responsesInputContent{Type: "input_text", Text: nested.Text})
-		case "image":
-			if url := imageURL(nested.Source); url != "" {
-				hasImage = true
-				parts = append(parts, responsesInputContent{Type: "input_image", ImageURL: url})
-			}
-		}
-	}
-	if hasImage {
-		if len(parts) == 0 {
-			return encodeResponsesText("")
-		}
-		return mustMarshal(parts)
-	}
-	return encodeResponsesText(text.String())
-}
-
-// itemOutputText flattens function_call_output.output, which the Responses
-// API allows as either a string or an array of content parts.
-func itemOutputText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	if text, ok := plainString(raw); ok {
-		return text
-	}
-	var parts []responsesInputContent
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return string(raw)
-	}
-	var builder strings.Builder
-	for _, part := range parts {
-		piece := part.Text
-		if piece == "" {
-			piece = part.ImageURL
-		}
-		if strings.TrimSpace(piece) == "" {
-			continue
-		}
-		if builder.Len() > 0 {
-			builder.WriteString("\n")
-		}
-		builder.WriteString(piece)
-	}
-	return builder.String()
-}
-
-// itemArguments returns the JSON-string arguments for a function/custom tool
-// call. Custom tools send the payload as "input" instead of "arguments".
-func itemArguments(item responsesInputItem) string {
-	if item.Arguments != "" {
-		return item.Arguments
-	}
-	return item.Input
-}
-
-// ignoreResponsesInputType reports history items that carry no conversation
-// content for translated or strict-compatible upstreams. reasoning is
-// provider-specific; additional_tools is a Codex-internal Responses-Lite
-// item that OpenAI-compatible backends reject.
-func ignoreResponsesInputType(typ string) bool {
-	switch typ {
-	case "reasoning", "additional_tools":
-		return true
-	default:
-		return false
-	}
 }

@@ -2,13 +2,12 @@ package translate
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
-// thinkingSignature is a placeholder for the signature Anthropic attaches to
-// thinking blocks. Upstream reasoning traces are unsigned, and the proxy drops
-// thinking blocks on the way back up, so the value is never verified.
-const thinkingSignature = "llm-proxy"
+// Unsigned reasoning cannot be represented as signed Anthropic thinking state.
+var errUnsignedThinking = errors.New("unsigned OpenAI reasoning cannot become Anthropic thinking; use a native Messages route")
 
 type openAIResponse struct {
 	ID      string            `json:"id"`
@@ -23,17 +22,13 @@ type openAIResponse struct {
 
 type openAIMessageOut struct {
 	Content          string           `json:"content"`
+	ContentPresent   bool             `json:"-"`
+	Refusal          *string          `json:"refusal,omitempty"`
 	ReasoningContent string           `json:"reasoning_content"`
 	ToolCalls        []openAIToolCall `json:"tool_calls"`
 }
 
-type openAIUsage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	PromptTokensDetails struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-}
+type openAIUsage = chatUsageOut
 
 // AnthropicMessageOut is an Anthropic Messages API response.
 type AnthropicMessageOut struct {
@@ -48,10 +43,11 @@ type AnthropicMessageOut struct {
 }
 
 type AnthropicUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	InputTokens              int                    `json:"input_tokens"`
+	OutputTokens             int                    `json:"output_tokens"`
+	CacheReadInputTokens     int                    `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int                    `json:"cache_creation_input_tokens,omitempty"`
+	OutputTokensDetails      *reasoningTokensDetail `json:"output_tokens_details,omitempty"`
 }
 
 // FromOpenAI converts a non-streaming chat-completions response into an
@@ -64,6 +60,16 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 	if err := checkUpstreamError(response.Error); err != nil {
 		return nil, err
 	}
+	if err := validateChatOutput(body); err != nil {
+		return nil, err
+	}
+
+	if err := validateChatUsage(response.Usage); err != nil {
+		return nil, err
+	}
+	if err := validateChatChoiceCount(len(response.Choices)); err != nil {
+		return nil, err
+	}
 
 	out := AnthropicMessageOut{
 		ID:      messageID(response.ID),
@@ -71,11 +77,7 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 		Role:    "assistant",
 		Model:   model,
 		Content: []map[string]any{},
-		Usage: AnthropicUsage{
-			InputTokens:          response.Usage.PromptTokens,
-			OutputTokens:         response.Usage.CompletionTokens,
-			CacheReadInputTokens: response.Usage.PromptTokensDetails.CachedTokens,
-		},
+		Usage:   responsesUsageToAnthropic(chatUsageToResponses(response.Usage)),
 	}
 	if response.Model != "" {
 		out.Model = response.Model
@@ -83,20 +85,36 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 
 	if len(response.Choices) > 0 {
 		choice := response.Choices[0]
-		if includeThinking && choice.Message.ReasoningContent != "" {
-			out.Content = append(out.Content, map[string]any{
-				"type":      "thinking",
-				"thinking":  choice.Message.ReasoningContent,
-				"signature": thinkingSignature,
-			})
+		if err := validateChatFinish(choice.FinishReason); err != nil {
+			return nil, err
 		}
-		if choice.Message.Content != "" {
+		if includeThinking && choice.Message.ReasoningContent != "" {
+			return nil, errUnsignedThinking
+		}
+		if choice.Message.ContentPresent {
 			out.Content = append(out.Content, map[string]any{"type": "text", "text": choice.Message.Content})
 		}
+		if choice.Message.Refusal != nil {
+			out.Content = append(out.Content, map[string]any{"type": "text", "text": *choice.Message.Refusal})
+		}
+		ids := responseCallIDs{}
 		for _, call := range choice.Message.ToolCalls {
-			out.Content = append(out.Content, toolUseBlock(call))
+			id, err := ids.resolve(call.ID, "toolu_")
+			if err != nil {
+				return nil, err
+			}
+			call.ID = id
+			block, err := toolUseBlock(call)
+			if err != nil {
+				return nil, err
+			}
+			out.Content = append(out.Content, block)
 		}
 		if reason := stopReason(choice.FinishReason); reason != "" {
+			out.StopReason = &reason
+		}
+		if choice.Message.Refusal != nil {
+			reason := "refusal"
 			out.StopReason = &reason
 		}
 	}
@@ -107,24 +125,26 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 	return json.Marshal(out)
 }
 
-func toolUseBlock(call openAIToolCall) map[string]any {
-	input := json.RawMessage(strings.TrimSpace(call.Function.Arguments))
-	if len(input) == 0 || !json.Valid(input) {
-		input = json.RawMessage(`{}`)
+func toolUseBlock(call openAIToolCall) (map[string]any, error) {
+	input, err := argumentsJSON(call.Function.Arguments)
+	if err != nil {
+		return nil, err
 	}
 	return map[string]any{
 		"type":  "tool_use",
 		"id":    toolUseID(call.ID),
 		"name":  call.Function.Name,
 		"input": input,
-	}
+	}, nil
 }
 
 // stopReason maps an OpenAI finish_reason to its Anthropic equivalent.
 func stopReason(finish string) string {
 	switch finish {
-	case "stop", "content_filter":
+	case "stop":
 		return "end_turn"
+	case "content_filter":
+		return "refusal"
 	case "length":
 		return "max_tokens"
 	case "tool_calls", "function_call":
@@ -140,7 +160,7 @@ func stopReason(finish string) string {
 // namespace stay happy.
 func messageID(id string) string {
 	if id == "" {
-		return "msg_llm_proxy"
+		return responseID("", "msg_")
 	}
 	if strings.HasPrefix(id, "msg_") {
 		return id

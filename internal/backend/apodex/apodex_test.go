@@ -291,7 +291,7 @@ func TestSendLeavesAnthropicBodyUntouched(t *testing.T) {
 	}
 }
 
-func TestSendNormalizesResponsesPromptRoles(t *testing.T) {
+func TestSendPreservesResponsesPromptRoles(t *testing.T) {
 	var got []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, _ = io.ReadAll(r.Body)
@@ -321,11 +321,11 @@ func TestSendNormalizesResponsesPromptRoles(t *testing.T) {
 	if err := json.Unmarshal(got, &request); err != nil {
 		t.Fatalf("decode upstream body: %v", err)
 	}
-	if request.Instructions != "base\n\nskills" {
-		t.Errorf("instructions = %q", request.Instructions)
+	if request.Instructions != "base" {
+		t.Errorf("instructions = %q, want base", request.Instructions)
 	}
-	if len(request.Input) != 1 || request.Input[0].Role != "user" {
-		t.Errorf("upstream input = %+v, want only the user item", request.Input)
+	if len(request.Input) != 2 || request.Input[0].Role != "developer" || request.Input[1].Role != "user" {
+		t.Errorf("upstream input = %+v, want developer then user", request.Input)
 	}
 }
 

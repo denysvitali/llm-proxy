@@ -34,27 +34,33 @@ func TestNormalizeResponsesRequestForStrictUpstream(t *testing.T) {
 	if err := json.Unmarshal(got, &request); err != nil {
 		t.Fatalf("decode normalized request: %v", err)
 	}
-	if want := "base rules\n\nskills\n\npermissions\n\nstay terse"; request.Instructions != want {
-		t.Errorf("instructions = %q, want %q", request.Instructions, want)
+	if request.Instructions != "base rules" {
+		t.Errorf("instructions changed: %q", request.Instructions)
 	}
-	if len(request.Input) != 2 {
-		t.Fatalf("input items = %d, want reasoning + user", len(request.Input))
+	if len(request.Input) != 4 {
+		t.Fatalf("input items = %d, want all four in original order", len(request.Input))
 	}
-	if _, exists := request.Input[0]["content"]; exists {
-		t.Errorf("null reasoning content was not removed: %s", request.Input[0]["content"])
+	if _, exists := request.Input[1]["content"]; exists {
+		t.Errorf("null reasoning content was not removed: %s", request.Input[1]["content"])
 	}
-	if string(request.Input[0]["encrypted_content"]) != `"opaque+/="` {
-		t.Errorf("encrypted reasoning changed: %s", request.Input[0]["encrypted_content"])
+	if string(request.Input[1]["encrypted_content"]) != `"opaque+/="` {
+		t.Errorf("encrypted reasoning changed: %s", request.Input[1]["encrypted_content"])
 	}
-	if string(request.Input[1]["custom"]) != `"keep"` || !request.Custom["keep"] {
-		t.Errorf("unknown fields were lost: input=%v top-level=%v", request.Input[1], request.Custom)
+	if string(request.Input[3]["custom"]) != `"keep"` || !request.Custom["keep"] {
+		t.Errorf("unknown fields were lost: input=%v top-level=%v", request.Input[3], request.Custom)
 	}
-	for _, item := range request.Input {
-		var role string
-		_ = json.Unmarshal(item["role"], &role)
-		if isPromptRole(role) {
-			t.Errorf("prompt role %q remains in input", role)
-		}
+	if string(request.Input[0]["role"]) != `"developer"` || string(request.Input[2]["role"]) != `"system"` {
+		t.Errorf("instruction roles/positions changed: %s", got)
+	}
+	if string(request.Input[2]["content"]) != `"stay terse"` {
+		t.Errorf("system content changed: %s", got)
+	}
+	var content []map[string]string
+	if err := json.Unmarshal(request.Input[0]["content"], &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 2 || content[0]["text"] != "skills" || content[1]["text"] != "permissions" {
+		t.Errorf("developer content changed: %s", got)
 	}
 }
 
@@ -86,69 +92,18 @@ func TestNormalizeResponsesRequestKeepsStructuredInstructions(t *testing.T) {
 	}
 }
 
-func TestNormalizeResponsesRequestDropsAdditionalToolsAndKeepsArrayOutput(t *testing.T) {
-	input := []byte(`{
-		"model":"upstream-model",
-		"input":[
-			{"type":"additional_tools","tools":[{"type":"web_search"}]},
-			{"type":"function_call_output","call_id":"call_1","output":[
-				{"type":"input_text","text":"file contents"}
-			]},
-			{"type":"message","role":"user","content":"hello"}
-		]
-	}`)
-	got, err := NormalizeResponsesRequest(input)
-	if err != nil {
-		t.Fatalf("NormalizeResponsesRequest: %v", err)
-	}
-	var request struct {
-		Input []map[string]json.RawMessage `json:"input"`
-	}
-	if err := json.Unmarshal(got, &request); err != nil {
-		t.Fatalf("decode normalized request: %v", err)
-	}
-	if len(request.Input) != 2 {
-		t.Fatalf("input items = %d, want function_call_output + user", len(request.Input))
-	}
-	var typ string
-	_ = json.Unmarshal(request.Input[0]["type"], &typ)
-	if typ != "function_call_output" {
-		t.Fatalf("first remaining item type = %q", typ)
-	}
-	if !bytes.Contains(request.Input[0]["output"], []byte(`"file contents"`)) {
-		t.Errorf("array output was rewritten: %s", request.Input[0]["output"])
-	}
-	if bytes.Contains(got, []byte(`"additional_tools"`)) {
-		t.Fatalf("additional_tools remains: %s", got)
-	}
-}
-
-func TestNormalizeResponsesRequestFillsMissingFunctionCallOutput(t *testing.T) {
-	input := []byte(`{
-		"model":"upstream-model",
-		"input":[
-			{"type":"function_call_output","call_id":"call_1"},
-			{"type":"custom_tool_call_output","call_id":"call_2","output":null},
-			{"type":"message","role":"user","content":"hello"}
-		]
-	}`)
-	got, err := NormalizeResponsesRequest(input)
-	if err != nil {
-		t.Fatalf("NormalizeResponsesRequest: %v", err)
-	}
-	var request struct {
-		Input []map[string]json.RawMessage `json:"input"`
-	}
-	if err := json.Unmarshal(got, &request); err != nil {
-		t.Fatalf("decode normalized request: %v", err)
-	}
-	if len(request.Input) != 3 {
-		t.Fatalf("input items = %d", len(request.Input))
-	}
-	if string(request.Input[0]["output"]) != `""` {
-		t.Errorf("missing output was not filled: %s", request.Input[0]["output"])
-	}
-	if string(request.Input[1]["output"]) != `""` {
-		t.Errorf("null output was not filled: %s", request.Input[1]["output"])
+func TestNormalizeResponsesRequestPreservesNativeHistory(t *testing.T) {
+	for _, input := range []string{
+		`{ "input": [{"role":"developer","content":"  rules\n"},{"role":"user","content":""},{"type":"message","role":"system","content":[{"type":"input_text","text":""}]}] }`,
+		`{"input":[{"type":"additional_tools","tools":[{"type":"web_search"}]},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"file contents"}]}]}`,
+		`{"input":[{"type":"function_call_output","call_id":"call_1"},{"type":"custom_tool_call_output","call_id":"call_2","output":null}]}`,
+	} {
+		got, err := NormalizeResponsesRequest([]byte(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != input {
+			t.Errorf("native history rewritten:\ngot  %s\nwant %s", got, input)
+		}
 	}
 }

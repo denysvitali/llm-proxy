@@ -72,7 +72,7 @@ func TestSendForwardsResponsesRequest(t *testing.T) {
 	}
 }
 
-func TestSendFoldsSystemInputIntoInstructions(t *testing.T) {
+func TestSendPreservesSystemInputPosition(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var request struct {
@@ -83,14 +83,14 @@ func TestSendFoldsSystemInputIntoInstructions(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		if request.Instructions != "system rules" {
-			t.Errorf("instructions = %q, want system rules", request.Instructions)
+		if request.Instructions != "" {
+			t.Errorf("instructions = %q, want no hoisted input", request.Instructions)
 		}
 		if len(request.MaxTokens) != 0 {
 			t.Errorf("max_output_tokens was forwarded: %s", request.MaxTokens)
 		}
-		if len(request.Input) != 1 || request.Input[0]["role"] != "user" {
-			t.Errorf("input = %#v, want only user message", request.Input)
+		if len(request.Input) != 2 || request.Input[0]["role"] != "system" || request.Input[0]["content"] != "system rules" || request.Input[1]["role"] != "user" {
+			t.Errorf("input = %#v, want unchanged system then user", request.Input)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: done\n\n"))

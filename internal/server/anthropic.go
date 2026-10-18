@@ -1,10 +1,8 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -22,16 +20,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var envelope struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "request body must be a JSON object")
+	envelope, err := decodeOpenAIEnvelope(body)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
-	if strings.TrimSpace(envelope.Model) == "" {
-		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
+
+	if err := translate.ValidateGenerationControls(body, string(backend.KindAnthropic)); err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
+	if err := translate.ValidateMessageInput(body, string(backend.KindAnthropic)); err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 

@@ -24,7 +24,7 @@ type anthropicRequest struct {
 	Model       string             `json:"model"`
 	MaxTokens   int                `json:"max_tokens"`
 	Messages    []AnthropicMessage `json:"messages"`
-	System      string             `json:"system,omitempty"`
+	System      any                `json:"system,omitempty"`
 	Temperature *float64           `json:"temperature,omitempty"`
 	TopP        *float64           `json:"top_p,omitempty"`
 	Stream      bool               `json:"stream,omitempty"`
@@ -33,16 +33,26 @@ type anthropicRequest struct {
 }
 
 // ChatToAnthropic renders an OpenAI chat-completions request as an Anthropic
-// Messages request: system/developer messages merge into the system prompt,
+// Messages request: leading system messages become the system prompt,
 // assistant tool_calls become tool_use blocks, and "tool" messages become
 // tool_result blocks grouped into one user turn.
 func ChatToAnthropic(body []byte, model string) ([]byte, error) {
+	if err := validateGenerationControls(body, "openai-chat"); err != nil {
+		return nil, err
+	}
+	controls, err := translatedOpenAIControls(body, "openai-chat", "anthropic")
+	if err != nil {
+		return nil, err
+	}
 	var chat chatRequestIn
 	if err := json.Unmarshal(body, &chat); err != nil {
 		return nil, err
 	}
 	if len(chat.Messages) == 0 {
 		return nil, fmt.Errorf("request contains no messages")
+	}
+	if err := validateChatHistory(chat.Messages); err != nil {
+		return nil, err
 	}
 
 	converted := anthropicRequest{
@@ -73,104 +83,98 @@ func ChatToAnthropic(body []byte, model string) ([]byte, error) {
 		toolResults = nil
 	}
 
-	for _, message := range chat.Messages {
-		switch message.Role {
-		case "system", "developer":
-			if text := chatContentText(message.Content); text != "" {
-				if converted.System != "" {
-					converted.System += "\n\n"
-				}
-				converted.System += text
+	conversationStarted := false
+	for i, message := range chat.Messages {
+		if isPromptRole(message.Role) {
+			var err error
+			converted.System, err = appendAnthropicInstruction(converted.System, message.Role, message.Content, "text", conversationStarted)
+			if err != nil {
+				return nil, fmt.Errorf("message %d: %w", i, err)
 			}
+			continue
+		}
+		conversationStarted = true
+		switch message.Role {
 		case "assistant":
 			flushToolResults()
-			blocks := make([]anthropicBlock, 0, len(message.ToolCalls)+1)
-			if text := chatContentText(message.Content); text != "" {
-				blocks = append(blocks, anthropicBlock{Type: "text", Text: text})
+			var blocks []anthropicBlock
+			if len(message.Content) != 0 && strings.TrimSpace(string(message.Content)) != "null" {
+				var err error
+				blocks, err = openAIContentToAnthropic(message.Content, false, false)
+				if err != nil {
+					return nil, fmt.Errorf("message %d: %w", i, err)
+				}
+			} else if len(message.ToolCalls) == 0 {
+				return nil, fmt.Errorf("message %d: assistant requires content or tool calls", i)
 			}
 			for _, call := range message.ToolCalls {
+				input, err := argumentsJSON(call.Function.Arguments)
+				if err != nil {
+					return nil, err
+				}
 				blocks = append(blocks, anthropicBlock{
 					Type:  "tool_use",
 					ID:    call.ID,
 					Name:  call.Function.Name,
-					Input: argumentsJSON(call.Function.Arguments),
+					Input: input,
 				})
 			}
-			if len(blocks) > 0 {
-				converted.Messages = append(converted.Messages, AnthropicMessage{
-					Role:    "assistant",
-					Content: mustMarshal(blocks),
-				})
+			if len(blocks) == 0 {
+				return nil, fmt.Errorf("message %d: empty content array cannot form a Messages turn", i)
 			}
+			converted.Messages = append(converted.Messages, AnthropicMessage{
+				Role:    "assistant",
+				Content: mustMarshal(blocks),
+			})
 		case "tool":
+			content, err := openAIToolResultToAnthropic(message.Content, false)
+			if err != nil {
+				return nil, fmt.Errorf("message %d: tool result: %w", i, err)
+			}
 			toolResults = append(toolResults, anthropicBlock{
 				Type:      "tool_result",
 				ToolUseID: message.ToolCallID,
-				Content:   mustMarshal(chatContentText(message.Content)),
+				Content:   content,
+			})
+		case "user":
+			flushToolResults()
+			blocks, err := openAIContentToAnthropic(message.Content, false, true)
+			if err != nil {
+				return nil, fmt.Errorf("message %d: %w", i, err)
+			}
+			if len(blocks) == 0 {
+				return nil, fmt.Errorf("message %d: empty content array cannot form a Messages turn", i)
+			}
+			converted.Messages = append(converted.Messages, AnthropicMessage{
+				Role:    "user",
+				Content: mustMarshal(blocks),
 			})
 		default:
-			flushToolResults()
-			if blocks := chatUserBlocks(message.Content); len(blocks) > 0 {
-				converted.Messages = append(converted.Messages, AnthropicMessage{
-					Role:    "user",
-					Content: mustMarshal(blocks),
-				})
-			}
+			return nil, fmt.Errorf("message %d: unsupported role %q", i, message.Role)
 		}
 	}
 	flushToolResults()
 
 	for _, tool := range chat.Tools {
+		if tool.Function.Strict != nil {
+			return nil, fmt.Errorf("tool strict cannot be represented when translating to Messages")
+		}
 		if tool.Function.Name == "" {
 			continue
+		}
+		schema, err := sanitizeSchema(tool.Function.Parameters)
+		if err != nil {
+			return nil, err
 		}
 		converted.Tools = append(converted.Tools, AnthropicTool{
 			Name:        tool.Function.Name,
 			Description: tool.Function.Description,
-			InputSchema: sanitizeSchema(tool.Function.Parameters),
+			InputSchema: schema,
 		})
 	}
 	converted.ToolChoice = chatToolChoiceToAnthropic(chat.ToolChoice)
 
-	return json.Marshal(converted)
-}
-
-// chatUserBlocks converts chat user content (string or typed parts) into
-// Anthropic content blocks, carrying text and images across.
-func chatUserBlocks(raw json.RawMessage) []anthropicBlock {
-	if text, ok := plainString(raw); ok {
-		if strings.TrimSpace(text) == "" {
-			return nil
-		}
-		return []anthropicBlock{{Type: "text", Text: text}}
-	}
-	if len(raw) == 0 {
-		return nil
-	}
-	var parts []struct {
-		Type     string `json:"type"`
-		Text     string `json:"text"`
-		ImageURL struct {
-			URL string `json:"url"`
-		} `json:"image_url"`
-	}
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return nil
-	}
-	var blocks []anthropicBlock
-	for _, part := range parts {
-		switch part.Type {
-		case "text":
-			if part.Text != "" {
-				blocks = append(blocks, anthropicBlock{Type: "text", Text: part.Text})
-			}
-		case "image_url":
-			if block := imageBlock(part.ImageURL.URL); block != nil {
-				blocks = append(blocks, *block)
-			}
-		}
-	}
-	return blocks
+	return marshalWithOpenAIControls(converted, controls)
 }
 
 // imageBlock converts an image reference into an Anthropic image block:
@@ -250,14 +254,13 @@ func toolChoiceToAnthropicWithNamespaces(choice any, namespaces map[string]respo
 	}
 }
 
-// argumentsJSON parses a tool-call argument string into JSON, falling back to
-// an empty object when nothing usable was sent.
-func argumentsJSON(args string) json.RawMessage {
+// argumentsJSON validates without decoding numbers or inventing missing input.
+func argumentsJSON(args string) (json.RawMessage, error) {
 	trimmed := strings.TrimSpace(args)
-	if trimmed == "" || !json.Valid([]byte(trimmed)) {
-		return json.RawMessage(`{}`)
+	if trimmed == "" || !json.Valid([]byte(trimmed)) || trimmed[0] != '{' {
+		return nil, fmt.Errorf("tool arguments must be a complete JSON object")
 	}
-	return json.RawMessage(trimmed)
+	return json.RawMessage(trimmed), nil
 }
 
 func mustMarshal(v any) json.RawMessage {
@@ -287,50 +290,58 @@ func ChatFromAnthropic(body []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
+	if err := validateAnthropicUsage(response.Usage); err != nil {
+		return nil, err
+	}
 	if err := checkUpstreamError(response.Error); err != nil {
 		return nil, err
 	}
+	if err := validateAnthropicOutput(body); err != nil {
+		return nil, err
+	}
 
+	if err := validateAnthropicStop(response.StopReason); err != nil {
+		return nil, err
+	}
 	var content strings.Builder
 	var reasoning strings.Builder
 	var toolCalls []chatToolCallOut
+	ids := responseCallIDs{}
 	for _, block := range response.Content {
 		switch block.Type {
 		case "text":
-			if content.Len() > 0 {
-				content.WriteString("\n\n")
-			}
 			content.WriteString(block.Text)
 		case "thinking":
-			if reasoning.Len() > 0 {
-				reasoning.WriteString("\n\n")
-			}
 			reasoning.WriteString(block.Thinking)
 		case "tool_use":
+			arguments, err := compactJSON(block.Input)
+			if err != nil {
+				return nil, err
+			}
+			id, err := ids.resolve(block.ID, "")
+			if err != nil {
+				return nil, err
+			}
 			toolCalls = append(toolCalls, chatToolCallOut{
-				ID:       block.ID,
+				ID:       id,
 				Type:     "function",
-				Function: chatFuncOut{Name: block.Name, Arguments: compactJSON(block.Input)},
+				Function: chatFuncOut{Name: block.Name, Arguments: arguments},
 			})
 		}
 	}
 
-	id := response.ID
-	if id == "" {
-		id = "chatcmpl-llm-proxy"
-	}
+	id := responseID(response.ID, "chatcmpl-")
 	if response.Model != "" {
 		model = response.Model
 	}
-	usage := chatUsageOut{
-		PromptTokens:     int64(response.Usage.InputTokens),
-		CompletionTokens: int64(response.Usage.OutputTokens),
-		TotalTokens:      int64(response.Usage.InputTokens + response.Usage.OutputTokens),
-	}
-	if response.Usage.CacheReadInputTokens > 0 {
-		usage.PromptTokensDetails = &cachedTokensDetail{CachedTokens: int64(response.Usage.CacheReadInputTokens)}
-	}
+	usage := responsesUsageToChat(anthropicUsageToResponses(response.Usage))
 
+	message := chatMessageOut{Role: "assistant", Content: content.String(), ReasoningContent: reasoning.String(), ToolCalls: toolCalls}
+	if response.StopReason == "refusal" {
+		text := message.Content
+		message.Refusal = &text
+		message.Content = ""
+	}
 	return json.Marshal(chatResponseOut{
 		ID:      id,
 		Object:  "chat.completion",
@@ -338,7 +349,7 @@ func ChatFromAnthropic(body []byte, model string) ([]byte, error) {
 		Model:   model,
 		Choices: []chatChoiceOut{{
 			Index:        0,
-			Message:      chatMessageOut{Role: "assistant", Content: content.String(), ReasoningContent: reasoning.String(), ToolCalls: toolCalls},
+			Message:      message,
 			FinishReason: anthropicStopToFinish(response.StopReason, len(toolCalls) > 0),
 		}},
 		Usage: usage,
@@ -349,7 +360,7 @@ func ChatFromAnthropic(body []byte, model string) ([]byte, error) {
 // finish_reason; tool presence covers upstreams that omit the reason.
 func anthropicStopToFinish(stop string, hasTools bool) string {
 	switch stop {
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		return "length"
 	case "tool_use":
 		return "tool_calls"
@@ -377,23 +388,30 @@ type anthropicEvent struct {
 		Model string         `json:"model"`
 		Usage AnthropicUsage `json:"usage"`
 	} `json:"message"`
-	ContentBlock *struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	} `json:"content_block"`
-	Delta *struct {
-		Type        string `json:"type"`
-		Text        string `json:"text"`
-		Thinking    string `json:"thinking"`
-		PartialJSON string `json:"partial_json"`
-		StopReason  string `json:"stop_reason"`
-	} `json:"delta"`
-	Usage *AnthropicUsage `json:"usage"`
-	Error *struct {
+	ContentBlock *anthropicStreamContent `json:"content_block"`
+	Delta        *anthropicStreamDelta   `json:"delta"`
+	Usage        *anthropicUsageDelta    `json:"usage"`
+	Error        *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+type anthropicStreamContent struct {
+	Type     string          `json:"type"`
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Text     string          `json:"text"`
+	Thinking string          `json:"thinking"`
+	Input    json.RawMessage `json:"input"`
+}
+
+type anthropicStreamDelta struct {
+	Type        string `json:"type"`
+	Text        string `json:"text"`
+	Thinking    string `json:"thinking"`
+	PartialJSON string `json:"partial_json"`
+	StopReason  string `json:"stop_reason"`
 }
 
 // ChatStreamFromAnthropic converts an upstream Anthropic SSE stream into
@@ -405,14 +423,18 @@ type ChatStreamFromAnthropic struct {
 	id      string
 	created int64
 
-	started    bool
-	finished   bool
-	blockKinds map[int]string // anthropic block index -> content kind
-	toolSlots  map[int]int    // anthropic block index -> client tool_calls index
-	nextTool   int
-	sawTool    bool
-	stopReason string
-	usage      chatUsageOut
+	started      bool
+	finished     bool
+	blockKinds   map[int]string // anthropic block index -> content kind
+	toolSlots    map[int]int    // anthropic block index -> client tool_calls index
+	nextTool     int
+	sawTool      bool
+	stopReason   string
+	usage        chatUsageOut
+	messageUsage AnthropicUsage
+	state        anthropicStreamState
+	writeErr     error
+	failure      error
 }
 
 // NewChatStreamFromAnthropic returns a translator writing chat chunks to
@@ -422,7 +444,7 @@ func NewChatStreamFromAnthropic(writer io.Writer, flush func(), model string) *C
 		writer:     writer,
 		flush:      flush,
 		model:      model,
-		id:         "chatcmpl-llm-proxy",
+		id:         responseID("", "chatcmpl_"),
 		created:    time.Now().Unix(),
 		blockKinds: map[int]string{},
 		toolSlots:  map[int]int{},
@@ -437,15 +459,30 @@ func (c *ChatStreamFromAnthropic) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		var event anthropicEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			return false, nil
+			return false, fmt.Errorf("invalid upstream Messages event: %w", err)
 		}
-		return c.consumeEvent(event), nil
+		if err := event.validateUsage(c.messageUsage); err != nil {
+			return false, err
+		}
+		frames, err := c.state.consume(event)
+		if err != nil {
+			c.failure = err
+			return false, err
+		}
+		terminal := false
+		for _, frame := range frames {
+			terminal = c.consumeEvent(frame)
+			if c.writeErr != nil {
+				return false, c.writeErr
+			}
+		}
+		return terminal, nil
 	})
 	if err != nil {
 		return err
 	}
 	if c.finished {
-		return nil
+		return c.writeErr
 	}
 	if c.started {
 		return errors.New("upstream stream ended before the completion marker")
@@ -465,10 +502,8 @@ func (c *ChatStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 			if event.Message.Model != "" {
 				c.model = event.Message.Model
 			}
-			c.usage.PromptTokens = int64(event.Message.Usage.InputTokens)
-			if event.Message.Usage.CacheReadInputTokens > 0 {
-				c.usage.PromptTokensDetails = &cachedTokensDetail{CachedTokens: int64(event.Message.Usage.CacheReadInputTokens)}
-			}
+			c.messageUsage = event.Message.Usage
+			c.usage = responsesUsageToChat(anthropicUsageToResponses(c.messageUsage))
 		}
 		c.ensureStarted()
 
@@ -477,6 +512,12 @@ func (c *ChatStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 			return false
 		}
 		c.blockKinds[event.Index] = event.ContentBlock.Type
+		if event.ContentBlock.Type == "text" {
+			text := event.ContentBlock.Text
+			c.emitChunk(chatDeltaOut{Content: &text}, nil)
+		} else if event.ContentBlock.Type == "thinking" && event.ContentBlock.Thinking != "" {
+			c.emitChunk(chatDeltaOut{ReasoningContent: event.ContentBlock.Thinking}, nil)
+		}
 		if event.ContentBlock.Type == "tool_use" {
 			slot := c.nextTool
 			c.nextTool++
@@ -519,8 +560,8 @@ func (c *ChatStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 			c.stopReason = anthropicStopToFinish(event.Delta.StopReason, false)
 		}
 		if event.Usage != nil {
-			c.usage.CompletionTokens = int64(event.Usage.OutputTokens)
-			c.usage.TotalTokens = c.usage.PromptTokens + c.usage.CompletionTokens
+			event.Usage.apply(&c.messageUsage)
+			c.usage = responsesUsageToChat(anthropicUsageToResponses(c.messageUsage))
 		}
 
 	case "message_stop":
@@ -571,24 +612,14 @@ func (c *ChatStreamFromAnthropic) emitChunk(delta chatDeltaOut, finishReason *st
 }
 
 func (c *ChatStreamFromAnthropic) writeData(payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	if _, err := fmt.Fprintf(c.writer, "data: %s\n\n", data); err != nil {
-		return
-	}
-	if c.flush != nil {
-		c.flush()
+	if c.writeErr == nil {
+		c.writeErr = writeStreamFrame(c.writer, c.flush, "", payload)
 	}
 }
 
 func (c *ChatStreamFromAnthropic) writeString(text string) {
-	if _, err := io.WriteString(c.writer, text); err != nil {
-		return
-	}
-	if c.flush != nil {
-		c.flush()
+	if c.writeErr == nil {
+		c.writeErr = writeStreamBytes(c.writer, c.flush, []byte(text))
 	}
 }
 

@@ -31,7 +31,7 @@ func TestRequestPipelineNativePreservesBody(t *testing.T) {
 			s := newOATestServer(t, fb, map[string]config.ModelRoute{
 				"alias": {Backend: "native", Model: "upstream"},
 			})
-			body := "{\n  \"model\": \"alias\",\n  \"stream\": false,\n  \"provider_options\": {\"model\": \"alias\", \"verbatim\": \"\\u0061\"},\n  \"messages\": [], \"input\": []\n}"
+			body := "{\n  \"model\": \"alias\",\n  \"stream\": false,\n  \"provider_options\": {\"model\": \"alias\", \"verbatim\": \"\\u0061\"},\n  \"messages\": [{\"role\":\"user\",\"content\":\"hello\"}], \"input\": []\n}"
 			rec := postOpenAI(t, s, tc.path, body)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -59,11 +59,11 @@ func TestRequestPipelineValidationDialects(t *testing.T) {
 		status                               int
 	}{
 		{"messages JSON", "/v1/messages", "{", "request body must be a JSON object", "invalid_request_error", 400},
-		{"chat JSON", "/v1/chat/completions", "{", "request body is not valid JSON", "invalid_request_error", 400},
-		{"responses JSON", "/v1/responses", "{", "request body is not valid JSON", "invalid_request_error", 400},
+		{"chat JSON", "/v1/chat/completions", "{", "request body must be a JSON object", "invalid_request_error", 400},
+		{"responses JSON", "/v1/responses", "{", "request body must be a JSON object", "invalid_request_error", 400},
 		{"messages missing model", "/v1/messages", `{}`, "model is required", "invalid_request_error", 400},
-		{"chat missing model", "/v1/chat/completions", `{}`, `model "" has no available backend`, "invalid_request_error", 404},
-		{"responses missing model", "/v1/responses", `{}`, `model "" has no available backend`, "invalid_request_error", 404},
+		{"chat missing model", "/v1/chat/completions", `{}`, "model is required", "invalid_request_error", 400},
+		{"responses missing model", "/v1/responses", `{}`, "model is required", "invalid_request_error", 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fb := &fakeOABackend{name: "unused"}
@@ -115,6 +115,12 @@ func TestRequestPipelineAnthropicThinking(t *testing.T) {
 				"alias": {Backend: "chat", Model: "upstream"},
 			})
 			rec := postOpenAI(t, s, "/v1/messages", `{"model":"alias","max_tokens":128,"messages":[{"role":"user","content":"hello"}]`+thinking+`}`)
+			if enabled {
+				if rec.Code != http.StatusBadRequest || fb.lastRequest() != nil {
+					t.Fatalf("unsupported thinking dispatched: status = %d, body = %s", rec.Code, rec.Body.String())
+				}
+				return
+			}
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 			}
@@ -149,7 +155,7 @@ func TestRequestPipelineAnthropicTranslationValidation(t *testing.T) {
 		"alias": {Backend: "chat", Model: "upstream"},
 	})
 	rec := postOpenAI(t, s, "/v1/messages", `{"model":"alias","max_tokens":"invalid","messages":[]}`)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid Anthropic Messages request:") {
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "max_tokens must be an integer") {
 		t.Errorf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if fb.lastRequest() != nil {

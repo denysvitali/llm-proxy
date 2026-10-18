@@ -6,12 +6,10 @@ import (
 	"fmt"
 )
 
-// NormalizeResponsesRequest adapts valid Responses input for strict compatible
-// upstreams without changing the request's meaning. Prompt-role messages are
-// folded into instructions, Codex-internal additional_tools items are dropped,
-// a null reasoning content field is removed, and function_call_output items
-// that omit output get an empty string so serde-based gateways do not 422.
-// Opaque provider state and unknown fields remain byte-for-byte values.
+// NormalizeResponsesRequest removes an explicitly null reasoning content field
+// for compatible upstreams that require it to be absent. Instruction roles and
+// positions, tool extensions, and missing tool outputs remain upstream-owned.
+// Requests needing no normalization retain their original bytes.
 func NormalizeResponsesRequest(body []byte) ([]byte, error) {
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
@@ -22,71 +20,37 @@ func NormalizeResponsesRequest(body []byte) ([]byte, error) {
 		return body, nil
 	}
 
-	var items []map[string]json.RawMessage
+	var items []json.RawMessage
 	if err := json.Unmarshal(rawInput, &items); err != nil {
 		return nil, fmt.Errorf("decode input: %w", err)
 	}
 	changed := false
-	var promptSections []string
-	normalized := make([]map[string]json.RawMessage, 0, len(items))
-	for index, item := range items {
-		var header responsesInputItem
-		encoded, err := json.Marshal(item)
-		if err != nil {
-			return nil, fmt.Errorf("encode input item %d: %w", index, err)
+	for index, raw := range items {
+		var header struct {
+			Type    string          `json:"type"`
+			Content json.RawMessage `json:"content"`
 		}
-		if err := json.Unmarshal(encoded, &header); err != nil {
+		if err := json.Unmarshal(raw, &header); err != nil {
 			return nil, fmt.Errorf("decode input item %d: %w", index, err)
 		}
-		if header.Type == "additional_tools" {
-			changed = true
+		if header.Type != "reasoning" || !bytes.Equal(bytes.TrimSpace(header.Content), []byte("null")) {
 			continue
 		}
-		if header.Type == "message" && isPromptRole(header.Role) {
-			if text := itemText(header); text != "" {
-				promptSections = append(promptSections, text)
-			}
-			changed = true
-			continue
+		var item map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, fmt.Errorf("decode reasoning item %d: %w", index, err)
 		}
-		if header.Type == "reasoning" && bytes.Equal(bytes.TrimSpace(item["content"]), []byte("null")) {
-			delete(item, "content")
-			changed = true
+		delete(item, "content")
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			return nil, err
 		}
-		if header.Type == "function_call_output" || header.Type == "custom_tool_call_output" {
-			rawOutput := bytes.TrimSpace(item["output"])
-			if len(rawOutput) == 0 || bytes.Equal(rawOutput, []byte("null")) {
-				item["output"] = json.RawMessage(`""`)
-				changed = true
-			}
-		}
-		normalized = append(normalized, item)
+		items[index] = encoded
+		changed = true
 	}
 	if !changed {
 		return body, nil
 	}
-
-	if len(promptSections) > 0 {
-		instructions, err := responseInstructions(request["instructions"])
-		if err != nil {
-			return nil, err
-		}
-		for _, section := range promptSections {
-			instructions = appendPrompt(instructions, section)
-		}
-		request["instructions"] = mustMarshal(instructions)
-	}
-	request["input"] = mustMarshal(normalized)
+	request["input"] = mustMarshal(items)
 	return json.Marshal(request)
-}
-
-func responseInstructions(raw json.RawMessage) (string, error) {
-	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return "", nil
-	}
-	var instructions string
-	if err := json.Unmarshal(raw, &instructions); err != nil {
-		return "", fmt.Errorf("decode instructions: %w", err)
-	}
-	return instructions, nil
 }

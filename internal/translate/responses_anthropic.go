@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // This file routes OpenAI Responses API clients onto backends that only
@@ -19,6 +18,13 @@ import (
 // become user/assistant messages, function_call / function_call_output items
 // become tool_use / tool_result blocks.
 func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
+	if err := validateGenerationControls(body, "openai-responses"); err != nil {
+		return nil, err
+	}
+	controls, err := translatedOpenAIControls(body, "openai-responses", "anthropic")
+	if err != nil {
+		return nil, err
+	}
 	var req responsesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
@@ -30,11 +36,13 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("request contains no input items")
 	}
+	if err := validateResponsesHistory(input); err != nil {
+		return nil, err
+	}
 
 	converted := anthropicRequest{
 		Model:       model,
 		MaxTokens:   req.MaxOutputTokens,
-		System:      req.Instructions,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		Stream:      req.Stream,
@@ -43,13 +51,29 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 		converted.MaxTokens = defaultMaxTokens
 	}
 
+	if req.Instructions != nil {
+		converted.System = *req.Instructions
+	}
+	tools, namespaces, err := responsesTools(body)
+	if err != nil {
+		return nil, fmt.Errorf("decode tools: %w", err)
+	}
+	choice, err := responsesWireToolChoice(req.ToolChoice, namespaces)
+	if err != nil {
+		return nil, err
+	}
+	conversationStarted := false
 	for i, item := range input {
+		if item.Type == "message" && isPromptRole(item.Role) {
+			converted.System, err = appendAnthropicInstruction(converted.System, item.Role, item.Content, "input_text", conversationStarted)
+			if err != nil {
+				return nil, fmt.Errorf("input item %d: %w", i, err)
+			}
+			continue
+		}
+		conversationStarted = true
 		switch item.Type {
 		case "message":
-			if isPromptRole(item.Role) {
-				converted.System = appendPrompt(converted.System, itemText(item))
-				continue
-			}
 			msg, err := anthropicMessageFromItem(item)
 			if err != nil {
 				return nil, fmt.Errorf("input item %d: %w", i, err)
@@ -57,11 +81,14 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 			if msg != nil {
 				converted.Messages = append(converted.Messages, *msg)
 			}
-		case "function_call", "custom_tool_call":
-			// Assistant-initiated tool call in the conversation history.
-			name := item.Name
-			if item.Namespace != "" {
-				name = qualifyResponsesToolName(item.Namespace, name)
+		case "function_call":
+			input, err := argumentsJSON(item.Arguments)
+			if err != nil {
+				return nil, err
+			}
+			name, err := responsesWireToolName(item.Name, item.Namespace, namespaces)
+			if err != nil {
+				return nil, err
 			}
 			converted.Messages = append(converted.Messages, AnthropicMessage{
 				Role: "assistant",
@@ -69,22 +96,23 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 					Type:  "tool_use",
 					ID:    item.CallID,
 					Name:  name,
-					Input: argumentsJSON(itemArguments(item)),
+					Input: input,
 				}}),
 			})
-		case "function_call_output", "custom_tool_call_output":
+		case "function_call_output":
+			content, err := openAIToolResultToAnthropic(item.Output, true)
+			if err != nil {
+				return nil, fmt.Errorf("input item %d: tool result: %w", i, err)
+			}
 			converted.Messages = append(converted.Messages, AnthropicMessage{
 				Role: "user",
 				Content: mustMarshal([]anthropicBlock{{
 					Type:      "tool_result",
 					ToolUseID: item.CallID,
-					Content:   mustMarshal(itemOutputText(item.Output)),
+					Content:   content,
 				}}),
 			})
 		default:
-			if ignoreResponsesInputType(item.Type) {
-				continue
-			}
 			return nil, fmt.Errorf("input item %d: unsupported type %q", i, item.Type)
 		}
 	}
@@ -92,70 +120,47 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 		return nil, fmt.Errorf("request contains no translatable input")
 	}
 
-	tools, namespaces, err := responsesTools(body)
-	if err != nil {
-		return nil, fmt.Errorf("decode tools: %w", err)
-	}
 	for _, tool := range tools {
+		if tool.Strict != nil {
+			return nil, fmt.Errorf("tool strict cannot be represented when translating to Messages")
+		}
 		if tool.Name == "" {
 			continue
+		}
+		schema, err := sanitizeSchema(tool.Parameters)
+		if err != nil {
+			return nil, err
 		}
 		converted.Tools = append(converted.Tools, AnthropicTool{
 			Name:        tool.Name,
 			Description: tool.Description,
-			InputSchema: sanitizeSchema(tool.Parameters),
+			InputSchema: schema,
 		})
 	}
-	converted.ToolChoice = toolChoiceToAnthropicWithNamespaces(req.ToolChoice, namespaces)
+	converted.ToolChoice = toolChoiceToAnthropicWithNamespaces(choice, nil)
 
-	return json.Marshal(converted)
+	return marshalWithOpenAIControls(converted, controls)
 }
 
-// anthropicMessageFromItem converts one Responses message item into an
-// Anthropic message; it returns nil for items that carry no content.
+// anthropicMessageFromItem preserves supported text/image parts in order.
 func anthropicMessageFromItem(item responsesInputItem) (*AnthropicMessage, error) {
-	role := item.Role
-	if role != "assistant" {
-		// Anthropic only knows "user" and "assistant"; prompt roles are
-		// folded into the system prompt before reaching here.
-		role = "user"
+	if item.Role != "user" && item.Role != "assistant" {
+		return nil, fmt.Errorf("unsupported message role %q", item.Role)
 	}
-	if text, ok := plainString(item.Content); ok {
-		if strings.TrimSpace(text) == "" {
-			return nil, nil
-		}
-		return &AnthropicMessage{Role: role, Content: mustMarshal([]anthropicBlock{{Type: "text", Text: text}})}, nil
-	}
-	var parts []responsesInputContent
-	if len(item.Content) > 0 {
-		if err := json.Unmarshal(item.Content, &parts); err != nil {
-			return nil, fmt.Errorf("decode content: %w", err)
-		}
-	}
-
-	var blocks []anthropicBlock
-	for _, part := range parts {
-		switch part.Type {
-		case "input_text", "output_text":
-			if part.Text != "" {
-				blocks = append(blocks, anthropicBlock{Type: "text", Text: part.Text})
-			}
-		case "input_image":
-			if block := imageBlock(part.ImageURL); block != nil {
-				blocks = append(blocks, *block)
-			}
-		}
+	blocks, err := openAIContentToAnthropic(item.Content, true, item.Role == "user")
+	if err != nil {
+		return nil, err
 	}
 	if len(blocks) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("empty content array cannot form a Messages turn")
 	}
-	return &AnthropicMessage{Role: role, Content: mustMarshal(blocks)}, nil
+	return &AnthropicMessage{Role: item.Role, Content: mustMarshal(blocks)}, nil
 }
 
 // ResponsesFromAnthropic converts a non-streaming Anthropic Messages response
 // into an OpenAI Responses response object.
 func ResponsesFromAnthropic(body []byte, model string) ([]byte, error) {
-	return responsesFromAnthropic(body, model, nil)
+	return responsesFromAnthropic(body, model, nil, nil)
 }
 
 // ResponsesFromAnthropicForRequest restores namespace metadata for tool calls
@@ -165,74 +170,96 @@ func ResponsesFromAnthropicForRequest(body []byte, model string, requestBody []b
 	if err != nil {
 		return nil, fmt.Errorf("decode request tools: %w", err)
 	}
-	return responsesFromAnthropic(body, model, namespaces)
+	return responsesFromAnthropic(body, model, namespaces, requestBody)
 }
 
-func responsesFromAnthropic(body []byte, model string, namespaces map[string]responseNamespaceTool) ([]byte, error) {
+func responsesFromAnthropic(body []byte, model string, namespaces map[string]responseNamespaceTool, requestBody []byte) ([]byte, error) {
 	var response anthropicResponseIn
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
+	if err := checkUpstreamError(response.Error); err != nil {
+		return nil, err
+	}
+	if err := validateAnthropicOutput(body); err != nil {
+		return nil, err
+	}
+	if err := validateAnthropicUsage(response.Usage); err != nil {
+		return nil, err
+	}
 
-	id := response.ID
-	if id == "" {
-		id = "resp_llm-proxy"
+	if err := validateAnthropicStop(response.StopReason); err != nil {
+		return nil, err
 	}
 	if response.Model != "" {
 		model = response.Model
 	}
 
-	out := responsesResponse{
-		ID:     id,
-		Status: "completed",
-		Model:  model,
-		Output: []responsesOutputItem{},
+	out, err := newResponsesResponse(response.ID, model, 0, requestBody)
+	if err != nil {
+		return nil, err
 	}
-	itemID := func() string {
-		return fmt.Sprintf("%s_item_%d", id, len(out.Output))
+	status := "completed"
+	if response.StopReason == "max_tokens" || response.StopReason == "model_context_window_exceeded" {
+		status = "incomplete"
 	}
+	ids := responseCallIDs{}
 	for _, block := range response.Content {
 		switch block.Type {
 		case "thinking":
 			out.Output = append(out.Output, responsesOutputItem{
-				ID:      itemID(),
+				ID:      out.nextItemID(),
 				Type:    "reasoning",
 				Summary: []responsesOutputContent{{Type: "summary_text", Text: block.Thinking}},
 			})
 		case "text":
 			out.Output = append(out.Output, responsesOutputItem{
-				ID:      itemID(),
+				ID:      out.nextItemID(),
 				Type:    "message",
 				Role:    "assistant",
-				Status:  "completed",
+				Status:  status,
 				Content: []responsesOutputContent{{Type: "output_text", Text: block.Text}},
 			})
 		case "tool_use":
+			arguments, err := compactJSON(block.Input)
+			if err != nil {
+				return nil, err
+			}
+			callID, err := ids.resolve(block.ID, "")
+			if err != nil {
+				return nil, err
+			}
 			name, namespace := restoreResponsesToolName(block.Name, namespaces)
 			out.Output = append(out.Output, responsesOutputItem{
-				ID:        block.ID,
+				ID:        out.nextItemID(),
 				Type:      "function_call",
-				CallID:    block.ID,
+				CallID:    callID,
 				Namespace: namespace,
 				Name:      name,
-				Arguments: compactJSON(block.Input),
-				Status:    "completed",
+				Arguments: arguments,
+				Status:    status,
 			})
 		}
 	}
-	if response.StopReason == "max_tokens" {
-		out.Status = "incomplete"
-		out.IncompleteDetails = json.RawMessage(`{"reason":"max_output_tokens"}`)
+	setResponsesFinish(&out, anthropicStopToFinish(response.StopReason, false))
+	if response.StopReason == "model_context_window_exceeded" {
+		out.IncompleteDetails = json.RawMessage(`{"reason":"model_context_window_exceeded"}`)
+	}
+	if response.StopReason == "refusal" {
+		// Messages marks refusal on the turn rather than on individual text blocks.
+		out.Status = "completed"
+		out.IncompleteDetails = nil
+		for i := range out.Output {
+			for j := range out.Output[i].Content {
+				part := &out.Output[i].Content[j]
+				if part.Type == "output_text" {
+					part.Type, part.Refusal, part.Text = "refusal", part.Text, ""
+				}
+			}
+		}
 	}
 
-	out.Usage = responsesUsage{
-		InputTokens:  int64(response.Usage.InputTokens),
-		OutputTokens: int64(response.Usage.OutputTokens),
-		TotalTokens:  int64(response.Usage.InputTokens + response.Usage.OutputTokens),
-	}
-	if response.Usage.CacheReadInputTokens > 0 {
-		out.Usage.InputTokensDetails = responsesTokenDetails{CachedTokens: int64(response.Usage.CacheReadInputTokens)}
-	}
+	out.Usage = anthropicUsageToResponses(response.Usage)
 
 	return json.Marshal(out)
 }
@@ -243,10 +270,12 @@ func responsesFromAnthropic(body []byte, model string, namespaces map[string]res
 // ResponsesStreamFromAnthropic converts an upstream Anthropic SSE stream into
 // OpenAI Responses API events.
 type ResponsesStreamFromAnthropic struct {
-	stream     responsesItemStream
-	blocks     map[int]string // anthropic block index -> open item kind
-	namespaces map[string]responseNamespaceTool
-	failure    error
+	stream       responsesItemStream
+	blocks       map[int]*streamedResponseItem
+	state        anthropicStreamState
+	namespaces   map[string]responseNamespaceTool
+	failure      error
+	messageUsage AnthropicUsage
 }
 
 func NewResponsesStreamFromAnthropic(writer io.Writer, flush func(), model string) *ResponsesStreamFromAnthropic {
@@ -257,7 +286,9 @@ func NewResponsesStreamFromAnthropic(writer io.Writer, flush func(), model strin
 // tool calls when the client request used Codex's grouped-tool extension.
 func NewResponsesStreamFromAnthropicForRequest(writer io.Writer, flush func(), model string, requestBody []byte) *ResponsesStreamFromAnthropic {
 	namespaces, _ := responseNamespaceMap(requestBody)
-	return newResponsesStreamFromAnthropic(writer, flush, model, namespaces)
+	stream := newResponsesStreamFromAnthropic(writer, flush, model, namespaces)
+	stream.stream.request = requestBody
+	return stream
 }
 
 func newResponsesStreamFromAnthropic(writer io.Writer, flush func(), model string, namespaces map[string]responseNamespaceTool) *ResponsesStreamFromAnthropic {
@@ -266,9 +297,8 @@ func newResponsesStreamFromAnthropic(writer io.Writer, flush func(), model strin
 			writer: writer,
 			flush:  flush,
 			model:  model,
-			id:     "resp_llm-proxy",
 		},
-		blocks:     map[int]string{},
+		blocks:     map[int]*streamedResponseItem{},
 		namespaces: namespaces,
 	}
 }
@@ -281,9 +311,24 @@ func (s *ResponsesStreamFromAnthropic) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		var event anthropicEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			return false, nil
+			return false, fmt.Errorf("invalid upstream Messages event: %w", err)
 		}
-		return s.consumeEvent(event), nil
+		if err := event.validateUsage(s.messageUsage); err != nil {
+			return false, err
+		}
+		frames, err := s.state.consume(event)
+		if err != nil {
+			s.failure = err
+			return false, err
+		}
+		terminal := false
+		for _, frame := range frames {
+			terminal = s.consumeEvent(frame)
+			if s.stream.writeErr != nil {
+				return false, s.stream.writeErr
+			}
+		}
+		return terminal, nil
 	})
 	if err != nil {
 		return err
@@ -292,7 +337,7 @@ func (s *ResponsesStreamFromAnthropic) Consume(body io.Reader) error {
 		return s.failure
 	}
 	if s.stream.finished {
-		return nil
+		return s.stream.writeErr
 	}
 	if s.stream.started {
 		return errors.New("upstream stream ended before the completion marker")
@@ -310,97 +355,63 @@ func (s *ResponsesStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 			if event.Message.Model != "" {
 				s.stream.model = event.Message.Model
 			}
-			s.stream.setUsage(int64(event.Message.Usage.InputTokens), 0)
+			s.messageUsage = event.Message.Usage
+			s.stream.usage = anthropicUsageToResponses(s.messageUsage)
 		}
 		s.stream.ensureCreated()
 
 	case "content_block_start":
-		if event.ContentBlock == nil {
-			return false
-		}
-		switch event.ContentBlock.Type {
+		block := event.ContentBlock
+		var item *streamedResponseItem
+		switch block.Type {
 		case "text":
-			s.blocks[event.Index] = "text"
-			s.stream.openItem("message")
+			item = s.stream.addItem("message", "", "", "")
+			s.stream.appendItemText(item, block.Text)
 		case "thinking":
-			s.blocks[event.Index] = "thinking"
-			s.stream.openItem("reasoning")
+			item = s.stream.addItem("reasoning", "", "", "")
+			s.stream.appendItemText(item, block.Thinking)
 		case "tool_use":
-			s.blocks[event.Index] = "tool_use"
-			name, namespace := restoreResponsesToolName(event.ContentBlock.Name, s.namespaces)
-			s.stream.startToolCallWithNamespace(event.ContentBlock.ID, name, namespace)
+			name, namespace := restoreResponsesToolName(block.Name, s.namespaces)
+			item = s.stream.addItem("function_call", block.ID, name, namespace)
 		}
+		s.blocks[event.Index] = item
 
 	case "content_block_delta":
-		if event.Delta == nil {
-			return false
-		}
-		switch s.blocks[event.Index] {
-		case "text":
-			if event.Delta.Text != "" {
-				s.stream.appendText(event.Delta.Text)
-			}
-		case "thinking":
-			if event.Delta.Thinking != "" {
-				s.stream.appendReasoning(event.Delta.Thinking)
-			}
-		case "tool_use":
-			if event.Delta.PartialJSON != "" {
-				s.stream.appendArgs(event.Delta.PartialJSON)
-			}
+		item := s.blocks[event.Index]
+		switch event.Delta.Type {
+		case "text_delta":
+			s.stream.appendItemText(item, event.Delta.Text)
+		case "thinking_delta":
+			s.stream.appendItemText(item, event.Delta.Thinking)
+		case "input_json_delta":
+			s.stream.appendItemArgs(item, event.Delta.PartialJSON)
 		}
 
 	case "content_block_stop":
-		delete(s.blocks, event.Index)
-		s.stream.closeItem()
+		s.stream.closeResponseItem(s.blocks[event.Index])
 
 	case "message_delta":
-		if event.Delta != nil && event.Delta.StopReason == "max_tokens" {
-			s.stream.incomplete = true
+		if event.Delta != nil {
+			switch event.Delta.StopReason {
+			case "max_tokens":
+				s.stream.incomplete, s.stream.reason = true, "max_output_tokens"
+			case "model_context_window_exceeded":
+				s.stream.incomplete, s.stream.reason = true, "model_context_window_exceeded"
+			case "refusal":
+				// Messages supplies refusal only after text has already streamed.
+				s.stream.incomplete, s.stream.reason = true, "content_filter"
+			}
 		}
 		if event.Usage != nil {
-			s.stream.setUsage(s.usageInput(event), int64(event.Usage.OutputTokens))
+			event.Usage.apply(&s.messageUsage)
+			s.stream.usage = anthropicUsageToResponses(s.messageUsage)
 		}
 
 	case "message_stop":
 		s.Finish()
 		return true
-
-	case "error":
-		errType, message := "api_error", "upstream stream failed"
-		if event.Error != nil {
-			if event.Error.Type != "" {
-				errType = event.Error.Type
-			}
-			if event.Error.Message != "" {
-				message = event.Error.Message
-			}
-		}
-		s.failure = fmt.Errorf("%s: %s", errType, message)
-		return true
 	}
 	return false
-}
-
-// usageInput returns the input-token count from a message_delta usage frame;
-// these frames repeat the message totals, so fall back to what we already hold.
-func (s *ResponsesStreamFromAnthropic) usageInput(event anthropicEvent) int64 {
-	if event.Usage != nil && event.Usage.InputTokens > 0 {
-		return int64(event.Usage.InputTokens)
-	}
-	return s.stream.usageIn
-}
-
-// emitFailed terminates the stream with a response.failed event.
-func (s *ResponsesStreamFromAnthropic) emitFailed(errType, message string) {
-	s.stream.ensureCreated()
-	s.stream.emit("response.failed", map[string]any{
-		"type": "response.failed",
-		"response": map[string]any{
-			"id": s.stream.id, "model": s.stream.model, "status": "failed",
-			"error": map[string]any{"type": errType, "code": nil, "message": message},
-		},
-	})
 }
 
 // Finish closes any open item and emits response.completed.
@@ -412,10 +423,5 @@ func (s *ResponsesStreamFromAnthropic) Finish() {
 // response.completed, so a mid-stream break reaches the client as a real
 // failure it can retry rather than a truncated response that looks done.
 func (s *ResponsesStreamFromAnthropic) Fail(message string) {
-	if s.stream.finished {
-		return
-	}
-	s.stream.finished = true
-	s.stream.closeItem()
-	s.emitFailed("api_error", message)
+	s.stream.Fail(message)
 }

@@ -676,6 +676,241 @@ stop/finish reasons. When a backend supports several wire formats, the most
 natural one for the inbound API is used (native first, then OpenAI shapes
 before Anthropic).
 
+### Validation and tool-input boundaries
+
+Native forwarding preserves request bytes except documented model/selector
+rewrites. The proxy requires one unambiguous top-level `model` key and an
+optional boolean `stream`; duplicate or differently cased routing keys are
+rejected. Messages and Chat require a non-empty array of message objects;
+this does not prohibit an individual empty text string. Native Responses
+input/continuation validation remains upstream-owned.
+
+Standard numeric controls are checked for the inbound API: token limits must
+be positive integers, `top_k` a non-negative integer (Messages only), `top_p`
+between 0 and 1, and temperature between 0 and 1 for Messages or 0 and 2 for
+OpenAI. Explicit zero sampling values are preserved. OpenAI null controls mean
+provider defaults; Messages null controls are rejected. Other provider-specific
+fields on native routes remain untouched.
+
+Translated function tools require object-valued JSON schemas and complete
+object-valued arguments. Supplied schemas retain their constraints and numeric
+lexemes; absent schemas receive an empty-object schema. Argument fragments and
+strings are not numerically rewritten. Translated histories require non-empty,
+unique call IDs and at most one result per preceding matching call; native
+history validation remains upstream-owned. Buffered response calls with missing
+IDs receive unique IDs; duplicate call IDs are rejected.
+
+For buffered Chat ↔ Responses conversion, generation stopped by a token limit
+retains the exact incomplete argument string and incomplete terminal state.
+Buffered Messages `tool_use.input` cannot represent a truncated JSON string:
+conversion fails explicitly rather than inventing `{}` or silently discarding
+the call. A complete object on an incomplete generation is retained together
+with `max_tokens`. These boundaries do not imply support for every provider
+extension or custom-tool grammar.
+
+### Instruction and native-history fidelity
+
+Chat ↔ Responses translation preserves system/developer roles and their position
+in the input history instead of hoisting them into a merged prompt. Typeless
+Responses input messages with an explicit role are accepted. Empty text,
+whitespace, and ordered supported text/image parts are retained on those paths.
+
+Responses `instructions` preserves presence: missing or null adds no instruction;
+an explicit empty string remains an empty leading Chat system message or an
+explicit empty Messages system string. When followed by leading system input,
+that empty instruction remains the first ordered block rather than disappearing
+or acquiring an invented separator.
+
+When translating Chat or Responses **to Messages**, only leading system messages
+can map to Anthropic's top-level system area. Multiple leading system messages
+retain separate, ordered text blocks; no separators are invented. Developer
+messages and system messages after conversation input are rejected because their
+authority or position cannot be represented. System content must be a string or
+a non-empty array of supported text parts with a string `text` field; unsupported
+part fields are rejected rather than discarded. Native routes do not impose
+these cross-wire instruction restrictions.
+
+Shared native Responses normalization preserves instruction order,
+`additional_tools`, and missing/null tool outputs. Its only history rewrite is
+removing an explicitly null `content` field from reasoning items for upstream
+compatibility; opaque reasoning data is retained. Requests needing no such
+rewrite retain their original bytes at this normalization step. Provider-specific
+transformations, such as model selection, still apply separately.
+
+### Messages content boundaries
+
+Chat/Responses → Messages translation retains empty text, whitespace, and ordered
+text/image parts, including arrays in tool results. A missing/null Chat assistant
+content field is accepted only when tool calls supply the message content. Empty
+message-content arrays are rejected rather than dropping a turn; empty tool-result
+arrays remain explicit. Outbound text, image, tool-call, and tool-result blocks
+contain only fields belonging to their type.
+
+These paths reject unknown roles, unsupported content parts or part fields,
+missing/null text fields, assistant images, and explicit image `detail` values
+other than `auto`. File references and audio are not converted to prose or silently
+removed. Strings and supported text/image arrays are accepted as tool outputs;
+other output shapes fail explicitly instead of being stringified.
+
+### Messages → OpenAI boundaries
+
+Messages → Chat/Responses preserves string whitespace, empty text, and ordered
+text/image parts. System content becomes a leading system message, not a joined
+string. Tool-result text arrays remain arrays; missing result content means an
+empty string, while explicit null is rejected. Responses also accepts image
+results; Chat's text-only tool results do not. `is_error: true` is mapped to an
+explicit `[Tool execution failed]\n` text prefix (or initial text part), since
+OpenAI has no equivalent flag. This is a visible, non-reversible error annotation,
+not a claim of native tool-error support.
+
+Opaque thinking/redacted-thinking blocks, cache controls, documents, unknown block
+fields, and assistant images require a native route. Chat cannot preserve text
+following a tool call inside one assistant message and rejects that ordering;
+Responses retains it as ordered input items. Images require a URL source or
+base64 data with an explicit media type.
+
+Tool choices map `auto`/`any`/`none`/named `tool`, with explicit
+`disable_parallel_tool_use` inverted into `parallel_tool_calls`. Chat retains
+stop sequences; Responses rejects nonempty stop sequences. `top_k`, thinking
+controls, metadata, and unsupported tool or request fields are rejected rather
+than dropped. Thinking budgets are never guessed as reasoning effort. These
+boundaries do not modify native Messages requests. In particular, Messages
+`safeguards` and `output_config` currently require native Messages routing;
+they are not silently dropped or converted into unrelated OpenAI controls.
+
+### OpenAI tool-result boundaries
+
+Chat ↔ Responses retains tool-result strings verbatim and preserves text arrays,
+including empty arrays and empty text parts, without adding separators. Responses
+image/file tool outputs cannot fit Chat's text-only tool-message schema and are
+rejected. Missing/null outputs and unsupported part fields are rejected rather
+than replaced with an empty result. Adjacent Responses calls share one Chat
+assistant tool-call message; a message, result, or other input item ends the group.
+
+### Translated tool identity and native-only history
+
+Responses function tools, including namespace children, receive deterministic
+flat names for Chat/Messages. Unique valid names remain unchanged; collisions,
+invalid characters, and names exceeding 64 bytes receive collision-free aliases.
+Declarations, historical calls, forced choices, buffered replies, and streaming
+replies share the same identity map. Replies restore only exact wire names; a
+bare child name never causes the proxy to guess a namespace. Duplicate identities
+are rejected. Historical namespace calls require their declaration; undeclared
+top-level history is accepted only when it does not impersonate an assigned alias.
+
+Custom tools (including free-form string payloads and grammar-constrained tools),
+server-executed tools, namespace descriptions/unknown definition fields, Responses
+`additional_tools` history, and reasoning history require native Responses routes.
+Translated routes reject them before dispatch rather than converting strings to
+JSON arguments, dropping definitions/history, or fabricating portable reasoning
+signatures. A reversible custom-tool adapter is not currently provided. Native
+routes retain these fields and leave validation to the upstream.
+
+### Translated token usage
+
+OpenAI input totals include cache reads and cache creation; Messages `input_tokens`
+counts only uncached input. Translation adds or subtracts the separate cache
+categories exactly once in both buffered and streamed replies. Messages stream
+usage deltas are cumulative: omitted counters retain their previous value and
+explicit zero counters replace it.
+
+OpenAI `cached_tokens` and `reasoning_tokens` details are retained. Two proxy
+response extensions carry categories without standard equivalents:
+`cache_creation_tokens` inside OpenAI input/prompt token details, and
+`output_tokens_details.reasoning_tokens` in Messages usage. These extensions are
+accounting metadata, not provider capability claims or reasoning budgets. Native
+responses are not rewritten. Generated Responses usage always includes separate
+input/output detail objects (including zero counters). Negative or overflowing
+counts, cache categories exceeding the inclusive input count, and reasoning counts
+exceeding output are rejected as invalid upstream usage rather than clamped or
+converted into negative client counters.
+
+### Buffered terminal and refusal handling
+
+Translated buffered replies retain token-limit, context-limit, and refusal
+outcomes rather than treating every terminal state as a successful turn. Responses
+`incomplete` requires a recognized reason (`max_output_tokens`,
+`model_context_window_exceeded`, or `content_filter`); missing/unknown reasons,
+failed/cancelled/nonterminal statuses, and upstream error envelopes fail conversion.
+An omitted Responses status remains accepted for compatible upstreams.
+
+Chat replies must contain exactly one choice. Legacy `function_call` and unknown
+finish reasons, and Messages `pause_turn`/unknown stop reasons, require native
+routes rather than being guessed as normal completion. Messages context limits
+map to Chat `length`; Responses retains the specific context-limit reason as a
+proxy extension. Chat `content_filter` maps to Messages `refusal` or Responses
+`incomplete` with `content_filter`.
+
+Refusal strings (including empty strings) retain the `refusal` field on OpenAI
+replies and map to text plus `stop_reason: refusal` on Messages. For completed
+Responses containing both refusal and tool items, refusal determines the Messages
+stop reason regardless of item order; neither item is discarded. Text/reasoning
+concatenation does not insert separators. Generated Responses text parts include
+`text` even when empty and `annotations: []`; refusal parts contain `refusal`
+rather than an unrelated `text` field. These buffered guarantees do not yet qualify
+all streaming terminal/lifecycle behavior.
+
+Generated buffered Responses envelopes follow the required fields of
+[openai-python v1.109.1's Response type](https://github.com/openai/openai-python/blob/v1.109.1/src/openai/types/responses/response.py)
+(`response.py` blob `a1133a41f5f661b2bb743a9d11dff1114134bf58`). They include
+`object: response`, a timestamp, output/usage, and nullable error/incomplete
+fields. Request-aware conversions echo supplied instructions, metadata, sampling,
+token limits, tool settings, and supported identity/cache/storage settings,
+including explicit zero/false. Absent nullable settings become null; default tool
+settings are `parallel_tool_calls: true`, `tool_choice: auto`, and `tools: []`.
+These are envelope defaults, not a claim about provider tool execution. Requested
+`service_tier` is not reported as a delivered tier. A nonempty upstream model label
+wins; otherwise the configured response model is used. Upstream IDs/timestamps
+are retained when available; missing response IDs are unique, and output item IDs
+are independent of tool call IDs. Message/tool item status reflects incomplete
+generation. This pinned contract does not qualify all SDK versions or output types.
+
+Buffered translation rejects server/custom-tool outputs, audio/images, unknown
+content types/fields, nonempty citations/annotations/logprobs, encrypted/redacted
+reasoning, and nonterminal output items rather than silently deleting them.
+Required text/refusal/argument values must be strings, including empty strings
+where the destination supports them. Empty annotation/citation arrays are accepted.
+Namespaced upstream Responses calls require native routing because Chat/Messages
+cannot carry their namespace identity. Plain Messages thinking is display text on
+OpenAI output, not portable signed state; provider signatures are not replayed.
+OpenAI reasoning is suppressed on Messages output when thinking is not requested.
+If signed thinking is requested, nonempty unsigned reasoning fails conversion;
+no synthetic thinking block or signature is emitted. The same boundary applies to
+streaming: before any output the translator returns an error, and after output it
+returns an error for the exchange layer to surface without replaying the response.
+Messages thinking request controls already require a native Messages route.
+Native responses retain their bytes and provider-specific output.
+
+### Translated OpenAI request controls
+
+Chat ↔ Responses preserves explicit `store`, `parallel_tool_calls`, tool `strict`
+(including `false`), and shared metadata/identity/service/cache fields. An absent
+`store` remains absent; the upstream API owns its default. Structured output maps
+between `response_format` and `text.format` (text, JSON object, or named JSON
+schema). Schema constraints and numeric lexemes are retained. Reasoning maps only
+an explicit effort string between `reasoning_effort` and `reasoning.effort`; this
+is not a guarantee that a selected model supports a particular effort value.
+Reasoning summaries and budgets cannot be mapped by these routes.
+
+For Chat/Responses → Messages, `parallel_tool_calls` maps to the inverse
+`tool_choice.disable_parallel_tool_use`, including explicit `false`. A `none`
+choice already disables tools and receives no parallel flag. Chat `stop` maps to
+`stop_sequences`; it is rejected on Chat → Responses. Temperatures above 1,
+OpenAI storage/metadata controls, structured output, reasoning controls, and tool
+`strict` are rejected on these Messages translations rather than silently lost.
+
+Translated OpenAI requests accept only `n=1` and supported named-function or
+`auto`/`none`/`required` tool choices. Unresolved continuation (`previous_response_id`,
+`conversation`), prompt references/context management, legacy function controls,
+audio/modalities, prediction, logit bias/logprobs, seed/penalties, and Responses
+background/truncation/include/max-tool-call controls are explicitly rejected when
+nonnull. Unknown nonnull top-level controls also reject. Chat message names,
+refusal/reasoning history fields, unsupported nested tool fields, and Responses
+item references, IDs/status fields or cross-variant fields require a native route;
+they are not silently discarded. These restrictions apply to translation, not
+native forwarding: native requests retain their upstream-specific controls and
+validation remains upstream-owned.
+
 ### Generic OpenAI SDKs
 
 Any OpenAI-compatible client works against `/v1`:
@@ -732,6 +967,37 @@ answers `404` too rather than falling through to another backend.
 configuration.
 `?backend=<name>` restricts the answer to one backend's catalog.
 
+Codex clients receive a Codex catalog envelope. Unknown context/output limits
+are `null`; reasoning efforts, verbosity, parallel calls and reasoning summaries
+are not advertised without operator-verified metadata. Configure hints per
+backend with exact, case-sensitive upstream IDs (no family or dated-suffix
+matching):
+
+```yaml
+backends:
+  - type: opencode
+    model_metadata:
+      - model: vendor/exact-model
+        context_window: 64000
+        max_output_tokens: 8192
+        reasoning_efforts: [low, high]
+        default_reasoning_effort: high
+        supports_parallel_tools: true
+        supports_verbosity: false
+        supports_reasoning_summary: false
+```
+
+These example limits are illustrative, not provider defaults. Omit unknown
+limits; supplied limits must be positive, and output cannot exceed context.
+The default effort, when supplied, must be one of the listed efforts. Hints do
+not change requests, create catalog entries, or enable unsupported translation:
+verbosity and reasoning-summary controls require native Responses; effort
+controls can also map to Chat, but never to a guessed Messages thinking budget.
+Freeform patch tools are not advertised. The 10,000-byte Codex tool-output
+truncation policy is a client policy, **not** a model context or compaction limit.
+Codex may apply its own defaults when limits are unknown. The ordinary OpenAI
+catalog envelope is unchanged.
+
 ### Fallbacks
 
 A route (or backend) can name fallback backends that take over when the
@@ -768,7 +1034,12 @@ repository).
 Configuration loads in this order: environment variables (`LLM_PROXY_`
 prefix, dots become underscores), the config file (`LLM_PROXY_CONFIG`, or
 `~/.config/llm-proxy/config.yaml` when present), then defaults. Command-line
-flags are applied afterwards.
+flags are applied afterwards. Documented scalar environment settings work even
+when their fields are absent from YAML. Empty environment values fall back to
+YAML/defaults; use an explicit empty YAML value to disable optional settings.
+Explicit `stats.retention_days: 0` (or environment value `0`) keeps history
+indefinitely. Startup warns when client authentication is disabled on a
+non-loopback listener; intentional loopback-only operation remains supported.
 
 | Field                        | Environment variable                 | Default                  | Description                                                                 |
 | ---------------------------- | ------------------------------------ | ------------------------ | --------------------------------------------------------------------------- |

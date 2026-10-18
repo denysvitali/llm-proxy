@@ -490,7 +490,7 @@ func TestResponsesEndpointSurfacesBreakAfterContent(t *testing.T) {
 func TestResponsesAcceptsLargeTerminalEvent(t *testing.T) {
 	terminal := "event: response.completed\n" +
 		`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"` +
-		strings.Repeat("x", retryCompletionWindow*2) +
+		strings.Repeat("x", 64*1024) +
 		`"}]}]}}` + "\n\n"
 	upstream := newScripted(backend.KindOpenAIResponses,
 		step{resp: sseResponse("text/event-stream", terminal)},

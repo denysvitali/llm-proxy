@@ -56,7 +56,7 @@ func TestResponsesToChatRequest(t *testing.T) {
 	if len(got.Tools) != 1 || got.Tools[0].Function.Name != "get_weather" {
 		t.Errorf("tools = %+v", got.Tools)
 	}
-	if !got.Tools[0].Function.Strict {
+	if got.Tools[0].Function.Strict == nil || !*got.Tools[0].Function.Strict {
 		t.Error("tool strict flag was dropped during Responses to Chat translation")
 	}
 	choice, ok := got.ToolChoice.(map[string]any)
@@ -75,13 +75,12 @@ func TestResponsesToChatRequest(t *testing.T) {
 	}
 }
 
-func TestResponsesToChatHoistsPromptHistoryAheadOfConversation(t *testing.T) {
+func TestResponsesToChatPreservesPromptHistoryPosition(t *testing.T) {
 	in := []byte(`{
 		"model":"ignored",
 		"instructions":"base instructions",
 		"input":[
 			{"type":"message","role":"user","content":"first user"},
-			{"type":"reasoning","content":null,"encrypted_content":"opaque"},
 			{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer rules"}]},
 			{"type":"message","role":"assistant","content":"prior answer"},
 			{"type":"message","role":"system","content":"system rules"},
@@ -97,14 +96,13 @@ func TestResponsesToChatHoistsPromptHistoryAheadOfConversation(t *testing.T) {
 		t.Fatalf("decode translated request: %v", err)
 	}
 
-	if len(got.Messages) != 4 {
-		t.Fatalf("messages = %d, want system plus three conversation messages", len(got.Messages))
+	if len(got.Messages) != 6 {
+		t.Fatalf("messages = %d, want instructions plus five messages", len(got.Messages))
 	}
-	if got.Messages[0].Role != "system" ||
-		got.Messages[0].Content != "base instructions\n\ndeveloper rules\n\nsystem rules" {
-		t.Fatalf("prompt message = %+v, want all prompt roles hoisted in order", got.Messages[0])
+	if got.Messages[0].Role != "system" || got.Messages[0].Content != "base instructions" {
+		t.Fatalf("instructions message = %+v", got.Messages[0])
 	}
-	wantRoles := []string{"user", "assistant", "user"}
+	wantRoles := []string{"user", "developer", "assistant", "system", "user"}
 	for index, wantRole := range wantRoles {
 		if got.Messages[index+1].Role != wantRole {
 			t.Errorf("message %d role = %q, want %q", index+1, got.Messages[index+1].Role, wantRole)
@@ -127,6 +125,12 @@ func TestResponsesToChatToolChoiceStrings(t *testing.T) {
 		{`"banana"`, nil},
 	} {
 		out, err := ResponsesToChat([]byte(`{"input":[{"type":"message","role":"user","content":"x"}],"tool_choice":`+tc.in+`}`), "m")
+		if tc.want == nil {
+			if err == nil {
+				t.Fatalf("unsupported tool_choice %s accepted: %s", tc.in, out)
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatalf("ResponsesToChat(%s): %v", tc.in, err)
 		}
@@ -194,18 +198,17 @@ func TestResponsesToChatRejectsEmptyAndUnknown(t *testing.T) {
 	}
 }
 
-func TestResponsesToChatArrayToolOutputAndAdditionalTools(t *testing.T) {
+func TestResponsesToChatArrayToolOutput(t *testing.T) {
 	in := []byte(`{
 		"input": [
-			{"type":"additional_tools","tools":[{"type":"web_search"}]},
 			{"type":"message","role":"user","content":"use the tool"},
 			{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"a.go\"}"},
 			{"type":"function_call_output","call_id":"call_1","output":[
 				{"type":"input_text","text":"package main"},
 				{"type":"input_text","text":"func main() {}"}
 			]},
-			{"type":"custom_tool_call","call_id":"call_2","name":"shell","input":"ls"},
-			{"type":"custom_tool_call_output","call_id":"call_2","output":[{"type":"input_text","text":"a.go"}]}
+			{"type":"function_call","call_id":"call_2","name":"shell","arguments":"{\"command\":\"ls\"}"},
+			{"type":"function_call_output","call_id":"call_2","output":[{"type":"input_text","text":"a.go"}]}
 		]
 	}`)
 	out, err := ResponsesToChat(in, "stealth-mock")
@@ -217,18 +220,20 @@ func TestResponsesToChatArrayToolOutputAndAdditionalTools(t *testing.T) {
 		t.Fatalf("decode translated request: %v", err)
 	}
 	if len(got.Messages) != 5 {
-		t.Fatalf("messages = %d, want 5 (additional_tools dropped)", len(got.Messages))
+		t.Fatalf("messages = %d, want 5", len(got.Messages))
 	}
-	if got.Messages[2].Role != "tool" || got.Messages[2].Content != "package main\nfunc main() {}" {
+	if got.Messages[2].Role != "tool" {
 		t.Errorf("array function_call_output became %+v", got.Messages[2])
 	}
+	assertContentBlocks(t, got.Messages[2].Content.([]any), []map[string]any{{"type": "text", "text": "package main"}, {"type": "text", "text": "func main() {}"}})
 	if got.Messages[3].Role != "assistant" || len(got.Messages[3].ToolCalls) != 1 ||
-		got.Messages[3].ToolCalls[0].Function.Arguments != "ls" {
-		t.Errorf("custom_tool_call became %+v", got.Messages[3])
+		got.Messages[3].ToolCalls[0].Function.Arguments != `{"command":"ls"}` {
+		t.Errorf("function_call became %+v", got.Messages[3])
 	}
-	if got.Messages[4].Role != "tool" || got.Messages[4].Content != "a.go" {
-		t.Errorf("custom_tool_call_output became %+v", got.Messages[4])
+	if got.Messages[4].Role != "tool" {
+		t.Errorf("function_call_output became %+v", got.Messages[4])
 	}
+	assertContentBlocks(t, got.Messages[4].Content.([]any), []map[string]any{{"type": "text", "text": "a.go"}})
 }
 
 func TestResponsesFromChatResponse(t *testing.T) {
@@ -322,6 +327,7 @@ func TestResponsesStreamFromChat(t *testing.T) {
 		``,
 		`data: [DONE]`,
 		``,
+		``,
 	}, "\n")
 
 	var out strings.Builder
@@ -360,7 +366,7 @@ func TestResponsesStreamFromChatToolCall(t *testing.T) {
 		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}`,
 		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
 		`data: [DONE]`,
-	}, "\n")
+	}, "\n\n") + "\n\n"
 
 	var out strings.Builder
 	w := NewResponsesStreamFromChat(&out, func() {}, "mock")
@@ -387,7 +393,7 @@ func TestResponsesStreamFromChatRestoresNamespaceTool(t *testing.T) {
 		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"mcp__happy__update_plan","arguments":"{}"}}]}}]}`,
 		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
 		`data: [DONE]`,
-	}, "\n")
+	}, "\n\n") + "\n\n"
 
 	var out strings.Builder
 	w := NewResponsesStreamFromChatForRequest(&out, nil, "mock", request)
@@ -404,7 +410,7 @@ func TestResponsesStreamFromChatNetworkErrorReturnsFailure(t *testing.T) {
 	upstream := strings.Join([]string{
 		`data: {"id":"chatcmpl-fail","model":"mock","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"network_error"}]}`,
 		`data: [DONE]`,
-	}, "\n")
+	}, "\n\n") + "\n\n"
 
 	var out strings.Builder
 	w := NewResponsesStreamFromChat(&out, nil, "mock")
@@ -417,7 +423,7 @@ func TestResponsesStreamFromChatNetworkErrorReturnsFailure(t *testing.T) {
 }
 
 func TestResponsesStreamFromChatErrorEnvelopeReturnsFailure(t *testing.T) {
-	upstream := `data: {"error":{"type":"server_error","message":"Endpoint is unavailable"}}` + "\n"
+	upstream := `data: {"error":{"type":"server_error","message":"Endpoint is unavailable"}}` + "\n\n"
 
 	var out strings.Builder
 	w := NewResponsesStreamFromChat(&out, nil, "mock")
@@ -427,11 +433,7 @@ func TestResponsesStreamFromChatErrorEnvelopeReturnsFailure(t *testing.T) {
 	}
 }
 
-// Codex opens every turn with a "developer" item carrying its skills and
-// permissions preamble. That role only exists in the OpenAI APIs, so it has to
-// reach a chat-completions backend as part of the system prompt rather than as
-// a message role the upstream will reject.
-func TestResponsesToChatFoldsPromptRolesIntoSystem(t *testing.T) {
+func TestResponsesToChatPreservesPromptRoles(t *testing.T) {
 	in := []byte(`{
 		"model": "ignored",
 		"instructions": "be terse",
@@ -453,28 +455,25 @@ func TestResponsesToChatFoldsPromptRolesIntoSystem(t *testing.T) {
 		t.Fatalf("decode translated request: %v", err)
 	}
 
-	if len(got.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2 (system + user)", len(got.Messages))
+	if len(got.Messages) != 4 {
+		t.Fatalf("messages = %d, want 4", len(got.Messages))
 	}
-	want := "be terse\n\n<skills>a</skills>\n\n<permissions>b</permissions>\n\nand polite"
-	if got.Messages[0].Role != "system" || got.Messages[0].Content != want {
-		t.Errorf("system message = %+v, want %q", got.Messages[0], want)
-	}
-	if got.Messages[1].Role != "user" || got.Messages[1].Content != "hello" {
-		t.Errorf("user message = %+v", got.Messages[1])
-	}
-	for _, message := range got.Messages {
-		switch message.Role {
-		case "system", "user", "assistant", "tool":
-		default:
-			t.Errorf("message carries role %q, which chat-completions upstreams reject", message.Role)
+	roles := []string{"system", "developer", "system", "user"}
+	for i, role := range roles {
+		if got.Messages[i].Role != role {
+			t.Fatalf("message %d role = %q, want %q", i, got.Messages[i].Role, role)
 		}
+	}
+	if got.Messages[0].Content != "be terse" || got.Messages[2].Content != "and polite" || got.Messages[3].Content != "hello" {
+		t.Fatalf("message text changed: %+v", got.Messages)
+	}
+	parts := got.Messages[1].Content.([]any)
+	if len(parts) != 2 || parts[0].(map[string]any)["text"] != "<skills>a</skills>" || parts[1].(map[string]any)["text"] != "<permissions>b</permissions>" {
+		t.Fatalf("developer content changed: %+v", parts)
 	}
 }
 
-// A developer item on its own still produces a usable request: its text
-// becomes the system prompt instead of vanishing.
-func TestResponsesToChatPromptOnlyInputKeepsSystem(t *testing.T) {
+func TestResponsesToChatPromptOnlyInputKeepsDeveloper(t *testing.T) {
 	in := []byte(`{"model":"ignored","input":[{"type":"message","role":"developer","content":"rules"}]}`)
 	out, err := ResponsesToChat(in, "stealth-mock")
 	if err != nil {
@@ -484,7 +483,7 @@ func TestResponsesToChatPromptOnlyInputKeepsSystem(t *testing.T) {
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("decode translated request: %v", err)
 	}
-	if len(got.Messages) != 1 || got.Messages[0].Role != "system" || got.Messages[0].Content != "rules" {
-		t.Fatalf("messages = %+v, want a single system message", got.Messages)
+	if len(got.Messages) != 1 || got.Messages[0].Role != "developer" || got.Messages[0].Content != "rules" {
+		t.Fatalf("messages = %+v, want a single developer message", got.Messages)
 	}
 }

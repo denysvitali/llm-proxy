@@ -113,6 +113,7 @@ func TestChatClientOnAnthropicBackendStreams(t *testing.T) {
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 		``,
+		``,
 	}, "\n")
 	fb := &fakeOABackend{
 		name:   "claude-like",
@@ -209,7 +210,6 @@ func TestResponsesClientOnApodexUsesChatCompatibilityPath(t *testing.T) {
 		"instructions":"base instructions",
 		"input":[
 			{"type":"message","role":"user","content":"first"},
-			{"type":"reasoning","content":null,"encrypted_content":"opaque"},
 			{"type":"message","role":"developer","content":"developer rules"},
 			{"type":"message","role":"user","content":"latest"}
 		]
@@ -229,9 +229,15 @@ func TestResponsesClientOnApodexUsesChatCompatibilityPath(t *testing.T) {
 	if err := json.Unmarshal(upstreamBody, &forwarded); err != nil {
 		t.Fatalf("decode upstream body: %v", err)
 	}
-	if len(forwarded.Messages) != 3 || forwarded.Messages[0].Role != "system" ||
-		forwarded.Messages[0].Content != "base instructions\n\ndeveloper rules" {
-		t.Fatalf("forwarded messages = %+v, want one leading merged prompt", forwarded.Messages)
+	if len(forwarded.Messages) != 4 {
+		t.Fatalf("forwarded messages = %+v, want instructions and three ordered messages", forwarded.Messages)
+	}
+	wantRoles := []string{"system", "user", "developer", "user"}
+	wantText := []string{"base instructions", "first", "developer rules", "latest"}
+	for i, message := range forwarded.Messages {
+		if message.Role != wantRoles[i] || message.Content != wantText[i] {
+			t.Errorf("message %d = %+v, want %s %q", i, message, wantRoles[i], wantText[i])
+		}
 	}
 	if strings.Contains(string(upstreamBody), "opaque") ||
 		strings.Contains(string(upstreamBody), `"content":null`) {

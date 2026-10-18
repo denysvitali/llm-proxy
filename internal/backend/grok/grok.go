@@ -104,10 +104,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, fmt.Errorf("request to Grok failed: %w", err)
 	}
-	// Normalize every Responses response, not only namespace-tool responses.
-	// Grok-compatible gateways may encode integer tool arguments as floats;
-	// Codex validates the argument string against the MCP schema and rejects
-	// values such as 63889.0 for an i32 field.
+	// Restore namespace metadata without rewriting argument strings or numbers.
 	bodyReader := restoreNamespaceCalls(resp.Body, namespaces, req.Streaming)
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: bodyReader}, nil
 }
@@ -326,9 +323,10 @@ func restoreNamespaceStream(writer io.Writer, upstream io.Reader, tools []namesp
 }
 
 func restoreNamespaceJSON(data []byte, tools []namespaceTool) []byte {
-	data = translate.NormalizeResponsesToolArguments(data)
 	var value any
-	if json.Unmarshal(data, &value) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if decoder.Decode(&value) != nil {
 		return data
 	}
 	byName := make(map[string]namespaceTool, len(tools))

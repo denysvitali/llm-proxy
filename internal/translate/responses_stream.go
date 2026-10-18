@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -19,6 +18,10 @@ type responsesEvent struct {
 	Type         string               `json:"type"`
 	OutputIndex  int                  `json:"output_index"`
 	ContentIndex int                  `json:"content_index"`
+	ItemID       string               `json:"item_id"`
+	Arguments    string               `json:"arguments"`
+	Text         string               `json:"text"`
+	Refusal      string               `json:"refusal"`
 	Delta        string               `json:"delta,omitempty"`
 	Item         *responsesOutputItem `json:"item,omitempty"`
 	Response     *responsesResponse   `json:"response,omitempty"`
@@ -29,13 +32,14 @@ type responsesEvent struct {
 // upstream output index it came from.
 type responsesOutBlock struct {
 	index int
-	kind  string // "text", "thinking", "tool_use", or "ignored"
+	kind  string // "text", "tool_use", or "ignored"
 	open  bool
 	// sentArgDelta records that input_json bytes were already forwarded for
 	// this tool_use block (via function_call_arguments.delta or the item
 	// fallback). Partial JSON fragments concatenate client-side, so the
 	// complete arguments must never be re-emitted after any delta went out.
 	sentArgDelta bool
+	arguments    string
 }
 
 // ResponsesStreamWriter converts an OpenAI Responses SSE stream into the
@@ -49,6 +53,8 @@ type ResponsesStreamWriter struct {
 	started  bool
 	finished bool
 	failure  error
+	writeErr error
+	state    responsesStreamState
 
 	blocks         map[int]*responsesOutBlock
 	nextBlockIndex int
@@ -71,18 +77,48 @@ func NewResponsesStreamWriter(writer io.Writer, flush func(), model string, incl
 func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		if string(payload) == "[DONE]" {
-			s.Finish()
-			return true, nil
+			return false, errors.New("Responses stream requires a terminal response event")
 		}
 		var event responsesEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			return false, nil
+			return false, fmt.Errorf("invalid upstream Responses event: %w", err)
 		}
 		if event.Type == "response.failed" || event.Type == "error" {
 			s.failure = ResponsesFailure(payload)
 			return true, nil
 		}
-		return s.consumeEvent(event), nil
+		if event.Response != nil {
+			if err := validateResponsesUsage(event.Response.Usage); err != nil {
+				return false, err
+			}
+		}
+		if s.includeThinking {
+			if (event.Type == "response.reasoning_summary_text.delta" || event.Type == "response.reasoning_text.delta") && event.Delta != "" {
+				return false, errUnsignedThinking
+			}
+			if event.Item != nil && event.Item.Type == "reasoning" && reasoningText(event.Item.Summary, event.Item.Content) != "" {
+				return false, errUnsignedThinking
+			}
+			if event.Response != nil {
+				for _, item := range event.Response.Output {
+					if item.Type == "reasoning" && reasoningText(item.Summary, item.Content) != "" {
+						return false, errUnsignedThinking
+					}
+				}
+			}
+		}
+		frames, err := s.state.consume(event)
+		if err != nil {
+			return false, err
+		}
+		terminal := false
+		for _, frame := range frames {
+			terminal = s.consumeEvent(frame)
+			if s.writeErr != nil {
+				return false, s.writeErr
+			}
+		}
+		return terminal, nil
 	})
 	if err != nil {
 		// The upstream broke mid-stream; leave the response unfinished so the
@@ -94,7 +130,7 @@ func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 		return s.failure
 	}
 	if s.finished {
-		return nil
+		return s.writeErr
 	}
 	if s.started {
 		return errors.New("upstream stream ended without completing the response")
@@ -119,32 +155,26 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		case "message":
 			s.openUpstreamBlock(event.OutputIndex, "text", nil)
 		case "function_call":
-			block := s.openUpstreamBlock(event.OutputIndex, "tool_use", map[string]any{
+			s.openUpstreamBlock(event.OutputIndex, "tool_use", map[string]any{
 				"type":  "tool_use",
 				"id":    event.Item.CallID,
 				"name":  event.Item.Name,
 				"input": map[string]any{},
 			})
 			s.stopReason = "tool_use"
-			s.maybeEmitItemArguments(block, event.Item)
 		case "reasoning":
-			if !s.includeThinking {
-				s.blocks[event.OutputIndex] = &responsesOutBlock{kind: "ignored"}
-				return false
-			}
-			s.openUpstreamBlock(event.OutputIndex, "thinking", nil)
+			s.blocks[event.OutputIndex] = &responsesOutBlock{kind: "ignored"}
 		}
 
-	case "response.output_text.delta":
+	case "response.output_text.delta", "response.refusal.delta":
 		block := s.openUpstreamBlock(event.OutputIndex, "text", nil)
+		if event.Type == "response.refusal.delta" {
+			s.stopReason = "refusal"
+		}
 		s.emitDelta(block.index, map[string]any{"type": "text_delta", "text": event.Delta})
 
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-		if !s.includeThinking {
-			return false
-		}
-		block := s.openUpstreamBlock(event.OutputIndex, "thinking", nil)
-		s.emitDelta(block.index, map[string]any{"type": "thinking_delta", "thinking": event.Delta})
+		return false
 
 	case "response.function_call_arguments.delta":
 		block := s.blocks[event.OutputIndex]
@@ -155,16 +185,16 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		block.sentArgDelta = true
 
 	case "response.output_item.done":
-		if event.Item != nil {
-			s.maybeEmitItemArguments(s.blocks[event.OutputIndex], event.Item)
-		}
 		s.closeUpstreamBlock(event.OutputIndex)
 
 	case "response.completed", "response.incomplete":
 		if event.Response != nil {
 			s.captureUsage(event.Response.Usage)
-			if event.Response.Status == "incomplete" {
+			finish, _ := responsesFinish(*event.Response, s.stopReason == "tool_use")
+			if finish == "length" {
 				s.stopReason = "max_tokens"
+			} else if finish == "content_filter" {
+				s.stopReason = "refusal"
 			}
 			s.ensureStarted(event.Response.ID, event.Response.Model)
 		}
@@ -176,11 +206,7 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 }
 
 func (s *ResponsesStreamWriter) captureUsage(usage responsesUsage) {
-	s.usage = AnthropicUsage{
-		InputTokens:          int(usage.InputTokens),
-		OutputTokens:         int(usage.OutputTokens),
-		CacheReadInputTokens: int(usage.InputTokensDetails.CachedTokens),
-	}
+	s.usage = responsesUsageToAnthropic(usage)
 }
 
 // openUpstreamBlock returns the Anthropic block bound to an upstream output
@@ -200,8 +226,6 @@ func (s *ResponsesStreamWriter) openUpstreamBlock(outputIndex int, kind string, 
 		switch kind {
 		case "text":
 			start = map[string]any{"type": "text", "text": ""}
-		case "thinking":
-			start = map[string]any{"type": "thinking", "thinking": ""}
 		default:
 			start = map[string]any{"type": kind}
 		}
@@ -215,27 +239,6 @@ func (s *ResponsesStreamWriter) openUpstreamBlock(outputIndex int, kind string, 
 	return block
 }
 
-// maybeEmitItemArguments forwards complete function-call arguments carried on
-// the output item itself. Some Responses upstreams put the final arguments on
-// output_item.added/output_item.done instead of streaming
-// response.function_call_arguments.delta events; without this fallback the
-// tool_use block ships with an empty input object and the client's schema
-// validation rejects the call (session c4c6df72dd26c87dbfa9a6985 lost every
-// tool argument this way). Deltas that already went out win: partial_json
-// fragments concatenate client-side, so re-emitting the complete arguments
-// would corrupt the assembled input.
-func (s *ResponsesStreamWriter) maybeEmitItemArguments(block *responsesOutBlock, item *responsesOutputItem) {
-	if item == nil || block == nil || block.kind != "tool_use" || block.sentArgDelta {
-		return
-	}
-	args := strings.TrimSpace(item.Arguments)
-	if args == "" {
-		return
-	}
-	s.emitDelta(block.index, map[string]any{"type": "input_json_delta", "partial_json": args})
-	block.sentArgDelta = true
-}
-
 func (s *ResponsesStreamWriter) closeUpstreamBlock(outputIndex int) {
 	if block, ok := s.blocks[outputIndex]; ok {
 		s.closeBlock(block)
@@ -247,9 +250,6 @@ func (s *ResponsesStreamWriter) closeBlock(block *responsesOutBlock) {
 		return
 	}
 	block.open = false
-	if block.kind == "thinking" {
-		s.emitDelta(block.index, map[string]any{"type": "signature_delta", "signature": thinkingSignature})
-	}
 	s.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": block.index})
 }
 
@@ -348,15 +348,8 @@ func (s *ResponsesStreamWriter) Fail(message string) {
 }
 
 func (s *ResponsesStreamWriter) emit(event string, payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	if _, err := fmt.Fprintf(s.writer, "event: %s\ndata: %s\n\n", event, data); err != nil {
-		return
-	}
-	if s.flush != nil {
-		s.flush()
+	if s.writeErr == nil {
+		s.writeErr = writeStreamFrame(s.writer, s.flush, event, payload)
 	}
 }
 
@@ -382,6 +375,7 @@ type chatChunkChoice struct {
 type chatDeltaOut struct {
 	Role             string              `json:"role,omitempty"`
 	Content          *string             `json:"content,omitempty"`
+	Refusal          *string             `json:"refusal,omitempty"`
 	ReasoningContent string              `json:"reasoning_content,omitempty"`
 	ToolCalls        []chatChunkToolCall `json:"tool_calls,omitempty"`
 }
@@ -405,6 +399,8 @@ type ChatResponsesStreamWriter struct {
 	started    bool
 	finished   bool
 	failure    error
+	writeErr   error
+	state      responsesStreamState
 	sawTool    bool
 	stopReason string
 	usage      *chatUsageOut
@@ -417,7 +413,7 @@ func ChatStreamFromResponses(writer io.Writer, flush func(), model string) *Chat
 		writer:    writer,
 		flush:     flush,
 		model:     model,
-		id:        "chatcmpl-llm-proxy",
+		id:        responseID("", "chatcmpl_"),
 		created:   time.Now().Unix(),
 		toolIndex: map[int]int{},
 	}
@@ -428,18 +424,33 @@ func ChatStreamFromResponses(writer io.Writer, flush func(), model string) *Chat
 func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		if string(payload) == "[DONE]" {
-			c.Finish()
-			return true, nil
+			return false, errors.New("Responses stream requires a terminal response event")
 		}
 		var event responsesEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			return false, nil
+			return false, fmt.Errorf("invalid upstream Responses event: %w", err)
 		}
 		if event.Type == "response.failed" || event.Type == "error" {
 			c.failure = ResponsesFailure(payload)
 			return true, nil
 		}
-		return c.consumeEvent(event), nil
+		if event.Response != nil {
+			if err := validateResponsesUsage(event.Response.Usage); err != nil {
+				return false, err
+			}
+		}
+		frames, err := c.state.consume(event)
+		if err != nil {
+			return false, err
+		}
+		terminal := false
+		for _, frame := range frames {
+			terminal = c.consumeEvent(frame)
+			if c.writeErr != nil {
+				return false, c.writeErr
+			}
+		}
+		return terminal, nil
 	})
 	if err != nil {
 		// The upstream broke mid-stream; leave the stream unfinished so the
@@ -451,7 +462,7 @@ func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 		return c.failure
 	}
 	if c.finished {
-		return nil
+		return c.writeErr
 	}
 	if c.started {
 		return errors.New("upstream stream ended before the completion marker")
@@ -484,6 +495,10 @@ func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		text := event.Delta
 		c.emitChunk(chatDeltaOut{Content: &text}, nil)
 
+	case "response.refusal.delta":
+		text := event.Delta
+		c.emitChunk(chatDeltaOut{Refusal: &text}, nil)
+
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 		c.emitChunk(chatDeltaOut{ReasoningContent: event.Delta}, nil)
 
@@ -497,18 +512,9 @@ func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 
 	case "response.completed", "response.incomplete":
 		if event.Response != nil {
-			usage := chatUsageOut{
-				PromptTokens:     event.Response.Usage.InputTokens,
-				CompletionTokens: event.Response.Usage.OutputTokens,
-				TotalTokens:      event.Response.Usage.TotalTokens,
-			}
-			if usage.TotalTokens == 0 {
-				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-			}
+			usage := responsesUsageToChat(event.Response.Usage)
 			c.usage = &usage
-			if event.Response.Status == "incomplete" {
-				c.stopReason = "length"
-			}
+			c.stopReason, _ = responsesFinish(*event.Response, c.sawTool)
 			c.ensureStarted(event.Response.ID, event.Response.Model)
 		}
 		c.Finish()
@@ -558,15 +564,8 @@ func (c *ChatResponsesStreamWriter) emitChunk(delta chatDeltaOut, finishReason *
 }
 
 func (c *ChatResponsesStreamWriter) writeData(payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	if _, err := fmt.Fprintf(c.writer, "data: %s\n\n", data); err != nil {
-		return
-	}
-	if c.flush != nil {
-		c.flush()
+	if c.writeErr == nil {
+		c.writeErr = writeStreamFrame(c.writer, c.flush, "", payload)
 	}
 }
 
@@ -628,10 +627,7 @@ func (c *ChatResponsesStreamWriter) Fail(message string) {
 }
 
 func (c *ChatResponsesStreamWriter) writeString(text string) {
-	if _, err := io.WriteString(c.writer, text); err != nil {
-		return
-	}
-	if c.flush != nil {
-		c.flush()
+	if c.writeErr == nil {
+		c.writeErr = writeStreamBytes(c.writer, c.flush, []byte(text))
 	}
 }

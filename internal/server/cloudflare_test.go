@@ -42,7 +42,7 @@ func TestCloudflareMessagesToolTranslation(t *testing.T) {
 				if err := json.Unmarshal([]byte(`{
 					"tools":[{"type":"function","function":{"name":"get_weather","description":"Get weather.","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],
 					"tool_choice":{"type":"function","function":{"name":"get_weather"}},
-					"messages":[{"role":"user","content":"Get weather in Rome."},{"role":"assistant","tool_calls":[{"index":0,"id":"toolu_previous","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Rome\"}"}}]},{"role":"tool","tool_call_id":"toolu_previous","content":"Sunny"},{"role":"user","content":"Now get weather in Paris."}]
+					"messages":[{"role":"user","content":"Get weather in Rome."},{"role":"assistant","tool_calls":[{"index":0,"id":"toolu_previous","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Rome\"}"}}]},{"role":"tool","tool_call_id":"toolu_previous","content":"Sunny"},{"role":"user","content":[{"type":"text","text":"Now get weather in Paris."}]}]
 				}`), &want); err != nil {
 					t.Error(err)
 					return

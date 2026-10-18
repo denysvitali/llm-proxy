@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,11 +19,8 @@ type openAIEnvelope struct {
 }
 
 func decodeOpenAIEnvelope(body []byte) (openAIEnvelope, error) {
-	var env openAIEnvelope
-	if err := json.Unmarshal(body, &env); err != nil {
-		return openAIEnvelope{}, err
-	}
-	return env, nil
+	env, _, _, err := requestEnvelope(body)
+	return env, err
 }
 
 // handleOpenAIRequest shares envelope validation and routing for the two
@@ -37,7 +33,15 @@ func (s *Server) handleOpenAIRequest(w http.ResponseWriter, r *http.Request, kin
 	}
 	envelope, err := decodeOpenAIEnvelope(body)
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "request body is not valid JSON")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if err := translate.ValidateGenerationControls(body, string(kind)); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if err := translate.ValidateMessageInput(body, string(kind)); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 	_, reasoningEffort, selectorErr := normalizeCodexModelSelector(envelope.Model)

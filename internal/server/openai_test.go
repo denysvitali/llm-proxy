@@ -238,11 +238,11 @@ func TestChatCompletionsTranslatedOntoResponsesBackend(t *testing.T) {
 	if translated.Model != "upstream-y" {
 		t.Errorf("translated model = %q, want upstream-y", translated.Model)
 	}
-	if translated.Instructions != "be nice" {
-		t.Errorf("instructions = %q, want %q", translated.Instructions, "be nice")
+	if translated.Instructions != "" {
+		t.Errorf("system message was hoisted into instructions: %q", translated.Instructions)
 	}
-	if len(translated.Input) != 1 || translated.Input[0].Role != "user" {
-		t.Errorf("input items = %+v, want one user item", translated.Input)
+	if len(translated.Input) != 2 || translated.Input[0].Role != "system" || translated.Input[1].Role != "user" {
+		t.Errorf("input items = %+v, want system then user", translated.Input)
 	}
 }
 

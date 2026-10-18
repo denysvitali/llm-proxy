@@ -210,7 +210,7 @@ func TestStatsEndToEndAnthropicNative(t *testing.T) {
 	}
 	s := New(cfg, msgQuietLogger(), nil, []backend.Backend{wrapped})
 
-	rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[]}`)
+	rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[{"role":"user","content":"hello"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
 	}
@@ -284,10 +284,10 @@ func TestStatsRecordsUpstreamFailureAndTransportError(t *testing.T) {
 			body:      `{"error":{"message":"upstream down"}}`,
 		}
 		s := newMsgServer(t, fb, nil)
-		postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[]}`)
+		postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[{"role":"user","content":"hello"}]}`)
 
 		fb.sendErr = errFakeSend{}
-		postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[]}`)
+		postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":10,"messages":[{"role":"user","content":"hello"}]}`)
 
 		stats := getStatsModels(t, s)
 		row := stats[0]

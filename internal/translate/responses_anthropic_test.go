@@ -2,7 +2,6 @@ package translate
 
 import (
 	"bytes"
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -15,8 +14,7 @@ func TestResponsesToAnthropic(t *testing.T) {
 		"input":[
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
 			{"type":"function_call","call_id":"c1","name":"lookup","arguments":"{\"q\":\"x\"}"},
-			{"type":"function_call_output","call_id":"c1","output":"result"},
-			{"type":"reasoning","summary":[{"type":"summary_text","text":"old trace"}]}
+			{"type":"function_call_output","call_id":"c1","output":"result"}
 		],
 		"tools":[{"type":"function","name":"lookup","description":"finds","parameters":{"type":"object"}}],
 		"tool_choice":{"type":"function","name":"lookup"}
@@ -32,7 +30,7 @@ func TestResponsesToAnthropic(t *testing.T) {
 	}
 	messages := jarray(t, got["messages"], "messages")
 	if len(messages) != 3 { // user message + assistant function_call + user tool_result
-		t.Fatalf("messages = %d entries, want 3 (reasoning dropped)", len(messages))
+		t.Fatalf("messages = %d entries, want 3", len(messages))
 	}
 	callMsg := jmap(t, messages[1], "")
 	if callMsg["role"] != "assistant" {
@@ -54,10 +52,9 @@ func TestResponsesToAnthropic(t *testing.T) {
 	}
 }
 
-func TestResponsesToAnthropicArrayToolOutputAndAdditionalTools(t *testing.T) {
+func TestResponsesToAnthropicArrayToolOutput(t *testing.T) {
 	body := []byte(`{
 		"input":[
-			{"type":"additional_tools","tools":[{"type":"web_search"}]},
 			{"type":"message","role":"user","content":"hi"},
 			{"type":"function_call","call_id":"c1","name":"lookup","arguments":"{\"q\":\"x\"}"},
 			{"type":"function_call_output","call_id":"c1","output":[
@@ -73,16 +70,17 @@ func TestResponsesToAnthropicArrayToolOutputAndAdditionalTools(t *testing.T) {
 	got := decodeJSON(t, out)
 	messages := jarray(t, got["messages"], "messages")
 	if len(messages) != 3 {
-		t.Fatalf("messages = %d, want 3 (additional_tools dropped)", len(messages))
+		t.Fatalf("messages = %d, want 3", len(messages))
 	}
 	resultMsg := jmap(t, messages[2], "")
 	resultBlock := jmap(t, jarray(t, resultMsg["content"], "content")[0], "")
 	if resultBlock["type"] != "tool_result" || resultBlock["tool_use_id"] != "c1" {
 		t.Errorf("tool_result block = %v", resultBlock)
 	}
-	if resultBlock["content"] != "first\nsecond" {
-		t.Errorf("flattened output = %#v, want first\\nsecond", resultBlock["content"])
-	}
+	assertContentBlocks(t, jarray(t, resultBlock["content"], "tool result content"), []map[string]any{
+		{"type": "text", "text": "first"},
+		{"type": "text", "text": "second"},
+	})
 }
 
 func TestResponsesToAnthropicStringInput(t *testing.T) {
@@ -132,8 +130,8 @@ func TestResponsesFromAnthropic(t *testing.T) {
 	}
 	usage := jmap(t, got["usage"], "usage")
 	details := jmap(t, usage["input_tokens_details"], "input_tokens_details")
-	if usage["input_tokens"].(float64) != 5 || details["cached_tokens"].(float64) != 2 {
-		t.Errorf("usage = %v, want 5 in with 2 cached", usage)
+	if usage["input_tokens"].(float64) != 7 || details["cached_tokens"].(float64) != 2 {
+		t.Errorf("usage = %v, want 7 inclusive input with 2 cached", usage)
 	}
 
 	maxed := []byte(`{"id":"m2","content":[{"type":"text","text":"x"}],"stop_reason":"max_tokens","usage":{"input_tokens":1,"output_tokens":2}}`)
@@ -189,6 +187,7 @@ func TestResponsesStreamFromAnthropic(t *testing.T) {
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 		``,
+		``,
 	}, "\n")
 
 	var buf bytes.Buffer
@@ -240,9 +239,8 @@ func TestResponsesStreamFromAnthropic(t *testing.T) {
 	}
 }
 
-// Anthropic knows only "user" and "assistant", so Codex's "developer" item has
-// to arrive as part of the system prompt.
-func TestResponsesToAnthropicFoldsPromptRolesIntoSystem(t *testing.T) {
+// Developer authority has no distinct counterpart in Anthropic Messages.
+func TestResponsesToAnthropicRejectsDeveloperAuthorityChange(t *testing.T) {
 	in := []byte(`{
 		"model": "ignored",
 		"instructions": "be terse",
@@ -254,25 +252,7 @@ func TestResponsesToAnthropicFoldsPromptRolesIntoSystem(t *testing.T) {
 			{"type":"message","role":"user","content":"hello"}
 		]
 	}`)
-	out, err := ResponsesToAnthropic(in, "claude-mock")
-	if err != nil {
-		t.Fatalf("ResponsesToAnthropic: %v", err)
-	}
-	var got anthropicRequest
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("decode translated request: %v", err)
-	}
-
-	want := "be terse\n\n<skills>a</skills>\n\n<permissions>b</permissions>"
-	if got.System != want {
-		t.Errorf("system = %q, want %q", got.System, want)
-	}
-	if len(got.Messages) != 1 {
-		t.Fatalf("messages = %d, want 1", len(got.Messages))
-	}
-	for _, message := range got.Messages {
-		if message.Role != "user" && message.Role != "assistant" {
-			t.Errorf("message carries role %q, which Anthropic rejects", message.Role)
-		}
+	if out, err := ResponsesToAnthropic(in, "claude-mock"); err == nil {
+		t.Fatalf("developer authority silently changed: %s", out)
 	}
 }

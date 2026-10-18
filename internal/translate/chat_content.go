@@ -19,11 +19,12 @@ func (m *openAIMessageOut) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
-	content, reasoning, _, err := decodeChatContent(fields.Content)
+	content, reasoning, present, err := decodeChatContent(fields.Content)
 	if err != nil {
 		return err
 	}
 	m.Content = content
+	m.ContentPresent = present
 	m.ReasoningContent += reasoning
 	return nil
 }
@@ -39,11 +40,12 @@ func (m *chatMessageOut) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
-	content, reasoning, _, err := decodeChatContent(fields.Content)
+	content, reasoning, present, err := decodeChatContent(fields.Content)
 	if err != nil {
 		return err
 	}
 	m.Content = content
+	m.ContentPresent = present
 	m.ReasoningContent += reasoning
 	return nil
 }
@@ -82,27 +84,41 @@ func decodeChatContent(raw json.RawMessage) (content, reasoning string, present 
 		err = json.Unmarshal(raw, &content)
 		return content, "", true, err
 	case '[':
-		var chunks []struct {
-			Type     string `json:"type"`
-			Text     string `json:"text"`
-			Thinking []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"thinking"`
-		}
+		var chunks []json.RawMessage
 		if err := json.Unmarshal(raw, &chunks); err != nil {
 			return "", "", false, err
 		}
-		for _, chunk := range chunks {
+		for _, rawChunk := range chunks {
+			var chunk struct {
+				Type     string            `json:"type"`
+				Text     *string           `json:"text"`
+				Thinking []json.RawMessage `json:"thinking"`
+			}
+			if err := decodeContentPart(rawChunk, &chunk); err != nil {
+				return "", "", false, fmt.Errorf("unsupported chat content fields: %w", err)
+			}
 			switch chunk.Type {
 			case "text":
-				content += chunk.Text
-			case "thinking":
-				for _, thought := range chunk.Thinking {
-					if thought.Type == "text" {
-						reasoning += thought.Text
-					}
+				if chunk.Text == nil || chunk.Thinking != nil {
+					return "", "", false, fmt.Errorf("chat text chunk requires string text")
 				}
+				content += *chunk.Text
+			case "thinking":
+				if chunk.Thinking == nil || chunk.Text != nil {
+					return "", "", false, fmt.Errorf("chat thinking chunk requires a thinking array")
+				}
+				for _, rawThought := range chunk.Thinking {
+					var thought struct {
+						Type string  `json:"type"`
+						Text *string `json:"text"`
+					}
+					if err := decodeContentPart(rawThought, &thought); err != nil || thought.Type != "text" || thought.Text == nil {
+						return "", "", false, fmt.Errorf("unsupported or malformed chat thinking content")
+					}
+					reasoning += *thought.Text
+				}
+			default:
+				return "", "", false, fmt.Errorf("unsupported chat content chunk %q", chunk.Type)
 			}
 		}
 		return content, reasoning, true, nil

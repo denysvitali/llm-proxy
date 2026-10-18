@@ -1,32 +1,45 @@
 package translate
 
 import (
-	"strings"
+	"encoding/json"
 	"testing"
 )
 
-func TestNormalizeResponsesToolArguments(t *testing.T) {
-	input := []byte(`{"type":"response.function_call_arguments.done","arguments":"{\"session_id\":63889.0,\"fraction\":1.5,\"label\":\"1.0\"}"}`)
-	got := string(NormalizeResponsesToolArguments(input))
-	if !strings.Contains(got, `63889`) || strings.Contains(got, `63889.0`) {
-		t.Fatalf("integer-valued float was not normalized: %s", got)
-	}
-	if !strings.Contains(got, `1.5`) || !strings.Contains(got, `1.0`) {
-		t.Fatalf("fractional or string value changed: %s", got)
-	}
-}
-
-func TestNormalizeResponsesToolArgumentDelta(t *testing.T) {
-	input := []byte(`{"type":"response.function_call_arguments.delta","delta":",\"n\":8000.0"}`)
-	got := string(NormalizeResponsesToolArguments(input))
-	if !strings.Contains(got, `8000`) || strings.Contains(got, `8000.0`) {
-		t.Fatalf("argument delta was not normalized: %s", got)
+func TestNormalizeResponsesToolArgumentsPreservesWire(t *testing.T) {
+	for _, input := range []string{
+		`{"type":"response.function_call_arguments.done","arguments":"{\"session_id\":63889.0,\"fraction\":1.5,\"label\":\"1.0\"}"}`,
+		`{"type":"response.function_call_arguments.delta","delta":",\"n\":8000.0"}`,
+		`{"type":"response.output_text.delta","delta":"version 1.0"}`,
+		`{"output":[{"type":"function_call","arguments":"{\"n\":9007199254740993}"}]}`,
+	} {
+		if got := string(NormalizeResponsesToolArguments([]byte(input))); got != input {
+			t.Fatalf("payload changed: %s", got)
+		}
 	}
 }
 
-func TestNormalizeResponsesToolArgumentsLeavesTextAlone(t *testing.T) {
-	input := []byte(`{"type":"response.output_text.delta","delta":"version 1.0"}`)
-	if got := string(NormalizeResponsesToolArguments(input)); got != string(input) {
-		t.Fatalf("text delta changed: %s", got)
+func TestArgumentFragmentsPreserveEverySplit(t *testing.T) {
+	arguments := `{"label":"release 1.0 with \"quotes\" and \\slashes","count":9007199254740993,"fraction":1.05,"exponent":1.0e3}`
+	if !json.Valid([]byte(arguments)) {
+		t.Fatal("invalid argument fixture")
+	}
+	for split := 0; split <= len(arguments); split++ {
+		var assembled string
+		for _, fragment := range []string{arguments[:split], arguments[split:]} {
+			payload, err := json.Marshal(map[string]string{"type": "response.function_call_arguments.delta", "delta": fragment})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var event struct {
+				Delta string `json:"delta"`
+			}
+			if err := json.Unmarshal(NormalizeResponsesToolArguments(payload), &event); err != nil {
+				t.Fatal(err)
+			}
+			assembled += event.Delta
+		}
+		if assembled != arguments {
+			t.Fatalf("split %d changed arguments: %q", split, assembled)
+		}
 	}
 }

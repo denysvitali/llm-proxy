@@ -6,13 +6,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/denysvitali/llm-proxy/internal/sse"
 )
 
 func TestScanSSEFramingAndTerminalEvent(t *testing.T) {
-	// Providers use CRLF or LF, may emit keepalives, and sometimes omit the
-	// final newline. Decoding and terminal markers belong to the consumer.
-	body := ": heartbeat\r\nevent: delta\r\ndata:  {\"text\":\"hi\"} \r\n\r\ndata:\n" +
-		"data:[DONE]\ndata: must not be decoded"
+	// Complete frames alone reach the consumer, with whitespace preserved.
+	body := ": heartbeat\r\nevent: delta\r\ndata:  {\"text\":\"hi\"} \r\n\r\ndata:\n\n" +
+		"data:[DONE]\n\ndata: must not be decoded"
 	var payloads []string
 	err := scanSSE(strings.NewReader(body), func(payload []byte) (bool, error) {
 		payloads = append(payloads, string(payload))
@@ -21,14 +22,14 @@ func TestScanSSEFramingAndTerminalEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{`{"text":"hi"}`, "[DONE]"}; !reflect.DeepEqual(payloads, want) {
+	if want := []string{` {"text":"hi"} `, "[DONE]"}; !reflect.DeepEqual(payloads, want) {
 		t.Fatalf("payloads = %q, want %q", payloads, want)
 	}
 	var last string
 	if err := scanSSE(strings.NewReader("data: last"), func(payload []byte) (bool, error) {
 		last = string(payload)
 		return false, nil
-	}); err != nil || last != "last" {
+	}); err != nil || last != "" {
 		t.Fatalf("unterminated line = %q, %v", last, err)
 	}
 }
@@ -42,7 +43,7 @@ func TestScanSSEPropagatesFailures(t *testing.T) {
 		}
 	})
 	t.Run("decoder", func(t *testing.T) {
-		if err := scanSSE(strings.NewReader("data: failed\n"), func([]byte) (bool, error) {
+		if err := scanSSE(strings.NewReader("data: failed\n\n"), func([]byte) (bool, error) {
 			return false, failure
 		}); !errors.Is(err, failure) {
 			t.Fatalf("decoder error = %v, want %v", err, failure)
@@ -50,7 +51,7 @@ func TestScanSSEPropagatesFailures(t *testing.T) {
 	})
 	t.Run("line limit", func(t *testing.T) {
 		called := false
-		err := scanSSE(strings.NewReader("data: "+strings.Repeat("x", maxStreamLine)), func([]byte) (bool, error) {
+		err := scanSSE(strings.NewReader("data: "+strings.Repeat("x", sse.MaxFrameSize)), func([]byte) (bool, error) {
 			called = true
 			return false, nil
 		})

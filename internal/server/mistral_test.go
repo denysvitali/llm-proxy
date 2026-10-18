@@ -141,7 +141,7 @@ func TestMistralTypedContentAcrossClientAPIs(t *testing.T) {
 		path, body, terminal, bufferedTerminal string
 	}{
 		{"/v1/chat/completions", `"messages":[{"role":"user","content":"Hello"}]`, "[DONE]", ""},
-		{"/v1/messages", `"max_tokens":128,"thinking":{"type":"enabled","budget_tokens":64},"messages":[{"role":"user","content":"Hello"}]`, "message_stop", "end_turn"},
+		{"/v1/messages", `"max_tokens":128,"messages":[{"role":"user","content":"Hello"}]`, "message_stop", "end_turn"},
 		{"/v1/responses", `"input":"Hello"`, "response.completed", "completed"},
 	}
 	buffered := `{"id":"chat-typed","object":"chat.completion","model":"mistral-large-latest","choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"Let me reason"}]},{"type":"text","text":"Hello from Mistral"}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":4}}`

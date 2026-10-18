@@ -3,6 +3,7 @@ package translate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -83,6 +84,12 @@ func TestFromOpenAIMistralChunks(t *testing.T) {
 	input := []byte(`{"id":"chatcmpl_1","model":"mistral","choices":[{"finish_reason":"tool_calls","message":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"check"}]},{"type":"text","text":"result"}],"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"x\":1}"}}]}}],"usage":{"prompt_tokens":9,"completion_tokens":4,"prompt_tokens_details":{"cached_tokens":2}}}`)
 	for _, includeThinking := range []bool{false, true} {
 		output, err := FromOpenAI(input, "fallback", includeThinking)
+		if includeThinking {
+			if !errors.Is(err, errUnsignedThinking) || len(output) != 0 {
+				t.Fatalf("unsigned reasoning was presented as thinking: %s, %v", output, err)
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,24 +97,13 @@ func TestFromOpenAIMistralChunks(t *testing.T) {
 		if err := json.Unmarshal(output, &message); err != nil {
 			t.Fatal(err)
 		}
-		wantBlocks := 2
-		textIndex := 0
-		if includeThinking {
-			wantBlocks++
-			textIndex++
-		}
-		if len(message.Content) != wantBlocks {
+		if len(message.Content) != 2 {
 			t.Fatalf("content = %#v", message.Content)
 		}
-		if includeThinking {
-			if message.Content[0]["type"] != "thinking" || message.Content[0]["thinking"] != "check" {
-				t.Fatalf("thinking block = %#v", message.Content[0])
-			}
-		}
-		if message.Content[textIndex]["text"] != "result" || message.Content[textIndex+1]["type"] != "tool_use" {
+		if message.Content[0]["text"] != "result" || message.Content[1]["type"] != "tool_use" {
 			t.Fatalf("content = %#v", message.Content)
 		}
-		if message.StopReason == nil || *message.StopReason != "tool_use" || message.Usage.InputTokens != 9 || message.Usage.OutputTokens != 4 || message.Usage.CacheReadInputTokens != 2 {
+		if message.StopReason == nil || *message.StopReason != "tool_use" || message.Usage.InputTokens != 7 || message.Usage.OutputTokens != 4 || message.Usage.CacheReadInputTokens != 2 {
 			t.Fatalf("stop/usage = %v/%+v", message.StopReason, message.Usage)
 		}
 	}
@@ -123,21 +119,21 @@ func TestStreamWriterMistralChunkTransition(t *testing.T) {
 		`data: [DONE]`, "",
 	}, "\n\n")
 	var output bytes.Buffer
-	if err := NewStreamWriter(&output, nil, "mistral", true).Consume(strings.NewReader(input)); err != nil {
+	if err := NewStreamWriter(&output, nil, "mistral", false).Consume(strings.NewReader(input)); err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()
 	for _, want := range []string{
-		`"thinking":"first "`, `"thinking":"second"`, `"text":"an"`, `"text":"swer"`,
+		`"text":"an"`, `"text":"swer"`,
 		`"id":"toolu_call_1"`, `"stop_reason":"tool_use"`, `"cache_read_input_tokens":2`,
-		`"input_tokens":9`, `"output_tokens":4`, `event: message_stop`,
+		`"input_tokens":7`, `"output_tokens":4`, `event: message_stop`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("stream missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Index(got, `"thinking":"second"`) > strings.Index(got, `"text":"an"`) {
-		t.Fatal("transition emitted answer before reasoning")
+	if strings.Contains(got, `"type":"thinking"`) || strings.Contains(got, `signature_delta`) {
+		t.Fatal("unsigned thinking state was fabricated")
 	}
 }
 
@@ -151,7 +147,13 @@ func TestResponsesFromChatMistralChunks(t *testing.T) {
 	if err := json.Unmarshal(output, &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Output) != 2 || response.Output[0].Type != "message" || len(response.Output[0].Content) != 1 || response.Output[0].Content[0].Text != "result" || response.Output[1].Type != "function_call" || response.Output[1].Name != "lookup" || response.Output[1].Arguments != `{"x":1}` {
+	if len(response.Output) != 3 {
+		t.Fatalf("output = %+v", response.Output)
+	}
+	if response.Output[0].Type != "reasoning" || len(response.Output[0].Summary) != 1 || response.Output[0].Summary[0].Text != "check" {
+		t.Fatalf("reasoning = %+v", response.Output[0])
+	}
+	if response.Output[1].Type != "message" || len(response.Output[1].Content) != 1 || response.Output[1].Content[0].Text != "result" || response.Output[2].Type != "function_call" || response.Output[2].Name != "lookup" || response.Output[2].Arguments != `{"x":1}` {
 		t.Fatalf("output = %+v", response.Output)
 	}
 	if response.Status != "completed" || response.Model != "mistral" || response.Usage.InputTokens != 9 || response.Usage.OutputTokens != 4 || response.Usage.TotalTokens != 13 {

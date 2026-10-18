@@ -150,11 +150,14 @@ func TestSendResponsesNormalizesCodexHistory(t *testing.T) {
 	if err := json.Unmarshal(rec.Body, &sent); err != nil {
 		t.Fatal(err)
 	}
-	if sent.Instructions != "Be concise" || len(sent.Input) != 2 || sent.Store || sent.Input[0]["encrypted_content"] != "opaque" || sent.Input[1]["output"] != "" {
+	if sent.Instructions != "" || len(sent.Input) != 3 || sent.Store || sent.Input[0]["role"] != "developer" || sent.Input[1]["encrypted_content"] != "opaque" {
 		t.Fatalf("normalized history = %s", rec.Body)
 	}
-	if _, ok := sent.Input[0]["content"]; ok {
+	if _, ok := sent.Input[1]["content"]; ok {
 		t.Fatal("null reasoning content survived normalization")
+	}
+	if _, ok := sent.Input[2]["output"]; ok {
+		t.Fatal("normalization invented a tool output")
 	}
 }
 

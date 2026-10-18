@@ -19,10 +19,21 @@ func Load() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Register defaults for the scalar keys: viper's AutomaticEnv only
-	// consults the environment for keys it already knows about, so without
-	// these an LLM_PROXY_* variable would be silently ignored whenever the
-	// key was absent from the config file.
+	// Explicit bindings make environment-only values visible to Unmarshal,
+	// including fields without defaults. Empty env values retain Viper's
+	// fallback behavior so they cannot silently disable configured auth.
+	for _, key := range []string{
+		"base_url", "auth.file", "server.listen", "server.max_body_bytes",
+		"stats.persist_file", "stats.persist_interval", "stats.retention_days",
+		"stats.redis_url", "stats.redis_key_prefix",
+		"grok_auth_file", "workbuddy_auth_file", "codex_auth_file",
+		"zcode_auth_file", "minimax_code_auth_file", "minimax_code_auto_checkin",
+		"log_level", "log_format",
+	} {
+		if err := v.BindEnv(key); err != nil {
+			return nil, err
+		}
+	}
 	v.SetDefault("server.listen", "127.0.0.1:8090")
 	v.SetDefault("server.max_body_bytes", 16<<20)
 	v.SetDefault("stats.redis_url", "")

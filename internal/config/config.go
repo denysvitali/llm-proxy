@@ -44,6 +44,8 @@ type BackendConfig struct {
 	// RetryMaxBackoff caps a single retry pause (exponential backoff from
 	// 750ms, and provider Retry-After values). Zero means 30s.
 	RetryMaxBackoff time.Duration `mapstructure:"retry_max_backoff"`
+	// ModelMetadata supplies operator-verified catalog hints for exact model IDs.
+	ModelMetadata []ModelMetadata `mapstructure:"model_metadata"`
 }
 
 // FallbackRoute is one alternate backend for a failing route: the backend
@@ -197,6 +199,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("backends: duplicate type %q", b.Type)
 		}
 		seen[b.Type] = true
+		if err := validateModelMetadata(b.ModelMetadata); err != nil {
+			return fmt.Errorf("backends[%s]: %w", b.Type, err)
+		}
 	}
 	for name, r := range c.Routes {
 		if !backend.Has(r.Backend) {

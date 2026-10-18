@@ -12,7 +12,7 @@ func TestChatToAnthropic(t *testing.T) {
 		"max_tokens":256,
 		"messages":[
 			{"role":"system","content":"be nice"},
-			{"role":"developer","content":"also terse"},
+			{"role":"system","content":"also terse"},
 			{"role":"user","content":"hi"},
 			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Rome\"}"}}]},
 			{"role":"tool","tool_call_id":"call_1","content":"sunny"},
@@ -33,8 +33,9 @@ func TestChatToAnthropic(t *testing.T) {
 	if got["max_tokens"].(float64) != 256 {
 		t.Errorf("max_tokens = %v, want 256", got["max_tokens"])
 	}
-	if got["system"] != "be nice\n\nalso terse" {
-		t.Errorf("system = %q, want merged prompts", got["system"])
+	system := jarray(t, got["system"], "system")
+	if len(system) != 2 || jmap(t, system[0], "")["text"] != "be nice" || jmap(t, system[1], "")["text"] != "also terse" {
+		t.Errorf("system = %v, want separate ordered text blocks", system)
 	}
 
 	messages := jarray(t, got["messages"], "messages")
@@ -53,10 +54,13 @@ func TestChatToAnthropic(t *testing.T) {
 		t.Fatalf("message 1 role = %v, want assistant", second["role"])
 	}
 	blocks := jarray(t, second["content"], "content")
-	if len(blocks) != 1 {
-		t.Fatalf("assistant blocks = %d, want 1 (empty text dropped)", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("assistant blocks = %d, want 2 (empty text retained)", len(blocks))
 	}
-	call := jmap(t, blocks[0], "")
+	if text := jmap(t, blocks[0], ""); text["type"] != "text" || text["text"] != "" || len(text) != 2 {
+		t.Fatalf("empty text block = %v", text)
+	}
+	call := jmap(t, blocks[1], "")
 	if call["type"] != "tool_use" || call["id"] != "call_1" || call["name"] != "get_weather" {
 		t.Errorf("tool_use block = %v", call)
 	}
@@ -132,8 +136,8 @@ func TestChatFromAnthropic(t *testing.T) {
 	choices := jarray(t, got["choices"], "choices")
 	choice := jmap(t, choices[0], "")
 	message := jmap(t, choice["message"], "message")
-	if message["content"] != "hello \n\nworld" {
-		t.Errorf("content = %q, want text blocks joined", message["content"])
+	if message["content"] != "hello world" {
+		t.Errorf("content = %q, want exact concatenation", message["content"])
 	}
 	calls := jarray(t, message["tool_calls"], "tool_calls")
 	call := jmap(t, calls[0], "")
@@ -147,7 +151,7 @@ func TestChatFromAnthropic(t *testing.T) {
 		t.Errorf("finish_reason = %v, want tool_calls", choice["finish_reason"])
 	}
 	usage := jmap(t, got["usage"], "usage")
-	if usage["prompt_tokens"].(float64) != 12 || usage["completion_tokens"].(float64) != 30 {
+	if usage["prompt_tokens"].(float64) != 19 || usage["completion_tokens"].(float64) != 30 {
 		t.Errorf("usage = %v", usage)
 	}
 	details := jmap(t, usage["prompt_tokens_details"], "prompt_tokens_details")
@@ -180,11 +184,18 @@ func TestChatStreamFromAnthropic(t *testing.T) {
 		`event: content_block_delta`,
 		`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}`,
 		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":1}`,
+		``,
 		`event: message_delta`,
 		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}`,
 		``,
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
+		``,
 		``,
 	}, "\n")
 

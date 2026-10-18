@@ -3,7 +3,6 @@ package translate
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -19,6 +18,13 @@ import (
 // message items become user/assistant messages, function_call /
 // function_call_output items become assistant tool_calls / tool results.
 func ResponsesToChat(body []byte, model string) ([]byte, error) {
+	if err := validateGenerationControls(body, "openai-responses"); err != nil {
+		return nil, err
+	}
+	controls, err := translatedOpenAIControls(body, "openai-responses", "openai-chat")
+	if err != nil {
+		return nil, err
+	}
 	var req responsesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
@@ -29,6 +35,9 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 	}
 	if len(input) == 0 {
 		return nil, fmt.Errorf("request contains no input items")
+	}
+	if err := validateResponsesHistory(input); err != nil {
+		return nil, err
 	}
 
 	converted := openAIRequest{
@@ -44,15 +53,21 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 		converted.StreamOptionsUsage = &streamOptions{IncludeUsage: true}
 	}
 
-	systemPrompt := req.Instructions
+	if req.Instructions != nil {
+		converted.Messages = append(converted.Messages, openAIMessage{Role: "system", Content: *req.Instructions})
+	}
 
+	tools, namespaces, err := responsesTools(body)
+	if err != nil {
+		return nil, fmt.Errorf("decode tools: %w", err)
+	}
+	choice, err := responsesWireToolChoice(req.ToolChoice, namespaces)
+	if err != nil {
+		return nil, err
+	}
 	for i, item := range input {
 		switch item.Type {
 		case "message":
-			if isPromptRole(item.Role) {
-				systemPrompt = appendPrompt(systemPrompt, itemText(item))
-				continue
-			}
 			msg, err := chatMessageFromItem(item)
 			if err != nil {
 				return nil, fmt.Errorf("input item %d: %w", i, err)
@@ -60,116 +75,126 @@ func ResponsesToChat(body []byte, model string) ([]byte, error) {
 			if msg != nil {
 				converted.Messages = append(converted.Messages, *msg)
 			}
-		case "function_call", "custom_tool_call":
-			// Assistant-initiated tool call in the conversation history.
-			name := item.Name
-			if item.Namespace != "" {
-				name = qualifyResponsesToolName(item.Namespace, name)
+		case "function_call":
+			if _, err := argumentsJSON(item.Arguments); err != nil {
+				return nil, err
+			}
+			name, err := responsesWireToolName(item.Name, item.Namespace, namespaces)
+			if err != nil {
+				return nil, err
+			}
+			call := openAIToolCall{ID: item.CallID, Type: "function"}
+			call.Function.Name = name
+			call.Function.Arguments = item.Arguments
+			// Only adjacent call items belong to this same call group. Never
+			// merge across a result, a message, or ignored history metadata.
+			if i > 0 && input[i-1].Type == "function_call" {
+				last := &converted.Messages[len(converted.Messages)-1]
+				last.ToolCalls = append(last.ToolCalls, call)
+			} else {
+				converted.Messages = append(converted.Messages, openAIMessage{Role: "assistant", ToolCalls: []openAIToolCall{call}})
+			}
+		case "function_call_output":
+			output, err := openAIToolOutput(item.Output, true)
+			if err != nil {
+				return nil, fmt.Errorf("input item %d: %w", i, err)
 			}
 			converted.Messages = append(converted.Messages, openAIMessage{
-				Role: "assistant",
-				ToolCalls: []openAIToolCall{{
-					ID:   item.CallID,
-					Type: "function",
-					Function: struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					}{Name: name, Arguments: itemArguments(item)},
-				}},
-			})
-		case "function_call_output", "custom_tool_call_output":
-			converted.Messages = append(converted.Messages, openAIMessage{
 				Role:       "tool",
-				Content:    itemOutputText(item.Output),
+				Content:    output,
 				ToolCallID: item.CallID,
 			})
 		default:
-			if ignoreResponsesInputType(item.Type) {
-				continue
-			}
 			return nil, fmt.Errorf("input item %d: unsupported type %q", i, item.Type)
 		}
-	}
-	if systemPrompt != "" {
-		converted.Messages = append([]openAIMessage{{
-			Role:    "system",
-			Content: systemPrompt,
-		}}, converted.Messages...)
 	}
 	if len(converted.Messages) == 0 {
 		return nil, fmt.Errorf("request contains no translatable input")
 	}
 
-	tools, namespaces, err := responsesTools(body)
-	if err != nil {
-		return nil, fmt.Errorf("decode tools: %w", err)
-	}
 	for _, tool := range tools {
 		if tool.Name == "" {
 			continue
+		}
+		schema, err := sanitizeSchema(tool.Parameters)
+		if err != nil {
+			return nil, err
 		}
 		converted.Tools = append(converted.Tools, openAITool{
 			Type: "function",
 			Function: openAIFunction{
 				Name:        tool.Name,
 				Description: tool.Description,
-				Parameters:  tool.Parameters,
+				Parameters:  schema,
 				Strict:      tool.Strict,
 			},
 		})
 	}
-	converted.ToolChoice = responsesToolChoiceToChatWithNamespaces(req.ToolChoice, namespaces)
+	converted.ToolChoice = responsesToolChoiceToChatWithNamespaces(choice, nil)
 	if req.ParallelToolCalls != nil {
 		converted.ParallelToolCalls = req.ParallelToolCalls
 	}
 
-	return json.Marshal(converted)
+	return marshalWithOpenAIControls(converted, controls)
 }
 
-// chatMessageFromItem converts one Responses message item into a chat
-// message; it returns nil for items that carry no content.
+// chatMessageFromItem preserves message roles, text, and multipart order.
 func chatMessageFromItem(item responsesInputItem) (*openAIMessage, error) {
 	role := item.Role
-	if role != "assistant" && role != "tool" {
-		// Everything the caller did not mark as coming from the model or a
-		// tool travels as user content; prompt roles never reach here.
-		role = "user"
+	switch role {
+	case "system", "developer", "user", "assistant":
+	default:
+		return nil, fmt.Errorf("unsupported message role %q", role)
 	}
 	if text, ok := plainString(item.Content); ok {
-		if strings.TrimSpace(text) == "" {
-			return nil, nil
-		}
 		return &openAIMessage{Role: role, Content: text}, nil
 	}
-	var parts []responsesInputContent
-	if len(item.Content) > 0 {
-		if err := json.Unmarshal(item.Content, &parts); err != nil {
-			return nil, fmt.Errorf("decode content: %w", err)
-		}
+	var parts []json.RawMessage
+	if err := json.Unmarshal(item.Content, &parts); err != nil || len(parts) == 0 {
+		return nil, fmt.Errorf("message content must be a string or a non-empty array")
 	}
-	if len(parts) == 0 {
-		return nil, nil
-	}
-	if role == "assistant" || len(parts) == 1 && parts[0].Type == "input_text" {
-		// Single-text and assistant items travel as plain strings.
-		var builder strings.Builder
-		for _, part := range parts {
-			builder.WriteString(part.Text)
-		}
-		return &openAIMessage{Role: role, Content: builder.String()}, nil
-	}
-	// Multipart user content (text + images) keeps the typed-part shape.
 	chatParts := make([]map[string]any, 0, len(parts))
-	for _, part := range parts {
-		switch part.Type {
-		case "input_text", "output_text":
-			chatParts = append(chatParts, map[string]any{"type": "text", "text": part.Text})
-		case "input_image":
-			chatParts = append(chatParts, map[string]any{
-				"type":      "image_url",
-				"image_url": map[string]string{"url": part.ImageURL},
-			})
+	for _, raw := range parts {
+		var header struct {
+			Type string `json:"type"`
 		}
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return nil, fmt.Errorf("message content part must be an object")
+		}
+		switch header.Type {
+		case "input_text", "output_text":
+			var part struct {
+				Type string  `json:"type"`
+				Text *string `json:"text"`
+			}
+			if err := decodeContentPart(raw, &part); err != nil || part.Text == nil {
+				return nil, fmt.Errorf("text part requires string text and supported fields")
+			}
+			chatParts = append(chatParts, map[string]any{"type": "text", "text": *part.Text})
+		case "input_image":
+			var part struct {
+				Type     string `json:"type"`
+				ImageURL string `json:"image_url"`
+				Detail   string `json:"detail"`
+			}
+			if err := decodeContentPart(raw, &part); err != nil {
+				return nil, fmt.Errorf("unsupported image fields: %w", err)
+			}
+			if role != "user" || part.ImageURL == "" {
+				return nil, fmt.Errorf("input_image requires a user message and image_url")
+			}
+			image := map[string]string{"url": part.ImageURL}
+			if part.Detail != "" {
+				image["detail"] = part.Detail
+			}
+			chatParts = append(chatParts, map[string]any{"type": "image_url", "image_url": image})
+		default:
+			return nil, fmt.Errorf("unsupported message content type %q", header.Type)
+		}
+	}
+	// A single text part has the same meaning as the string shorthand.
+	if len(chatParts) == 1 && chatParts[0]["type"] == "text" {
+		return &openAIMessage{Role: role, Content: chatParts[0]["text"]}, nil
 	}
 	return &openAIMessage{Role: role, Content: chatParts}, nil
 }
@@ -206,7 +231,7 @@ func responsesToolChoiceToChatWithNamespaces(raw any, namespaces map[string]resp
 // ResponsesFromChat converts a non-streaming chat-completions response into
 // an OpenAI Responses response object.
 func ResponsesFromChat(body []byte, model string) ([]byte, error) {
-	return responsesFromChat(body, model, nil)
+	return responsesFromChat(body, model, nil, nil)
 }
 
 // ResponsesFromChatForRequest is the request-aware form of ResponsesFromChat.
@@ -217,75 +242,88 @@ func ResponsesFromChatForRequest(body []byte, model string, requestBody []byte) 
 	if err != nil {
 		return nil, fmt.Errorf("decode request tools: %w", err)
 	}
-	return responsesFromChat(body, model, namespaces)
+	return responsesFromChat(body, model, namespaces, requestBody)
 }
 
-func responsesFromChat(body []byte, model string, namespaces map[string]responseNamespaceTool) ([]byte, error) {
+func responsesFromChat(body []byte, model string, namespaces map[string]responseNamespaceTool, requestBody []byte) ([]byte, error) {
 	var chat chatResponseOut
 	if err := json.Unmarshal(body, &chat); err != nil {
+		return nil, err
+	}
+	if err := validateChatUsage(chat.Usage); err != nil {
 		return nil, err
 	}
 	if err := checkUpstreamError(chat.Error); err != nil {
 		return nil, err
 	}
-
-	out := responsesResponse{
-		ID:     chat.ID,
-		Status: "completed",
-		Model:  model,
-		Output: []responsesOutputItem{},
+	if err := validateChatOutput(body); err != nil {
+		return nil, err
 	}
-	if out.ID == "" {
-		out.ID = "resp_llm-proxy"
+	if err := validateChatChoiceCount(len(chat.Choices)); err != nil {
+		return nil, err
+	}
+
+	out, err := newResponsesResponse(chat.ID, model, chat.Created, requestBody)
+	if err != nil {
+		return nil, err
 	}
 	if chat.Model != "" {
 		out.Model = chat.Model
 	}
 
+	ids := responseCallIDs{}
 	for _, choice := range chat.Choices {
-		if choice.Message.Content != "" {
+		if err := validateChatFinish(choice.FinishReason); err != nil {
+			return nil, err
+		}
+		status := "completed"
+		if choice.FinishReason == "length" || choice.FinishReason == "content_filter" {
+			status = "incomplete"
+		}
+		if choice.Message.ReasoningContent != "" {
+			out.Output = append(out.Output, responsesOutputItem{ID: out.nextItemID(), Type: "reasoning", Summary: []responsesOutputContent{{Type: "summary_text", Text: choice.Message.ReasoningContent}}})
+		}
+		if choice.Message.ContentPresent {
 			out.Output = append(out.Output, responsesOutputItem{
-				ID:     out.ID + "_msg",
+				ID:     out.nextItemID(),
 				Type:   "message",
 				Role:   "assistant",
-				Status: "completed",
+				Status: status,
 				Content: []responsesOutputContent{{
 					Type: "output_text",
 					Text: choice.Message.Content,
 				}},
 			})
 		}
+		if choice.Message.Refusal != nil {
+			out.Output = append(out.Output, responsesOutputItem{ID: out.nextItemID(), Type: "message", Role: "assistant", Status: status, Content: []responsesOutputContent{{Type: "refusal", Refusal: *choice.Message.Refusal}}})
+		}
 		for _, call := range choice.Message.ToolCalls {
-			args := strings.TrimSpace(call.Function.Arguments)
-			if args == "" {
-				args = "{}"
+			args := call.Function.Arguments
+			if choice.FinishReason != "length" {
+				if _, err := argumentsJSON(args); err != nil {
+					return nil, err
+				}
+			}
+			id, err := ids.resolve(call.ID, "")
+			if err != nil {
+				return nil, err
 			}
 			name, namespace := restoreResponsesToolName(call.Function.Name, namespaces)
 			out.Output = append(out.Output, responsesOutputItem{
-				ID:        call.ID,
+				ID:        out.nextItemID(),
 				Type:      "function_call",
-				CallID:    call.ID,
+				CallID:    id,
 				Namespace: namespace,
 				Name:      name,
 				Arguments: args,
-				Status:    "completed",
+				Status:    status,
 			})
 		}
-		if choice.FinishReason == "length" {
-			out.Status = "incomplete"
-			out.IncompleteDetails = json.RawMessage(`{"reason":"max_output_tokens"}`)
-		}
+		setResponsesFinish(&out, choice.FinishReason)
 	}
 
-	total := chat.Usage.TotalTokens
-	if total == 0 {
-		total = chat.Usage.PromptTokens + chat.Usage.CompletionTokens
-	}
-	out.Usage = responsesUsage{
-		InputTokens:  chat.Usage.PromptTokens,
-		OutputTokens: chat.Usage.CompletionTokens,
-		TotalTokens:  total,
-	}
+	out.Usage = chatUsageToResponses(chat.Usage)
 
 	return json.Marshal(out)
 }

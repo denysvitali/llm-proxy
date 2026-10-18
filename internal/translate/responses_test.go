@@ -3,6 +3,7 @@ package translate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -91,13 +92,15 @@ func TestToResponses(t *testing.T) {
 		name    string
 		request string
 		check   func(t *testing.T, out map[string]any)
+		wantErr bool
 	}{
 		{
-			name:    "system becomes instructions",
+			name:    "system becomes a leading system message",
 			request: `{"model":"m","max_tokens":64,"system":"Be terse.","messages":[{"role":"user","content":"Hi"}]}`,
 			check: func(t *testing.T, out map[string]any) {
-				if got := jstr(t, out["instructions"]); got != "Be terse." {
-					t.Fatalf("instructions = %q", got)
+				item := jmap(t, jarray(t, out["input"], "input")[0], "system")
+				if item["role"] != "system" || item["content"] != "Be terse." {
+					t.Fatalf("system = %#v", item)
 				}
 			},
 		},
@@ -152,9 +155,10 @@ func TestToResponses(t *testing.T) {
 		{
 			name: "user tool_result becomes function_call_output",
 			request: `{"model":"m","max_tokens":64,"messages":[` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"call_9","name":"get_weather","input":{}}]},` +
 				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_9","content":"sunny, 18C"}]}]}`,
 			check: func(t *testing.T, out map[string]any) {
-				output := jmap(t, jarray(t, out["input"], "input")[0], "output")
+				output := jmap(t, jarray(t, out["input"], "input")[1], "output")
 				if got := jstr(t, output["type"]); got != "function_call_output" {
 					t.Fatalf("type = %q", got)
 				}
@@ -169,9 +173,10 @@ func TestToResponses(t *testing.T) {
 		{
 			name: "empty tool_result still carries output",
 			request: `{"model":"m","max_tokens":64,"messages":[` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"call_empty","name":"test","input":{}}]},` +
 				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_empty"}]}]}`,
 			check: func(t *testing.T, out map[string]any) {
-				output := jmap(t, jarray(t, out["input"], "input")[0], "output")
+				output := jmap(t, jarray(t, out["input"], "input")[1], "output")
 				if got := jstr(t, output["type"]); got != "function_call_output" {
 					t.Fatalf("type = %q", got)
 				}
@@ -183,11 +188,12 @@ func TestToResponses(t *testing.T) {
 		{
 			name: "image tool_result keeps output as content parts",
 			request: `{"model":"m","max_tokens":64,"messages":[` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"call_img","name":"test","input":{}}]},` +
 				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_img","content":[` +
 				`{"type":"text","text":"screenshot"},` +
 				`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc123"}}]}]}]}`,
 			check: func(t *testing.T, out map[string]any) {
-				item := jmap(t, jarray(t, out["input"], "input")[0], "output")
+				item := jmap(t, jarray(t, out["input"], "input")[1], "output")
 				if got := jstr(t, item["type"]); got != "function_call_output" {
 					t.Fatalf("type = %q", got)
 				}
@@ -229,7 +235,8 @@ func TestToResponses(t *testing.T) {
 			},
 		},
 		{
-			name: "thinking blocks are dropped from history",
+			name:    "thinking blocks require a native route",
+			wantErr: true,
 			request: `{"model":"m","max_tokens":64,"messages":[` +
 				`{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"sig"},` +
 				`{"type":"text","text":"Answer"}]},` +
@@ -290,7 +297,8 @@ func TestToResponses(t *testing.T) {
 			},
 		},
 		{
-			name: "thinking request enables reasoning",
+			name:    "thinking budgets are not guessed as effort",
+			wantErr: true,
 			request: `{"model":"m","max_tokens":64,"thinking":{"type":"enabled","budget_tokens":1024},` +
 				`"messages":[{"role":"user","content":"Puzzle"}]}`,
 			check: func(t *testing.T, out map[string]any) {
@@ -309,6 +317,12 @@ func TestToResponses(t *testing.T) {
 				t.Fatalf("ParseRequest: %v", err)
 			}
 			body, err := ToResponses(request, "target-model")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("unsupported request accepted: %s", body)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("ToResponses: %v", err)
 			}
@@ -389,7 +403,7 @@ func TestFromResponses(t *testing.T) {
 		},
 		{
 			name: "incomplete status means max_tokens",
-			body: `{"id":"resp_3","status":"incomplete",` +
+			body: `{"id":"resp_3","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},` +
 				`"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}],` +
 				`"usage":{"input_tokens":1,"output_tokens":100}}`,
 			check: func(t *testing.T, out map[string]any) {
@@ -412,21 +426,14 @@ func TestFromResponses(t *testing.T) {
 			},
 		},
 		{
-			name:            "reasoning surfaced when requested",
+			name:            "unsigned reasoning rejected when requested",
 			includeThinking: true,
 			body: `{"id":"resp_5","status":"completed",` +
 				`"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"secret plan"}]},` +
 				`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"42"}]}],` +
 				`"usage":{"input_tokens":3,"output_tokens":4}}`,
 			check: func(t *testing.T, out map[string]any) {
-				content := jarray(t, out["content"], "content")
-				thinking := jmap(t, content[0], "thinking")
-				if got := jstr(t, thinking["type"]); got != "thinking" {
-					t.Fatalf("first block = %q", got)
-				}
-				if got := jstr(t, thinking["thinking"]); got != "secret plan" {
-					t.Fatalf("thinking = %q", got)
-				}
+				t.Fatal("unsigned reasoning conversion must fail before producing output")
 			},
 		},
 	}
@@ -434,6 +441,12 @@ func TestFromResponses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out, err := FromResponses([]byte(tt.body), "client-model", tt.includeThinking)
+			if tt.includeThinking {
+				if !errors.Is(err, errUnsignedThinking) || len(out) != 0 {
+					t.Fatalf("unsigned reasoning became thinking: %s, %v", out, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("FromResponses: %v", err)
 			}
@@ -476,8 +489,9 @@ func TestResponsesRoundTrip(t *testing.T) {
 		t.Fatalf("ToResponses: %v", err)
 	}
 	converted := decodeJSON(t, responsesBody)
-	if got := jstr(t, converted["instructions"]); got != "Use tools." {
-		t.Fatalf("instructions = %q", got)
+	system := jmap(t, jarray(t, converted["input"], "input")[0], "system")
+	if system["role"] != "system" || system["content"] != "Use tools." {
+		t.Fatalf("system = %#v", system)
 	}
 
 	upstream := `{"id":"resp_rt","status":"completed","model":"target",` +
@@ -656,6 +670,7 @@ data: {"type":"response.output_item.added","output_index":0,"item":{"type":"func
 data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_a1","name":"prometheus_query","arguments":"{\"query\":\"up\"}"}}
 
 data: {"type":"response.completed","response":{"id":"resp_a1","status":"completed"}}
+
 `
 	var buffer bytes.Buffer
 	writer := NewResponsesStreamWriter(&buffer, nil, "m", false)
@@ -680,6 +695,7 @@ data: {"type":"response.output_item.added","output_index":0,"item":{"type":"func
 data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_a2","name":"search_traces","arguments":"{\"service\":\"happy-server\"}"}}
 
 data: {"type":"response.completed","response":{"id":"resp_a2","status":"completed"}}
+
 `
 	var buffer bytes.Buffer
 	writer := NewResponsesStreamWriter(&buffer, nil, "m", false)
@@ -710,6 +726,7 @@ data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":
 data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_a3","name":"get_weather","arguments":"{\"city\":\"SF\"}"}}
 
 data: {"type":"response.completed","response":{"id":"resp_a3","status":"completed"}}
+
 `
 	var buffer bytes.Buffer
 	writer := NewResponsesStreamWriter(&buffer, nil, "m", false)
@@ -781,30 +798,14 @@ data: {"type":"response.completed","response":{"id":"resp_t1","status":"complete
 		}
 	})
 
-	t.Run("included", func(t *testing.T) {
+	t.Run("unsigned rejected", func(t *testing.T) {
 		var buffer bytes.Buffer
 		writer := NewResponsesStreamWriter(&buffer, nil, "m", true)
-		if err := writer.Consume(strings.NewReader(stream)); err != nil {
-			t.Fatalf("Consume: %v", err)
+		if err := writer.Consume(strings.NewReader(stream)); !errors.Is(err, errUnsignedThinking) {
+			t.Fatalf("Consume: %v, want unsigned-thinking boundary", err)
 		}
-		var sawThinking, sawSignature bool
-		for _, event := range parseSSE(t, buffer.String()) {
-			if event.Name != "content_block_delta" {
-				continue
-			}
-			delta := jmap(t, event.Data["delta"], "delta")
-			switch jstr(t, delta["type"]) {
-			case "thinking_delta":
-				if jstr(t, delta["thinking"]) != "pondering" {
-					t.Fatalf("thinking delta = %q", delta["thinking"])
-				}
-				sawThinking = true
-			case "signature_delta":
-				sawSignature = true
-			}
-		}
-		if !sawThinking || !sawSignature {
-			t.Fatalf("thinking=%v signature=%v", sawThinking, sawSignature)
+		if strings.Contains(buffer.String(), `thinking_delta`) || strings.Contains(buffer.String(), `signature_delta`) || strings.Contains(buffer.String(), `"type":"thinking"`) {
+			t.Fatalf("fabricated thinking state: %s", buffer.String())
 		}
 	})
 }
@@ -866,8 +867,8 @@ func TestChatToResponses(t *testing.T) {
 	}
 	out := decodeJSON(t, body)
 
-	if got := jstr(t, out["instructions"]); got != "Be terse." {
-		t.Fatalf("instructions = %q", got)
+	if _, present := out["instructions"]; present {
+		t.Fatal("system message must remain in the input history")
 	}
 	if got := jstr(t, out["model"]); got != "responses-model" {
 		t.Fatalf("model = %q", got)
@@ -883,18 +884,22 @@ func TestChatToResponses(t *testing.T) {
 	}
 
 	items := jarray(t, out["input"], "input")
-	if len(items) != 4 {
+	if len(items) != 5 {
 		t.Fatalf("input has %d items: %#v", len(items), items)
 	}
-	user := jmap(t, items[0], "user")
-	if jstr(t, user["role"]) != "user" {
-		t.Fatalf("item 0 = %#v", user)
+	prompt := jmap(t, items[0], "system")
+	if jstr(t, prompt["role"]) != "system" {
+		t.Fatalf("item 0 = %#v", prompt)
 	}
-	assistantCall := jmap(t, items[2], "assistantCall")
+	user := jmap(t, items[1], "user")
+	if jstr(t, user["role"]) != "user" {
+		t.Fatalf("item 1 = %#v", user)
+	}
+	assistantCall := jmap(t, items[3], "assistantCall")
 	if jstr(t, assistantCall["type"]) != "function_call" || jstr(t, assistantCall["call_id"]) != "call_c1" {
 		t.Fatalf("assistant tool_calls not converted: %#v", assistantCall)
 	}
-	result := jmap(t, items[3], "result")
+	result := jmap(t, items[4], "result")
 	if jstr(t, result["type"]) != "function_call_output" || jstr(t, result["output"]) != "sunny" {
 		t.Fatalf("tool message not converted: %#v", result)
 	}
@@ -907,12 +912,12 @@ func TestChatToResponses(t *testing.T) {
 }
 
 func TestChatToResponsesEmptyToolOutput(t *testing.T) {
-	chatBody := `{"messages":[{"role":"user","content":"hi"},{"role":"tool","tool_call_id":"call_empty","content":""}]}`
+	chatBody := `{"messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_empty","type":"function","function":{"name":"test","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_empty","content":""}]}`
 	body, err := ChatToResponses([]byte(chatBody), "m")
 	if err != nil {
 		t.Fatalf("ChatToResponses: %v", err)
 	}
-	item := jmap(t, jarray(t, decodeJSON(t, body)["input"], "input")[1], "output")
+	item := jmap(t, jarray(t, decodeJSON(t, body)["input"], "input")[2], "output")
 	if jstr(t, item["type"]) != "function_call_output" {
 		t.Fatalf("type = %#v", item["type"])
 	}

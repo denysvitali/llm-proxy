@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -106,6 +107,9 @@ func runServe(cfg *config.Config) error {
 		}
 	}
 
+	if cfg.Auth.File == "" && !loopbackListener(cfg.Server.Listen) {
+		log.Warn("client authentication is disabled on a non-loopback listener; configure auth.file or bind to loopback")
+	}
 	var store *auth.Store
 	if cfg.Auth.File != "" {
 		store, err = auth.NewStore(cfg.Auth.File)
@@ -195,6 +199,19 @@ func runServe(cfg *config.Config) error {
 		}
 		return err
 	}
+}
+
+// loopbackListener does not resolve hostnames: an arbitrary DNS name does not
+// guarantee that the server binds only to a loopback interface.
+func loopbackListener(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	return net.ParseIP(host).IsLoopback()
 }
 
 func minimaxAutoCheckinEnabled(cfg *config.Config) bool {

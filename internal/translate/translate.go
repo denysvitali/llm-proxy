@@ -17,9 +17,9 @@ import (
 )
 
 // Request is the subset of the Anthropic Messages API the proxy understands.
-// Anthropic-only fields with no OpenAI equivalent (context_management,
-// output_config, cache_control, metadata) are dropped during translation.
+// Raw field presence is retained for cross-wire capability validation.
 type Request struct {
+	fields        map[string]json.RawMessage
 	Model         string             `json:"model"`
 	MaxTokens     int                `json:"max_tokens"`
 	Messages      []AnthropicMessage `json:"messages"`
@@ -99,7 +99,7 @@ type openAIFunction struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
-	Strict      bool            `json:"strict,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 type openAIToolCall struct {
@@ -114,8 +114,14 @@ type openAIToolCall struct {
 
 // ParseRequest decodes an Anthropic Messages request body.
 func ParseRequest(body []byte) (*Request, error) {
+	if err := validateGenerationControls(body, "anthropic"); err != nil {
+		return nil, err
+	}
 	var request Request
 	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(body, &request.fields); err != nil {
 		return nil, err
 	}
 	return &request, nil
@@ -138,6 +144,12 @@ func (r *Request) WantsThinking() bool {
 
 // ToOpenAI renders an Anthropic request as an OpenAI chat-completions request.
 func ToOpenAI(request *Request, model string) ([]byte, error) {
+	if err := validateAnthropicTranslation(request, false); err != nil {
+		return nil, err
+	}
+	if err := validateAnthropicHistory(request.Messages); err != nil {
+		return nil, err
+	}
 	converted := openAIRequest{
 		Model:       model,
 		MaxTokens:   request.MaxTokens,
@@ -150,7 +162,11 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 		converted.StreamOptionsUsage = &streamOptions{IncludeUsage: true}
 	}
 
-	if system := systemText(request.System); system != "" {
+	system, err := anthropicSystemContent(request.System)
+	if err != nil {
+		return nil, err
+	}
+	if system != nil {
 		converted.Messages = append(converted.Messages, openAIMessage{Role: "system", Content: system})
 	}
 	for _, message := range request.Messages {
@@ -168,16 +184,23 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 		if tool.Name == "" {
 			continue
 		}
+		schema, err := sanitizeSchema(tool.InputSchema)
+		if err != nil {
+			return nil, err
+		}
 		converted.Tools = append(converted.Tools, openAITool{
 			Type: "function",
 			Function: openAIFunction{
 				Name:        tool.Name,
 				Description: tool.Description,
-				Parameters:  sanitizeSchema(tool.InputSchema),
+				Parameters:  schema,
 			},
 		})
 	}
-	converted.ToolChoice, converted.ParallelToolCalls = translateToolChoice(request.ToolChoice)
+	converted.ToolChoice, converted.ParallelToolCalls, err = anthropicToolChoice(request.ToolChoice, false)
+	if err != nil {
+		return nil, err
+	}
 
 	return json.Marshal(converted)
 }
@@ -187,209 +210,102 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 // message; OpenAI needs a separate "tool" message per result.
 func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 	role := message.Role
-	if role == "" {
-		role = "user"
+	if role != "user" && role != "assistant" {
+		return nil, fmt.Errorf("unsupported Messages role %q", role)
 	}
-
 	if text, ok := plainString(message.Content); ok {
-		if strings.TrimSpace(text) == "" {
-			return nil, nil
-		}
 		return []openAIMessage{{Role: role, Content: text}}, nil
 	}
-
-	var blocks []anthropicBlock
-	if err := json.Unmarshal(message.Content, &blocks); err != nil {
-		return nil, fmt.Errorf("decode %s content: %w", role, err)
+	blocks, err := anthropicInputBlocks(message.Content)
+	if err != nil {
+		return nil, err
 	}
-
+	if len(blocks) == 0 {
+		return nil, fmt.Errorf("message content must not be an empty array")
+	}
 	var messages []openAIMessage
-	var text strings.Builder
 	var parts []any
-	var toolCalls []openAIToolCall
+	var calls []openAIToolCall
+	flush := func() {
+		if len(parts) == 0 && len(calls) == 0 {
+			return
+		}
+		msg := openAIMessage{Role: role, ToolCalls: calls}
+		if parts != nil {
+			msg.Content = parts
+		}
+		messages = append(messages, msg)
+		parts, calls = nil, nil
+	}
 	for _, block := range blocks {
 		switch block.Type {
-		case "text":
-			if text.Len() > 0 {
-				text.WriteString("\n\n")
+		case "text", "image":
+			if len(calls) > 0 {
+				return nil, fmt.Errorf("chat cannot preserve content following tool_use within an assistant message")
 			}
-			text.WriteString(block.Text)
+			if block.Type == "text" {
+				parts = append(parts, map[string]any{"type": "text", "text": block.Text})
+			} else {
+				if role != "user" {
+					return nil, fmt.Errorf("chat cannot represent assistant images")
+				}
+				url, err := anthropicImageURL(block.Source)
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": url}})
+			}
 		case "tool_use":
-			call := openAIToolCall{Index: len(toolCalls), ID: block.ID, Type: "function"}
-			call.Function.Name = block.Name
-			call.Function.Arguments = compactJSON(block.Input)
-			toolCalls = append(toolCalls, call)
-		case "tool_result":
-			messages = append(messages, openAIMessage{
-				Role:       "tool",
-				ToolCallID: block.ToolUseID,
-				Content:    toolResultText(block),
-			})
-		case "image":
-			if url := imageURL(block.Source); url != "" {
-				parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}})
+			if role != "assistant" {
+				return nil, fmt.Errorf("tool_use requires an assistant message")
 			}
-		case "thinking", "redacted_thinking":
-			// Reasoning traces are provider-specific and are not replayed upstream.
+			call := openAIToolCall{ID: block.ID, Type: "function"}
+			call.Function.Name = block.Name
+			call.Function.Arguments, err = compactJSON(block.Input)
+			if err != nil {
+				return nil, err
+			}
+			calls = append(calls, call)
+		case "tool_result":
+			if role != "user" {
+				return nil, fmt.Errorf("tool_result requires a user message")
+			}
+			flush()
+			output, err := anthropicToolOutput(block, false)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, openAIMessage{Role: "tool", ToolCallID: block.ToolUseID, Content: output})
 		}
 	}
-
-	if len(parts) > 0 {
-		if text.Len() > 0 {
-			parts = append([]any{map[string]any{"type": "text", "text": text.String()}}, parts...)
-		}
-		messages = append(messages, openAIMessage{Role: role, Content: parts})
-		return messages, nil
-	}
-	if text.Len() > 0 || len(toolCalls) > 0 {
-		converted := openAIMessage{Role: role, ToolCalls: toolCalls}
-		if text.Len() > 0 {
-			converted.Content = text.String()
-		}
-		messages = append(messages, converted)
-	}
+	flush()
 	return messages, nil
 }
 
-// systemText flattens an Anthropic system prompt, which may be a string or a
-// list of text blocks, into a single string.
-func systemText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	if text, ok := plainString(raw); ok {
-		return text
-	}
-	var blocks []anthropicBlock
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return ""
-	}
-	var builder strings.Builder
-	for _, block := range blocks {
-		if block.Type != "text" || block.Text == "" {
-			continue
-		}
-		if builder.Len() > 0 {
-			builder.WriteString("\n\n")
-		}
-		builder.WriteString(block.Text)
-	}
-	return builder.String()
-}
-
-// toolResultText flattens a tool_result payload, which may be a string or a
-// list of blocks, into the plain string OpenAI expects.
-func toolResultText(block anthropicBlock) string {
-	if len(block.Content) == 0 {
-		return ""
-	}
-	if text, ok := plainString(block.Content); ok {
-		return text
-	}
-	var blocks []anthropicBlock
-	if err := json.Unmarshal(block.Content, &blocks); err != nil {
-		return string(block.Content)
-	}
-	var builder strings.Builder
-	for _, nested := range blocks {
-		if nested.Type != "text" {
-			continue
-		}
-		if builder.Len() > 0 {
-			builder.WriteString("\n")
-		}
-		builder.WriteString(nested.Text)
-	}
-	return builder.String()
-}
-
-func imageURL(source *anthropicSource) string {
-	if source == nil {
-		return ""
-	}
-	switch source.Type {
-	case "url":
-		return source.URL
-	case "base64":
-		if source.Data == "" {
-			return ""
-		}
-		mediaType := source.MediaType
-		if mediaType == "" {
-			mediaType = "image/png"
-		}
-		return "data:" + mediaType + ";base64," + source.Data
-	}
-	return ""
-}
-
-// translateToolChoice maps an Anthropic tool_choice to its OpenAI equivalent,
-// returning the choice and whether parallel tool calls must be disabled.
-func translateToolChoice(raw json.RawMessage) (any, *bool) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var choice struct {
-		Type                   string `json:"type"`
-		Name                   string `json:"name"`
-		DisableParallelToolUse bool   `json:"disable_parallel_tool_use"`
-	}
-	if err := json.Unmarshal(raw, &choice); err != nil {
-		return nil, nil
-	}
-	var parallel *bool
-	if choice.DisableParallelToolUse {
-		disabled := false
-		parallel = &disabled
-	}
-	switch choice.Type {
-	case "auto":
-		return "auto", parallel
-	case "any":
-		return "required", parallel
-	case "none":
-		return "none", parallel
-	case "tool":
-		if choice.Name == "" {
-			return "auto", parallel
-		}
-		return map[string]any{"type": "function", "function": map[string]any{"name": choice.Name}}, parallel
-	}
-	return nil, parallel
-}
-
-// sanitizeSchema drops JSON Schema keywords that OpenAI-shaped providers
-// commonly reject while leaving the schema's meaning intact.
-func sanitizeSchema(schema json.RawMessage) json.RawMessage {
+// sanitizeSchema validates the schema envelope without changing its meaning.
+// Composition keywords, dialect declarations and numeric lexemes stay intact.
+func sanitizeSchema(schema json.RawMessage) (json.RawMessage, error) {
 	if len(schema) == 0 {
-		return json.RawMessage(`{"type":"object","properties":{}}`)
+		return json.RawMessage(`{"type":"object","properties":{}}`), nil
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(schema, &fields); err != nil {
-		return schema
+	trimmed := bytes.TrimSpace(schema)
+	if !json.Valid(trimmed) || len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, fmt.Errorf("tool parameters must be a JSON Schema object")
 	}
-	delete(fields, "$schema")
-	if _, ok := fields["type"]; !ok {
-		fields["type"] = json.RawMessage(`"object"`)
-	}
-	if _, ok := fields["properties"]; !ok {
-		fields["properties"] = json.RawMessage(`{}`)
-	}
-	encoded, err := json.Marshal(fields)
-	if err != nil {
-		return schema
-	}
-	return encoded
+	return schema, nil
 }
 
-// compactJSON renders a tool input as compact JSON, falling back to an empty
-// object when the client sent nothing usable.
-func compactJSON(raw json.RawMessage) string {
-	var buffer bytes.Buffer
-	if err := json.Compact(&buffer, raw); err != nil || buffer.Len() == 0 {
-		return "{}"
+// compactJSON preserves numeric lexemes and rejects non-object tool inputs.
+func compactJSON(raw json.RawMessage) (string, error) {
+	input, err := argumentsJSON(string(raw))
+	if err != nil {
+		return "", err
 	}
-	return buffer.String()
+	var buffer bytes.Buffer
+	if err := json.Compact(&buffer, input); err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
 }
 
 func plainString(raw json.RawMessage) (string, bool) {

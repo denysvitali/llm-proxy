@@ -15,6 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/sse"
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
@@ -43,9 +44,6 @@ const (
 	// retryBaseDelay spaces the first retry from the failed attempt; later
 	// retries double each time, up to the max backoff cap.
 	retryBaseDelay = 750 * time.Millisecond
-	// retryCompletionWindow is how much of the streamed tail is kept in the
-	// rolling window checked for a stream's completion marker.
-	retryCompletionWindow = 128
 	// defaultRetryAttempts caps retries for statuses the client must never
 	// see. They remain bounded so a permanently unhealthy upstream cannot
 	// keep a request alive forever. Per-backend override:
@@ -248,73 +246,58 @@ func (s *Server) fetchResponseBody(ctx context.Context, rt route, resp *backend.
 	}
 }
 
-// streamDoneChecker returns the completion-marker test for an upstream wire
-// format's SSE stream, matched against a rolling tail of what was relayed.
-func streamDoneChecker(format backend.Kind) func([]byte) bool {
-	switch format {
-	case backend.KindAnthropic:
-		return anthropicStreamDone
-	case backend.KindOpenAIChat:
-		return chatStreamDone
-	case backend.KindOpenAIResponses:
-		return responsesStreamDone
-	default:
-		return func([]byte) bool { return false }
+// streamDoneChecker recognizes terminal payloads only after a complete SSE
+// frame has been decoded. Event headers cannot turn arbitrary data into success.
+func streamDoneChecker(format backend.Kind) func(sse.Event) bool {
+	return func(event sse.Event) bool {
+		if format == backend.KindOpenAIChat {
+			return bytes.Equal(event.Data, []byte("[DONE]"))
+		}
+		var payload struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(event.Data, &payload) != nil || (event.Type != "" && event.Type != payload.Type) {
+			return false
+		}
+		switch format {
+		case backend.KindAnthropic:
+			return payload.Type == "message_stop" || payload.Type == "error"
+		case backend.KindOpenAIResponses:
+			switch payload.Type {
+			case "response.completed", "response.incomplete", "response.failed", "error":
+				return true
+			}
+		}
+		return false
 	}
 }
 
-// anthropicStreamDone reports whether the buffered stream tail holds
-// Anthropic's terminating event.
-func anthropicStreamDone(window []byte) bool {
-	return bytes.Contains(window, []byte(`"type":"message_stop"`)) ||
-		bytes.Contains(window, []byte("event: message_stop"))
-}
-
-// chatStreamDone reports whether the buffered stream tail holds the
-// chat-completions sentinel.
-func chatStreamDone(window []byte) bool {
-	return bytes.Contains(window, []byte("data: [DONE]")) ||
-		bytes.Contains(window, []byte("data:[DONE]"))
-}
-
-// responsesStreamDone reports whether the buffered stream tail holds a
-// terminal Responses API event.
-func responsesStreamDone(window []byte) bool {
-	return bytes.Contains(window, []byte(`"type":"response.completed"`)) ||
-		bytes.Contains(window, []byte(`"type":"response.incomplete"`)) ||
-		bytes.Contains(window, []byte(`"type":"response.failed"`)) ||
-		bytes.Contains(window, []byte(`"type":"error"`))
-}
-
-// pipeSSE relays a server-sent-events body to the client, flushing after
-// every read. It reports how many bytes reached the client and whether the
-// stream carried its completion marker (checked by done against a rolling
-// window of the tail). A failing client write ends the relay immediately.
-func pipeSSE(w io.Writer, flush func(), body io.Reader, done func([]byte) bool) (relayed int64, complete bool, err error) {
+// pipeSSE relays bytes verbatim and flushes each read while a bounded decoder
+// inspects complete frames for completion. Client write failures stop immediately.
+func pipeSSE(w io.Writer, flush func(), body io.Reader, done func(sse.Event) bool) (relayed int64, complete bool, err error) {
 	buffer := make([]byte, passthroughCopyBufferSize)
-	var window []byte
+	decoder := sse.NewDecoder(func(event sse.Event) (bool, error) {
+		if done != nil && done(event) {
+			complete = true
+		}
+		return complete, nil
+	})
 	for {
 		read, readErr := body.Read(buffer)
 		if read > 0 {
 			written, writeErr := w.Write(buffer[:read])
 			relayed += int64(written)
+			if writeErr == nil && written < read {
+				writeErr = io.ErrShortWrite
+			}
 			if writeErr != nil {
 				return relayed, complete, writeErr
 			}
 			if flush != nil {
 				flush()
 			}
-			window = append(window, buffer[:read]...)
-			// Inspect the newly extended window before trimming it. A terminal
-			// Responses event can be much larger than retryCompletionWindow (its
-			// data payload contains the complete response), with the marker near
-			// the beginning. Trimming first would discard that marker and turn a
-			// successful stream into a spurious mid-stream failure.
-			if done != nil && !complete && done(window) {
-				complete = true
-			}
-			if len(window) > retryCompletionWindow {
-				window = window[len(window)-retryCompletionWindow:]
+			if _, decodeErr := decoder.Feed(buffer[:read]); decodeErr != nil {
+				return relayed, complete, decodeErr
 			}
 		}
 		if readErr != nil {
@@ -381,7 +364,7 @@ func (s *Server) relayNativeStreaming(
 	rt route,
 	resp *backend.Response,
 	fetch upstreamFetch,
-	done func([]byte) bool,
+	done func(sse.Event) bool,
 	surface func(w http.ResponseWriter, message string),
 ) exchangeResult {
 	copyCodexResponseHeaders(w.Header(), resp.Header)
