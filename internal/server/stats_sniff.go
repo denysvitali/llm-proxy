@@ -196,7 +196,7 @@ type wireDoc struct {
 	Index       int              `json:"index"`
 	OutputIndex int              `json:"output_index"`
 	Usage       *wireUsageFields `json:"usage"` // Anthropic root, chat chunk, Responses root
-	Message *struct {
+	Message     *struct {
 		Usage *wireUsageFields `json:"usage"` // Anthropic message_start
 	} `json:"message"`
 	Response *struct {

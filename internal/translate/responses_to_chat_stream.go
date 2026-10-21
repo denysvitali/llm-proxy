@@ -134,11 +134,12 @@ func (s *responsesItemStream) closeResponseItem(item *streamedResponseItem) {
 		payload["content_index"] = 0
 		event := "response.output_text.done"
 		payload["text"] = item.text.String()
-		if item.kind == "refusal" {
+		switch item.kind {
+		case "refusal":
 			event = "response.refusal.done"
 			delete(payload, "text")
 			payload["refusal"] = item.text.String()
-		} else if item.kind == "reasoning" {
+		case "reasoning":
 			event = "response.reasoning_text.done"
 		}
 		s.emit(event, payload)
@@ -158,9 +159,10 @@ func (s *responsesItemStream) appendItemText(item *streamedResponseItem, delta s
 	}
 	item.text.WriteString(delta)
 	event := "response.output_text.delta"
-	if item.kind == "reasoning" {
+	switch item.kind {
+	case "reasoning":
 		event = "response.reasoning_text.delta"
-	} else if item.kind == "refusal" {
+	case "refusal":
 		event = "response.refusal.delta"
 	}
 	s.emit(event, map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "delta": delta})
@@ -168,7 +170,6 @@ func (s *responsesItemStream) appendItemText(item *streamedResponseItem, delta s
 
 func (s *responsesItemStream) appendText(delta string)      { s.appendItemText(s.current, delta) }
 func (s *responsesItemStream) appendReasoning(delta string) { s.appendItemText(s.current, delta) }
-func (s *responsesItemStream) appendArgs(delta string)      { s.appendItemArgs(s.current, delta) }
 
 func (s *responsesItemStream) appendItemArgs(item *streamedResponseItem, delta string) {
 	if item == nil || item.closed {
@@ -176,11 +177,6 @@ func (s *responsesItemStream) appendItemArgs(item *streamedResponseItem, delta s
 	}
 	item.args.WriteString(delta)
 	s.emit("response.function_call_arguments.delta", map[string]any{"item_id": item.id, "output_index": item.index, "delta": delta})
-}
-
-func (s *responsesItemStream) startToolCallWithNamespace(callID, name, namespace string) {
-	s.closeItem()
-	s.current = s.addItem("function_call", callID, name, namespace)
 }
 
 func (s *responsesItemStream) envelope(status string) map[string]any {

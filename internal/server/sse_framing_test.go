@@ -19,7 +19,10 @@ func TestNativeCompletionUsesCompleteFrames(t *testing.T) {
 	}{
 		{"chat", backend.KindOpenAIChat, "data:[DONE]\n\n", true},
 		{"chat text", backend.KindOpenAIChat, "data: {\"choices\":[{\"delta\":{\"content\":\"data: [DONE]\"}}]}\n\n", false},
-		{"chat unfinished", backend.KindOpenAIChat, "data: [DONE]\n", false},
+		// Newline-terminated [DONE] without the blank line still completes:
+		// the data line is whole, only the frame separator is missing.
+		{"chat done without blank line", backend.KindOpenAIChat, "data: [DONE]\n", true},
+		{"chat truncated data line", backend.KindOpenAIChat, "data: [DON", false},
 		{"chat comment", backend.KindOpenAIChat, ": data: [DONE]\n\n", false},
 		{"messages", backend.KindAnthropic, "event: message_stop\r\ndata: {\"type\" : \"message_stop\"}\r\n\r\n", true},
 		{"messages text", backend.KindAnthropic, "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"event: message_stop\"}}\n\n", false},

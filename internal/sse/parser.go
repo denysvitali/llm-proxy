@@ -71,6 +71,22 @@ func (d *Decoder) Feed(p []byte) (bool, error) {
 	return false, nil
 }
 
+// End finishes the stream at EOF. The SSE spec discards pending events at EOF
+// because a stream may have been cut mid-frame, but a data line that was
+// newline-terminated is not cut — only the frame's blank line is missing, and
+// servers routinely close the stream right after a terminal data line. Such
+// pending events are dispatched so a final [DONE], usage chunk, or message_stop
+// still counts; a truncated last line without its newline stays discarded.
+func (d *Decoder) End() (bool, error) {
+	if d.failure != nil {
+		return d.stopped, d.failure
+	}
+	if d.stopped || len(d.line) > 0 || !d.event.HasData || len(d.event.Data) == 0 {
+		return d.stopped, nil
+	}
+	return d.finishLine()
+}
+
 func (d *Decoder) finishLine() (bool, error) {
 	line := d.line
 	if !d.started {
@@ -128,6 +144,9 @@ func Scan(body io.Reader, decode func(Event) (bool, error)) error {
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
+				if _, err := d.End(); err != nil {
+					return err
+				}
 				return nil
 			}
 			return readErr

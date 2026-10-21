@@ -87,11 +87,17 @@ func TestDecoderFrameLimitAndReset(t *testing.T) {
 
 func TestScanReadErrorsAndUnfinishedEOF(t *testing.T) {
 	failure := errors.New("read failure")
-	for _, suffix := range []string{"data: partial", "data: partial\n", "event: done\n\n"} {
+	// A truncated last line is discarded at EOF; a newline-terminated data
+	// line is complete enough to dispatch, even without the blank line.
+	for _, suffix := range []string{"data: partial", "event: done\n\n"} {
 		calls := 0
 		if err := Scan(strings.NewReader(suffix), func(Event) (bool, error) { calls++; return false, nil }); err != nil || calls != 0 {
 			t.Fatalf("suffix %q: err=%v, calls=%d", suffix, err, calls)
 		}
+	}
+	calls := 0
+	if err := Scan(strings.NewReader("data: partial\n"), func(Event) (bool, error) { calls++; return false, nil }); err != nil || calls != 1 {
+		t.Fatalf("terminated suffix: err=%v, calls=%d", err, calls)
 	}
 	for _, stop := range []bool{false, true} {
 		calls := 0

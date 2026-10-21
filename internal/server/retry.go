@@ -301,6 +301,11 @@ func pipeSSE(w io.Writer, flush func(), body io.Reader, done func(sse.Event) boo
 			}
 		}
 		if readErr != nil {
+			if readErr == io.EOF {
+				if _, endErr := decoder.End(); endErr != nil {
+					return relayed, complete, endErr
+				}
+			}
 			return relayed, complete, readErr
 		}
 	}

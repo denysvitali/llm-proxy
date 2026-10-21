@@ -139,14 +139,11 @@ func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, 
 		if !s.started {
 			return nil, errors.New("upstream stopped without message_start")
 		}
-		if !s.stopped {
-			return nil, errors.New("upstream stopped without stop_reason")
-		}
-		for _, block := range s.blocks {
-			if !block.closed {
-				return nil, errors.New("upstream stopped with open content blocks")
-			}
-		}
+		// A message_delta carrying stop_reason and content_block_stop for every
+		// open block normally precede message_stop, but sloppy upstreams omit
+		// them. Native passthrough accepts a bare message_stop as terminal
+		// (streamDoneChecker), so the translated path must not fail a stream
+		// the native path would accept; the writer defaults the stop reason.
 	case "ping":
 		return nil, nil
 	default:

@@ -39,7 +39,6 @@ type responsesOutBlock struct {
 	// fallback). Partial JSON fragments concatenate client-side, so the
 	// complete arguments must never be re-emitted after any delta went out.
 	sentArgDelta bool
-	arguments    string
 }
 
 // ResponsesStreamWriter converts an OpenAI Responses SSE stream into the
@@ -77,7 +76,7 @@ func NewResponsesStreamWriter(writer io.Writer, flush func(), model string, incl
 func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		if string(payload) == "[DONE]" {
-			return false, errors.New("Responses stream requires a terminal response event")
+			return false, errors.New("responses stream requires a terminal response event")
 		}
 		var event responsesEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
@@ -191,9 +190,10 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		if event.Response != nil {
 			s.captureUsage(event.Response.Usage)
 			finish, _ := responsesFinish(*event.Response, s.stopReason == "tool_use")
-			if finish == "length" {
+			switch finish {
+			case "length":
 				s.stopReason = "max_tokens"
-			} else if finish == "content_filter" {
+			case "content_filter":
 				s.stopReason = "refusal"
 			}
 			s.ensureStarted(event.Response.ID, event.Response.Model)
@@ -424,7 +424,7 @@ func ChatStreamFromResponses(writer io.Writer, flush func(), model string) *Chat
 func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		if string(payload) == "[DONE]" {
-			return false, errors.New("Responses stream requires a terminal response event")
+			return false, errors.New("responses stream requires a terminal response event")
 		}
 		var event responsesEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
