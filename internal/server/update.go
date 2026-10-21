@@ -15,8 +15,9 @@ const updateWriteTimeout = 5 * time.Second
 var statsUpdatedEvent = []byte(`{"type":"stats-updated"}`)
 
 // updateHub broadcasts lightweight stats-change notifications to dashboard
-// clients over WebSocket or SSE. Clients refetch the existing JSON APIs, so
-// events carry no request data.
+// clients over WebSocket or SSE. Clients refetch the existing JSON APIs on
+// receipt; a per-request event may carry the inspected request so dashboard
+// clients can surface it immediately without waiting for the refetch.
 type updateHub struct {
 	mu     sync.Mutex
 	subs   map[chan []byte]struct{}
@@ -53,7 +54,11 @@ func (h *updateHub) subscribe() (<-chan []byte, func()) {
 	return ch, unsub
 }
 
-func (h *updateHub) notify() {
+// notify broadcasts an event payload to every subscriber. Payloads are
+// pre-encoded bytes so the hot path stays allocation-free per subscriber;
+// a subscriber whose buffer is full drops the event rather than blocking
+// the recording path.
+func (h *updateHub) notify(event []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -61,7 +66,7 @@ func (h *updateHub) notify() {
 	}
 	for ch := range h.subs {
 		select {
-		case ch <- statsUpdatedEvent:
+		case ch <- event:
 		default:
 		}
 	}

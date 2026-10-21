@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,8 +14,6 @@ func TestResponsesOpaqueHistoryAndToolsRequireNative(t *testing.T) {
 	for _, fields := range []string{
 		`"input":[{"role":"user","content":"hi"},{"type":"reasoning","encrypted_content":"opaque"}]`,
 		`"input":[{"role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"web_search"}]}]`,
-		`"input":"hi","tools":[{"type":"custom","name":"shell"}]`,
-		`"input":"hi","tools":[{"type":"web_search"}]`,
 		`"input":[{"type":"custom_tool_call","call_id":"c1","name":"shell","input":"ls"},{"type":"custom_tool_call_output","call_id":"c1","output":"ok"}]`,
 	} {
 		for _, wire := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat, backend.KindOpenAIResponses} {
@@ -87,6 +86,49 @@ func TestTranslatedHistoryIdentityBoundary(t *testing.T) {
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestClientExecutedToolsDegradeToFunction(t *testing.T) {
+	for _, tools := range []string{
+		// Codex sends non-function tools and function tools with client-side
+		// extras on every turn; a chat or Messages backend is expected to serve
+		// the remaining function surface instead of failing the exchange.
+		`[{"type":"web_search"},{"type":"custom","name":"shell"}]`,
+		`[{"type":"function","name":"multi_agent_v1","tools":[{"name":"sub"}],"parameters":{"type":"object"},"strict":false}]`,
+	} {
+		for _, wire := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat} {
+			t.Run(string(wire)+"/"+tools, func(t *testing.T) {
+				body := `{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`
+				if wire == backend.KindAnthropic {
+					body = `{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`
+				}
+				fb := &fakeOABackend{name: "upstream", body: body, kinds: map[backend.Kind]bool{wire: true}}
+				s := newOATestServer(t, fb, map[string]config.ModelRoute{"alias": {Backend: "upstream", Model: "model"}})
+				rec := postOpenAI(t, s, "/v1/responses", `{"model":"alias","input":"hi","tools":`+tools+`}`)
+				if rec.Code != http.StatusOK || fb.lastRequest() == nil {
+					t.Fatalf("tool degration failed: %d %s", rec.Code, rec.Body.String())
+				}
+				var sent struct {
+					Tools []json.RawMessage `json:"tools"`
+				}
+				if err := json.Unmarshal(fb.lastRequest().RawBody, &sent); err != nil {
+					t.Fatal(err)
+				}
+				for _, raw := range sent.Tools {
+					var tool map[string]any
+					if err := json.Unmarshal(raw, &tool); err != nil {
+						t.Fatal(err)
+					}
+					// Either a chat function tool or a Messages tool entry; only
+					// the function surface must survive, so no client-side extras
+					// (multi_agent's nested tool list, custom/web markers) may.
+					if wire == backend.KindAnthropic && tool["name"] == nil || tool["tools"] != nil || tool["type"] != nil && tool["type"] != "function" {
+						t.Fatalf("non-function tool forwarded: %s", fb.lastRequest().RawBody)
+					}
+				}
+			})
 		}
 	}
 }

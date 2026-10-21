@@ -45,7 +45,7 @@ func (r *redisStats) modelKey(model string) string {
 	return r.prefix + "model:" + base64.RawURLEncoding.EncodeToString([]byte(model))
 }
 
-func (r *redisStats) startUpdates(notify func()) {
+func (r *redisStats) startUpdates(notify func([]byte)) {
 	r.pubsub = r.client.Subscribe(context.Background(), r.updatesKey())
 	events := r.pubsub.Channel()
 	go func() {
@@ -53,11 +53,11 @@ func (r *redisStats) startUpdates(notify func()) {
 			select {
 			case <-r.stop:
 				return
-			case _, ok := <-events:
+			case msg, ok := <-events:
 				if !ok {
 					return
 				}
-				notify()
+				notify([]byte(msg.Payload))
 			}
 		}
 	}()
@@ -98,17 +98,17 @@ func (r *redisStats) record(ctx context.Context, a completedAttempt, retentionDa
 	if err := r.queueActivity(ctx, pipe, a); err != nil {
 		return err
 	}
-	return r.commit(ctx, pipe, modelName, retentionDays)
+	return r.commit(ctx, pipe, modelName, retentionDays, requestEvent(a.request))
 }
 
-func (r *redisStats) commit(ctx context.Context, pipe redis.Pipeliner, modelName string, retentionDays int) error {
+func (r *redisStats) commit(ctx context.Context, pipe redis.Pipeliner, modelName string, retentionDays int, event []byte) error {
 	if retentionDays > 0 {
 		pipe.Expire(ctx, r.modelKey(modelName), time.Duration(retentionDays+1)*24*time.Hour)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
-	_, err := r.client.Publish(ctx, r.updatesKey(), "stats-updated").Result()
+	_, err := r.client.Publish(ctx, r.updatesKey(), event).Result()
 	return err
 }
 
@@ -122,7 +122,7 @@ func (r *redisStats) recordToolErrors(ctx context.Context, backend, model string
 	pipe.SAdd(ctx, r.modelsKey(), modelName)
 	pipe.HIncrBy(ctx, r.modelKey(modelName), "tool_errors", n)
 	pipe.HIncrBy(ctx, r.modelKey(modelName), field, n)
-	return r.commit(ctx, pipe, modelName, retentionDays)
+	return r.commit(ctx, pipe, modelName, retentionDays, statsUpdatedEvent)
 }
 
 // Limit queued replies per round trip while avoiding one network round trip

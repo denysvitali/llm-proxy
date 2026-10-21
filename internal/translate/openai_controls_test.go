@@ -12,22 +12,29 @@ func TestTranslatedOpenAIControls(t *testing.T) {
 		name, body string
 		convert    func([]byte, string) ([]byte, error)
 		want       map[string]json.RawMessage
+		absent     []string
 	}{
 		{"chat to responses", `{"messages":[{"role":"user","content":"hi"}],"temperature":0,"top_p":0,"parallel_tool_calls":false,"store":false,"metadata":{"tag":"x"},"reasoning_effort":"low"}`, ChatToResponses, map[string]json.RawMessage{
 			"temperature": []byte(`0`), "top_p": []byte(`0`), "parallel_tool_calls": []byte(`false`), "store": []byte(`false`), "metadata": []byte(`{"tag":"x"}`), "reasoning": []byte(`{"effort":"low"}`),
-		}},
+		}, nil},
 		{"responses to chat", `{"input":"hi","temperature":0,"top_p":0,"parallel_tool_calls":false,"store":true,"reasoning":{"effort":"minimal"}}`, ResponsesToChat, map[string]json.RawMessage{
 			"temperature": []byte(`0`), "top_p": []byte(`0`), "parallel_tool_calls": []byte(`false`), "store": []byte(`true`), "reasoning_effort": []byte(`"minimal"`),
-		}},
+		}, nil},
 		{"chat to messages", `{"messages":[{"role":"user","content":"hi"}],"stop":[""," END "],"temperature":0,"parallel_tool_calls":false}`, ChatToAnthropic, map[string]json.RawMessage{
 			"stop_sequences": []byte(`[""," END "]`), "temperature": []byte(`0`), "tool_choice": []byte(`{"type":"auto","disable_parallel_tool_use":true}`),
-		}},
+		}, nil},
 		{"responses to messages", `{"input":"hi","parallel_tool_calls":true}`, ResponsesToAnthropic, map[string]json.RawMessage{
 			"tool_choice": []byte(`{"type":"auto","disable_parallel_tool_use":false}`),
-		}},
+		}, nil},
 		{"none disables tools", `{"input":"hi","tool_choice":"none","parallel_tool_calls":false}`, ResponsesToAnthropic, map[string]json.RawMessage{
 			"tool_choice": []byte(`{"type":"none"}`),
-		}},
+		}, nil},
+		// Codex v0.163 sends exactly this shape on every turn; the Responses
+		// annotations must degrade silently instead of failing the exchange.
+		{"codex annotations dropped", `{"input":"hi","include":["reasoning.encrypted_content"],"client_metadata":{"x-codex-installation-id":"abc"},"prompt_cache_key":"thread"}`, ResponsesToChat, map[string]json.RawMessage{
+			"prompt_cache_key": []byte(`"thread"`),
+		}, []string{"include", "client_metadata"}},
+		{"reasoning summary dropped", `{"input":"hi","reasoning":{"summary":"auto"}}`, ResponsesToChat, nil, []string{"reasoning"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := tc.convert([]byte(tc.body), "model")
@@ -48,6 +55,11 @@ func TestTranslatedOpenAIControls(t *testing.T) {
 				}
 				if !reflect.DeepEqual(actual, expected) {
 					t.Errorf("%s = %s, want %s", key, got[key], want)
+				}
+			}
+			for _, key := range tc.absent {
+				if _, ok := got[key]; ok {
+					t.Fatalf("%s was not dropped: %s", key, out)
 				}
 			}
 		})
@@ -129,10 +141,7 @@ func TestTranslatedControlBoundaries(t *testing.T) {
 		{`{"messages":[{"role":"user","content":"hi"}],"stop":"END"}`, ChatToResponses},
 		{`{"messages":[{"role":"user","content":"hi"}],"temperature":1.1}`, ChatToAnthropic},
 		{`{"input":"hi","store":false}`, ResponsesToAnthropic},
-		{`{"input":"hi","reasoning":{"effort":"low","summary":"auto"}}`, ResponsesToChat},
 		{`{"input":"hi","text":{"verbosity":"low"}}`, ResponsesToChat},
-		{`{"input":"hi","tools":[{"type":"function","name":"f","strict":true}]}`, ResponsesToAnthropic},
-		{`{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","strict":false}}]}`, ChatToAnthropic},
 	} {
 		if out, err := tc.convert([]byte(tc.body), "model"); err == nil {
 			t.Errorf("unsupported control accepted: %s", out)

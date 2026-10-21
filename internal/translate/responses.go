@@ -72,7 +72,12 @@ type responsesReasoning struct {
 }
 
 type responsesInputItem struct {
-	Type      string          `json:"type"`
+	Type string `json:"type"`
+	// ID and Status are accepted (Codex echoes them in replayed history) but
+	// deliberately not forwarded: item identity and completion annotations
+	// have no representation on the chat or Messages wires.
+	ID        string          `json:"id,omitempty"`
+	Status    string          `json:"status,omitempty"`
 	Role      string          `json:"role,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
 	CallID    string          `json:"call_id,omitempty"`

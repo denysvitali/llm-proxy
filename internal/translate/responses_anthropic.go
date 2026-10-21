@@ -121,9 +121,11 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 	}
 
 	for _, tool := range tools {
-		if tool.Strict != nil {
-			return nil, fmt.Errorf("tool strict cannot be represented when translating to Messages")
-		}
+		// strict is dropped: false is the Messages wire's default, and true
+		// only guarantees the backend enforces the schema — Codex sends
+		// strict:false on every tool, so failing the turn over an annotation
+		// no backend observes would be a gratuitous rejection.
+		_ = tool.Strict
 		if tool.Name == "" {
 			continue
 		}

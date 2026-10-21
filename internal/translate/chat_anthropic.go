@@ -156,9 +156,9 @@ func ChatToAnthropic(body []byte, model string) ([]byte, error) {
 	flushToolResults()
 
 	for _, tool := range chat.Tools {
-		if tool.Function.Strict != nil {
-			return nil, fmt.Errorf("tool strict cannot be represented when translating to Messages")
-		}
+		// strict is dropped: see the note in responses_anthropic.go — the
+		// annotation has no Messages counterpart and false is already default.
+		_ = tool.Function.Strict
 		if tool.Function.Name == "" {
 			continue
 		}

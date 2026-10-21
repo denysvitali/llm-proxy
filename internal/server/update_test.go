@@ -95,7 +95,7 @@ func TestUpdateHubNotifiesWebSocketClient(t *testing.T) {
 	readCtx, cancelRead := context.WithTimeout(context.Background(), time.Second)
 	defer cancelRead()
 
-	s.updates.notify()
+	s.updates.notify(statsUpdatedEvent)
 	data, err := readWebSocketMessage(conn, readCtx)
 	if err != nil {
 		t.Fatalf("read update event: %v", err)
@@ -128,7 +128,7 @@ func TestUpdateHubNotifiesSSEClient(t *testing.T) {
 		t.Fatalf("content-type = %q, want text/event-stream", contentType)
 	}
 
-	s.updates.notify()
+	s.updates.notify(statsUpdatedEvent)
 	reader := bufio.NewReader(resp.Body)
 	line, err := reader.ReadString('\n')
 	if err != nil {

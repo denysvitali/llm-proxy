@@ -28,17 +28,37 @@ func responsesTools(body []byte) ([]responsesFunctionTool, map[string]responseNa
 	var identities []responseNamespaceTool
 	seen := make(map[[2]string]bool)
 	preferred := make(map[string]int)
-	add := func(raw json.RawMessage, namespace string) error {
+	// add records one function tool. Returns skip=true when the tool has no
+	// function representation and the exchange can proceed without it.
+	add := func(raw json.RawMessage, namespace string) (bool, error) {
 		var tool responsesFunctionTool
 		if err := decodeContentPart(raw, &tool); err != nil {
-			return fmt.Errorf("unsupported function tool fields: %w", err)
+			// Tolerate client-side extras (Codex's multi_agent tool carries a
+			// "tools" array): strip unknown fields and retry — the function
+			// surface itself is unchanged.
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return false, fmt.Errorf("unsupported function tool fields: %w", err)
+			}
+			for name := range fields {
+				switch name {
+				case "type", "name", "description", "parameters", "strict":
+				default:
+					delete(fields, name)
+				}
+			}
+			if err := decodeContentPart(mustMarshal(fields), &tool); err != nil {
+				return false, fmt.Errorf("unsupported function tool fields: %w", err)
+			}
 		}
 		if tool.Type != "function" || tool.Name == "" {
-			return fmt.Errorf("translated tools require type function and a non-empty name; custom and server-executed tools require a native route")
+			// Web search and other client-executed capabilities cannot be served
+			// from the target wire; dropping the tool beats failing the turn.
+			return true, nil
 		}
 		identity := [2]string{namespace, tool.Name}
 		if seen[identity] {
-			return fmt.Errorf("duplicate tool identity %q in namespace %q", tool.Name, namespace)
+			return false, fmt.Errorf("duplicate tool identity %q in namespace %q", tool.Name, namespace)
 		}
 		seen[identity] = true
 		name := tool.Name
@@ -48,7 +68,7 @@ func responsesTools(body []byte) ([]responsesFunctionTool, map[string]responseNa
 		preferred[name]++
 		identities = append(identities, responseNamespaceTool{Qualified: name, Namespace: namespace, Name: tool.Name})
 		tools = append(tools, tool)
-		return nil
+		return false, nil
 	}
 	for _, raw := range envelope.Tools {
 		var header struct {
@@ -58,7 +78,7 @@ func responsesTools(body []byte) ([]responsesFunctionTool, map[string]responseNa
 			return nil, nil, fmt.Errorf("decode tool: %w", err)
 		}
 		if header.Type != "namespace" {
-			if err := add(raw, ""); err != nil {
+			if _, err := add(raw, ""); err != nil {
 				return nil, nil, err
 			}
 			continue
@@ -68,12 +88,24 @@ func responsesTools(body []byte) ([]responsesFunctionTool, map[string]responseNa
 			Name  string            `json:"name"`
 			Tools []json.RawMessage `json:"tools"`
 		}
-		if err := decodeContentPart(raw, &namespace); err != nil || namespace.Name == "" || len(namespace.Tools) == 0 {
-			return nil, nil, fmt.Errorf("namespace requires name, non-empty tools, and no unsupported fields")
+		// The namespace envelope is decoded leniently: Codex annotates it with
+		// description and strict, which the flat wires cannot carry but the
+		// nested function surface below is unaffected by dropping them.
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil || fields["name"] == nil || len(fields["tools"]) == 0 {
+			return nil, nil, fmt.Errorf("namespace requires name and non-empty tools")
+		}
+		if err := json.Unmarshal(fields["name"], &namespace.Name); err != nil {
+			return nil, nil, fmt.Errorf("namespace requires name and non-empty tools")
+		}
+		if err := json.Unmarshal(fields["tools"], &namespace.Tools); err != nil || len(namespace.Tools) == 0 {
+			return nil, nil, fmt.Errorf("namespace requires name and non-empty tools")
 		}
 		for _, raw := range namespace.Tools {
-			if err := add(raw, namespace.Name); err != nil {
-				return nil, nil, err
+			if skip, err := add(raw, namespace.Name); skip || err != nil {
+				if err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 	}

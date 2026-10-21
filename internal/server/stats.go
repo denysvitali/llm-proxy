@@ -410,7 +410,7 @@ func (st *Stats) recordToolErrors(backend, model string, n int64) {
 		_ = st.redis.recordToolErrors(ctx, backend, model, n, now, st.cfg.RetentionDays)
 		cancel()
 	}
-	st.updates.notify()
+	st.updates.notify(statsUpdatedEvent)
 }
 
 func (st *Stats) modelFor(key string) *modelStats {

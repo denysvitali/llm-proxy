@@ -2,8 +2,20 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
+
+// requestEvent encodes a completed attempt's inspected request so dashboard
+// clients can surface it immediately instead of waiting for the refetch.
+// It degrades to the payload-less snapshot event if encoding ever fails.
+func requestEvent(req InspectedRequest) []byte {
+	body, err := json.Marshal(map[string]any{"type": "request", "request": req})
+	if err != nil {
+		return statsUpdatedEvent
+	}
+	return body
+}
 
 // completedAttempt is the immutable observation shared by the process-local
 // metrics, memory/JSON storage, and Redis adapters. It never retains a body.
@@ -63,7 +75,7 @@ func (st *Stats) recordAttempt(a completedAttempt) {
 		_ = st.redis.record(ctx, a, st.cfg.RetentionDays)
 		cancel()
 	}
-	st.updates.notify()
+	st.updates.notify(requestEvent(a.request))
 }
 
 func (st *Stats) recordAttemptMetrics(a completedAttempt) {

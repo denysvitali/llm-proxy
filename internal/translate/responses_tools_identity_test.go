@@ -176,11 +176,10 @@ func TestResponsesToolCapabilityBoundaries(t *testing.T) {
 			for _, tools := range []string{
 				`[{"type":"function","name":"run"},{"type":"function","name":"run"}]`,
 				`[{"type":"namespace","name":"ns","tools":[{"type":"function","name":"run"},{"type":"function","name":"run"}]}]`,
-				`[{"type":"custom","name":"shell"}]`,
-				`[{"type":"custom","name":"shell","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}]`,
-				`[{"type":"web_search"}]`,
-				`[{"type":"function","name":"run","unknown":true}]`,
-				`[{"type":"namespace","name":"ns","description":"context","tools":[{"type":"function","name":"run"}]}]`,
+				// Client-executed tools (custom, web_search) and unknown function
+				// fields degrade instead: the function surface is dropped or
+				// cleaned rather than failing the turn (see TestDegradeTools).
+				`[{"type":"namespace","name":"ns","tools":[]}]`,
 			} {
 				request := []byte(`{"input":"run","tools":` + tools + `}`)
 				if _, err := convert.fn(request, "m"); err == nil {

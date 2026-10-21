@@ -29,6 +29,14 @@ func translatedOpenAIControls(body []byte, source, target string) (map[string]js
 		switch name {
 		case "model", "temperature", "top_p", "stream", "tools", "tool_choice", "parallel_tool_calls", "store", "metadata", "user", "safety_identifier", "service_tier", "prompt_cache_key", "prompt_cache_retention":
 			supported = true
+		case "include", "client_metadata":
+			// Responses annotations that shape only the response or telemetry
+			// (Codex sends include: ["reasoning.encrypted_content"] and a
+			// client_metadata object on every turn). Neither can be produced on
+			// the target wire, but the request is otherwise servable, so they
+			// are dropped: a graceful loss beats failing the turn, matching how
+			// backends without the annotation survive it natively.
+			supported = source == "openai-responses"
 		case "messages", "max_tokens", "max_completion_tokens", "n", "stop", "response_format", "reasoning_effort":
 			supported = source == "openai-chat"
 		case "input", "instructions", "max_output_tokens", "text", "reasoning":
@@ -141,13 +149,27 @@ func translatedOpenAIControls(body []byte, source, target string) (map[string]js
 		if target != "openai-chat" {
 			return nil, reject("reasoning")
 		}
-		var reasoning struct {
-			Effort *string `json:"effort"`
+		var allowed map[string]json.RawMessage
+		if err := decodeContentPart(fields["reasoning"], &allowed); err != nil || allowed == nil {
+			return nil, fmt.Errorf("translated reasoning requires an object")
 		}
-		if err := decodeContentPart(fields["reasoning"], &reasoning); err != nil || reasoning.Effort == nil {
-			return nil, fmt.Errorf("translated reasoning supports only an explicit effort string; summary and budgets cannot be mapped")
+		// Extra reasoning knobs are dropped key by key so only genuinely
+		// unmappable controls fail: summary ("auto" from Codex) has no chat
+		// counterpart and its absence changes nothing on the wire.
+		for key := range allowed {
+			switch key {
+			case "effort", "summary":
+			default:
+				return nil, fmt.Errorf("translated reasoning supports only effort and summary; %q cannot be mapped", key)
+			}
 		}
-		out["reasoning_effort"] = mustMarshal(*reasoning.Effort)
+		if raw, ok := allowed["effort"]; ok {
+			var effort string
+			if err := json.Unmarshal(raw, &effort); err != nil {
+				return nil, fmt.Errorf("reasoning.effort must be a string")
+			}
+			out["reasoning_effort"] = mustMarshal(effort)
+		}
 	}
 	return out, nil
 }

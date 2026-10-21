@@ -18,7 +18,7 @@ func TestTranslatedControlRejectionPreservesNativeRequests(t *testing.T) {
 		{"/v1/chat/completions", `"messages":[{"role":"user","content":"hi"}]`, backend.KindOpenAIChat},
 		{"/v1/responses", `"input":"hi"`, backend.KindOpenAIResponses},
 	} {
-		for _, control := range []string{`"previous_response_id":"prior"`, `"store":false`, `"tool_choice":"provider_extension"`, `"include":["reasoning.encrypted_content"]`, `"provider_extension":false`} {
+		for _, control := range []string{`"previous_response_id":"prior"`, `"store":false`, `"tool_choice":"provider_extension"`, `"provider_extension":false`} {
 			for _, native := range []bool{false, true} {
 				name := api.path + "/" + control + "/translated"
 				kind := backend.KindAnthropic
@@ -87,8 +87,8 @@ func TestTranslatedRequestFieldsPreserveNative(t *testing.T) {
 	}{
 		{"/v1/chat/completions", `"messages":[{"role":"user","content":"hi","name":"speaker"}]`, backend.KindOpenAIChat},
 		{"/v1/chat/completions", `"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","provider_extension":false}}]`, backend.KindOpenAIChat},
-		{"/v1/responses", `"input":[{"role":"user","content":"hi","id":"msg_prior"}]`, backend.KindOpenAIResponses},
-		{"/v1/responses", `"input":[{"type":"function_call","call_id":"call","name":"f","arguments":"{}","status":"completed"}]`, backend.KindOpenAIResponses},
+		{"/v1/responses", `"input":[{"type":"message","id":"msg_prior","role":"user","content":[{"type":"input_text","text":"hi","provider_ext":1}]}]`, backend.KindOpenAIResponses},
+		{"/v1/responses", `"input":[{"type":"function_call","id":"fc_1","call_id":"call","name":"f","arguments":"{}","status":"completed","seed":1}]`, backend.KindOpenAIResponses},
 	} {
 		for _, kind := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat, backend.KindOpenAIResponses} {
 			t.Run(api.path+"/"+api.input+"/"+string(kind), func(t *testing.T) {

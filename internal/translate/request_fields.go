@@ -91,6 +91,15 @@ func decodeResponsesInputItem(raw json.RawMessage) (responsesInputItem, error) {
 	default:
 		return item, fmt.Errorf("input type %q requires a native route", item.Type)
 	}
+	// Every item may carry the server-assigned id and function items a status
+	// (Codex echoes them when replaying history). Item identity has no chat or
+	// Messages counterpart and nothing downstream uses it, so these are
+	// representable-with-loss: dropping them beats failing a valid request.
+	if item.Type == "function_call" || item.Type == "function_call_output" {
+		allowed = append(allowed, "id", "status")
+	} else {
+		allowed = append(allowed, "id")
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return item, err

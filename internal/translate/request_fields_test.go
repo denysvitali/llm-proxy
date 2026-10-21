@@ -57,7 +57,8 @@ func TestResponsesRequestFieldBoundaries(t *testing.T) {
 		for _, tc := range []struct{ name, item, want string }{
 			{"null item", `null`, "object"},
 			{"unknown field", `{"role":"user","content":"hi","extra":false}`, "extra"},
-			{"replay id", `{"type":"message","role":"assistant","content":"hi","id":"item"}`, "id"},
+			// Item ids are deliberately representable-with-loss (Codex replays
+			// them); status only functions as an annotation on function items.
 			{"replay status", `{"type":"message","role":"assistant","content":"hi","status":"completed"}`, "status"},
 			{"message call field", `{"role":"user","content":"hi","call_id":null}`, "call_id"},
 			{"call content field", `{"type":"function_call","call_id":"c","name":"f","arguments":"{}","content":"hi"}`, "content"},
