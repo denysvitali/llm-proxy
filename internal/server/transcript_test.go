@@ -40,6 +40,9 @@ func loadTranscripts(t *testing.T) []transcript {
 	}
 	var out []transcript
 	for _, dir := range dirs {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			continue
+		}
 		var meta struct {
 			ClientPath string `json:"client_path"`
 		}
