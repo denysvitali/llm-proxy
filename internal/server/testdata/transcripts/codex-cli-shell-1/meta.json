@@ -1,0 +1,6 @@
+{
+ "source": "codex-cli 0.163.0",
+ "client_path": "/v1/responses",
+ "upstream_wire": "openai-responses",
+ "turn": 1
+}

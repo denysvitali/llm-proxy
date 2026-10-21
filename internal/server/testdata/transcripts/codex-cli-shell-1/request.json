@@ -1,0 +1,509 @@
+{
+ "model": "alias",
+ "stream": true,
+ "input": [
+  {
+   "type": "message",
+   "id": "msg_8d4509ab12131c80682f24b1402c3bc86cdf",
+   "role": "developer",
+   "content": [
+    {
+     "type": "input_text",
+     "text": "ullamco sed lorem ex ipsum et incididunt sit sit dolor exercitation enim adipiscing ipsum exercitation ad aliquip quis l"
+    }
+   ]
+  },
+  {
+   "type": "message",
+   "id": "msg_2b10d350325975cd1659d8ec65ffcdba4050",
+   "role": "developer",
+   "content": [
+    {
+     "type": "input_text",
+     "text": "do consectetur eiusmod ex eiusmod commodo minim adipiscing ad veniam sed nisi ut lorem consectetur enim ea nostrud dolor"
+    },
+    {
+     "type": "input_text",
+     "text": "consectetur laboris exercitation lorem aliquip adipiscing ullamco elit aliqua aliquip minim veniam magna aliquip et aliq"
+    }
+   ]
+  },
+  {
+   "type": "message",
+   "id": "msg_7a27729f1cc269fe4957109b0965df6d0475",
+   "role": "user",
+   "content": [
+    {
+     "type": "input_text",
+     "text": "exercitation tempor labore exercitation minim ex nisi commodo do incididunt exercitation minim et enim dolore amet sed d"
+    }
+   ]
+  },
+  {
+   "type": "message",
+   "id": "msg_95c06ba791ad232c3552665a77816d00f0d4",
+   "role": "user",
+   "content": [
+    {
+     "type": "input_text",
+     "text": "do aliqua incididunt labore commodo ex aliquip aliquip quis magna sed exercitation"
+    }
+   ]
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "name": "exec_command",
+   "description": "dolore sed veniam veniam consectetur sed ea lorem laboris ex aliquip quis minim el",
+   "strict": false,
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "cmd": {
+      "type": "string",
+      "description": "adipiscing eiusmod nisi m"
+     },
+     "justification": {
+      "type": "string",
+      "description": "lorem elit aliquip aliqua adipiscing lorem aliqua do veniam ad consect"
+     },
+     "login": {
+      "type": "boolean",
+      "description": "lorem veniam sed ullamco dolor tempor minim do ullamco nostrud ea lorem sed veni"
+     },
+     "max_output_tokens": {
+      "type": "number",
+      "description": "ut magna adipiscing minim nostrud aliqua sed ex labore lorem lorem ea enim veniam adipi"
+     },
+     "prefix_rule": {
+      "type": "array",
+      "description": "amet nisi exercitation incididunt ad lorem ex aliqua aliqua aliquip dolore ad ad quis eiusmod magna aliqua minim conse",
+      "items": {
+       "type": "string"
+      }
+     },
+     "sandbox_permissions": {
+      "type": "string",
+      "description": "aliquip sit tempor labore enim adipiscing ipsum ut veniam eiusmod ullamco amet incididunt dolore eiusmod no",
+      "enum": [
+       "option_0",
+       "option_1"
+      ]
+     },
+     "shell": {
+      "type": "string",
+      "description": "elit ipsum ut magna veniam nostrud veniam tempor sed ad ut do"
+     },
+     "tty": {
+      "type": "boolean",
+      "description": "nisi amet enim elit ullamco ullamco sit sed commodo consectetur dolor ea"
+     },
+     "workdir": {
+      "type": "string",
+      "description": "ullamco ipsum minim dolore sit sit laboris ex ad consectetur"
+     },
+     "yield_time_ms": {
+      "type": "number",
+      "description": "adipiscing incididunt ut incididunt adipiscing lorem dolore laboris incididunt sit"
+     }
+    },
+    "required": [
+     "cmd"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "type": "function",
+   "name": "write_stdin",
+   "description": "nisi labore dolor veniam ullamco lorem ex incididunt magna nostrud ut aliqua eni",
+   "strict": false,
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "chars": {
+      "type": "string",
+      "description": "et ea dolore labore tempor consectetur nisi amet elit ut consectetur con"
+     },
+     "max_output_tokens": {
+      "type": "number",
+      "description": "ut magna adipiscing minim nostrud aliqua sed ex labore lorem lorem ea enim veniam adipi"
+     },
+     "session_id": {
+      "type": "number",
+      "description": "incididunt nostrud ipsum sit lorem magna sit qu"
+     },
+     "yield_time_ms": {
+      "type": "number",
+      "description": "do quis commodo quis do dolore dolor et dolor ut dolore elit ad ullamco ad quis commodo minim ex enim eiusmod aliquip ip"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "type": "function",
+   "name": "request_user_input",
+   "description": "minim aliquip ea magna sit minim ipsum incididunt ipsum labore magna nostrud quis nostrud amet tempor nisi sit ipsum con",
+   "strict": false,
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "questions": {
+      "type": "array",
+      "description": "adipiscing dolore minim eiusmod ex ut laboris ipsum temp",
+      "items": {
+       "type": "object",
+       "properties": {
+        "header": {
+         "type": "string",
+         "description": "ex minim minim minim ad eiusmod commodo quis elit dolor"
+        },
+        "id": {
+         "type": "string",
+         "description": "ea labore ex ad dolore quis consectetur ea ipsum qu"
+        },
+        "options": {
+         "type": "array",
+         "description": "ad tempor nisi nisi ut laboris sit veniam do amet dolore nostrud ex quis exercitation magna adipiscing quis magna ut sed",
+         "items": {
+          "type": "object",
+          "properties": {
+           "description": {
+            "type": "string",
+            "description": "minim amet incididunt aliquip ut incididunt ipsum exercita"
+           },
+           "label": {
+            "type": "string",
+            "description": "labore consectetur tempor sed"
+           }
+          },
+          "required": [
+           "label",
+           "description"
+          ],
+          "additionalProperties": false
+         }
+        },
+        "question": {
+         "type": "string",
+         "description": "aliqua magna ut sed sed eiusmod ea elit d"
+        }
+       },
+       "required": [
+        "id",
+        "header",
+        "question",
+        "options"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "questions"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "type": "function",
+   "name": "view_image",
+   "description": "eiusmod exercitation adipiscing consectetur quis tempor do ea minim ad ipsum incididunt ullamco sit sed ut tempor magna",
+   "strict": false,
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "description": "ut laboris sit veniam sit laboris conse"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "type": "namespace",
+   "name": "multi_agent_v1",
+   "description": "dolor nostrud commodo sed eiusmod incididun",
+   "tools": [
+    {
+     "type": "function",
+     "name": "close_agent",
+     "description": "adipiscing lorem sed dolor minim et dolore veniam laboris et nisi ullamco lorem ullamco aliquip do ipsum veniam consecte",
+     "strict": false,
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string",
+        "description": "consectetur labore dolore exercitatio"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "type": "function",
+     "name": "resume_agent",
+     "description": "enim ad sed eiusmod veniam amet nisi dolore ad et lorem quis tempor do tempor nostrud dol",
+     "strict": false,
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "id": {
+        "type": "string",
+        "description": "exercitation adipis"
+       }
+      },
+      "required": [
+       "id"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "type": "function",
+     "name": "send_input",
+     "description": "laboris labore sed magna ipsum tempor ipsum do et quis consectetur ad aliquip ad sit aliquip elit commodo aliqua ex eius",
+     "strict": false,
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "interrupt": {
+        "type": "boolean",
+        "description": "magna exercitation amet exercitation aliqua aliqua enim laboris ut dolore nostrud nisi lorem elit"
+       },
+       "items": {
+        "type": "array",
+        "description": "labore et ad laboris ullamco minim magna laboris ipsum enim enim commodo commodo tempor quis dol",
+        "items": {
+         "type": "object",
+         "properties": {
+          "audio_url": {
+           "type": "string",
+           "description": "consectetur dolor labore ad ullamc"
+          },
+          "image_url": {
+           "type": "string",
+           "description": "veniam magna sed aliqua conse"
+          },
+          "name": {
+           "type": "string",
+           "description": "ipsum ea ex do minim elit dolor incididunt"
+          },
+          "path": {
+           "type": "string",
+           "description": "ad aliquip amet sed enim veniam nostrud sit adipiscing enim magna magna dolore dolor consectetur minim amet nostrud et a"
+          },
+          "text": {
+           "type": "string",
+           "description": "nisi labore quis ea sit magna e"
+          },
+          "type": {
+           "type": "string",
+           "description": "quis nostrud ad magna do ullamco tempor incididunt ad aliqua do consectetur exerc"
+          }
+         },
+         "additionalProperties": false
+        }
+       },
+       "message": {
+        "type": "string",
+        "description": "nostrud lorem ipsum nostrud ipsum laboris dolore laboris sit ipsum nisi dolo"
+       },
+       "target": {
+        "type": "string",
+        "description": "elit commodo ea minim minim aliquip inc"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "type": "function",
+     "name": "spawn_agent",
+     "description": "laboris ad sed aliquip veniam labore minim incididunt ea aliqua ullamco commodo aliquip veniam et et exercitation nostru",
+     "strict": false,
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "fork_context": {
+        "type": "boolean",
+        "description": "exercitation tempor labore ea et ad dolore lorem sed magna veniam enim tempor ut sit dolore adipiscing ut nisi"
+       },
+       "items": {
+        "type": "array",
+        "description": "labore et ad laboris ullamco minim magna laboris ipsum enim enim commodo commodo tempor quis dol",
+        "items": {
+         "type": "object",
+         "properties": {
+          "audio_url": {
+           "type": "string",
+           "description": "consectetur dolor labore ad ullamc"
+          },
+          "image_url": {
+           "type": "string",
+           "description": "veniam magna sed aliqua conse"
+          },
+          "name": {
+           "type": "string",
+           "description": "ipsum ea ex do minim elit dolor incididunt"
+          },
+          "path": {
+           "type": "string",
+           "description": "ad aliquip amet sed enim veniam nostrud sit adipiscing enim magna magna dolore dolor consectetur minim amet nostrud et a"
+          },
+          "text": {
+           "type": "string",
+           "description": "nisi labore quis ea sit magna e"
+          },
+          "type": {
+           "type": "string",
+           "description": "quis nostrud ad magna do ullamco tempor incididunt ad aliqua do consectetur exerc"
+          }
+         },
+         "additionalProperties": false
+        }
+       },
+       "message": {
+        "type": "string",
+        "description": "adipiscing ex incididunt sed dolor nisi dolor eiusmod dolor consectetur"
+       },
+       "model": {
+        "type": "string",
+        "description": "nostrud quis lorem lorem ullamco commodo veniam ipsum sed elit aliquip labori"
+       },
+       "reasoning_effort": {
+        "type": "string",
+        "description": "magna adipiscing ex dolor aliqua incididunt aliquip minim ad quis ipsum lorem c"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "type": "function",
+     "name": "wait_agent",
+     "description": "incididunt ex elit consectetur sed ipsum dolore consectetur dolore aliqua eiusmod magna aliqua exercitation nostrud quis",
+     "strict": false,
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "targets": {
+        "type": "array",
+        "description": "adipiscing minim amet nisi ex laboris adipiscing eiusmod laboris nostrud ipsu",
+        "items": {
+         "type": "string"
+        }
+       },
+       "timeout_ms": {
+        "type": "number",
+        "description": "dolore aliqua lorem dolore veniam sit sed dolor commodo dolor dolor magna nostrud et exercitation dolor minim aliquip el"
+       }
+      },
+      "required": [
+       "targets"
+      ],
+      "additionalProperties": false
+     }
+    }
+   ]
+  },
+  {
+   "type": "function",
+   "name": "get_goal",
+   "description": "aliqua lorem minim exercitation elit magna ea adipiscing et labore dolor quis sit ex dolor enim dolore sit tempor lorem",
+   "strict": false,
+   "parameters": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+   }
+  },
+  {
+   "type": "function",
+   "name": "create_goal",
+   "description": "incididunt tempor ipsum minim ad exercitation dolor minim veniam ullamco ex ut laboris veniam tempor quis tempor ullamco",
+   "strict": false,
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "objective": {
+      "type": "string",
+      "description": "et elit incididunt enim magna et amet lorem quis adipiscing labore ullamco nostrud dolore quis et sed ad consectetur ea"
+     },
+     "token_budget": {
+      "type": "integer",
+      "description": "ut dolore exercitation et et tempor dolor ut laboris ut veniam magna amet"
+     }
+    },
+    "required": [
+     "objective"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "type": "function",
+   "name": "update_goal",
+   "description": "laboris labore labore veniam ut aliqua eiusmod amet sit incididunt magna ut labore sit elit tempor ad incididunt ad exer",
+   "strict": false,
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "status": {
+      "type": "string",
+      "description": "amet enim exercitation incididunt exercitation ullamco lorem ex enim eiusmod sit eiusmod tempor ex minim elit do ipsum a",
+      "enum": [
+       "option_0",
+       "option_1",
+       "option_2"
+      ]
+     }
+    },
+    "required": [
+     "status"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "type": "web_search",
+   "external_web_access": true
+  }
+ ],
+ "tool_choice": "auto",
+ "parallel_tool_calls": true,
+ "reasoning": {
+  "summary": "auto"
+ },
+ "store": false,
+ "include": [
+  "reasoning.encrypted_content"
+ ],
+ "prompt_cache_key": "ea amet sit do nostrud quis ad ex al",
+ "client_metadata": {
+  "x-codex-installation-id": "aliquip lorem quis dolor ea tempor a",
+  "root_turn_id": "magna eiusmod ad ea do eiusmod adipi",
+  "session_id": "ea amet sit do nostrud quis ad ex al",
+  "x-codex-window-id": "incididunt dolor commodo eiusmod quis",
+  "x-codex-turn-metadata": "ex nisi exercitation sed consectetur et ad consectetur exercitation ipsum exercitation laboris tempor incididunt ea magn",
+  "thread_id": "ea amet sit do nostrud quis ad ex al",
+  "turn_id": "magna eiusmod ad ea do eiusmod adipi"
+ }
+}

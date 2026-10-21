@@ -1,0 +1,6 @@
+{
+ "source": "claude-code 2.1.302",
+ "client_path": "/v1/messages",
+ "upstream_wire": "openai-responses",
+ "turn": 1
+}

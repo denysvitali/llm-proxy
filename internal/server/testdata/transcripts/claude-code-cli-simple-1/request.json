@@ -1,0 +1,716 @@
+{
+ "model": "alias",
+ "messages": [
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "lorem minim nisi minim adipiscing incididunt incididunt labore et laboris do ad tempor adipiscing elit commodo veniam ve"
+    },
+    {
+     "type": "text",
+     "text": "incididunt amet adipiscing commodo ad quis sit labore eiusmod eiusmod labore ut amet aliqua quis laboris consectetur exe"
+    },
+    {
+     "type": "text",
+     "text": "nostrud eiusmod exercita"
+    }
+   ]
+  },
+  {
+   "role": "system",
+   "content": [
+    {
+     "type": "text",
+     "text": "dolore aliqua ea magna enim aliquip sit ut commodo minim et minim aliquip laboris ea ad exercitation tempor ut nisi sit",
+     "cache_control": {
+      "type": "ephemeral"
+     }
+    }
+   ]
+  }
+ ],
+ "system": [
+  {
+   "type": "text",
+   "text": "labore amet et eiusmod dolor sed et aliquip incididunt quis nostrud ipsum"
+  },
+  {
+   "type": "text",
+   "text": "ut ut commodo ipsum aliquip magna nostrud laboris sit labore e",
+   "cache_control": {
+    "type": "ephemeral"
+   }
+  },
+  {
+   "type": "text",
+   "text": "do aliquip magna ut aliquip laboris laboris exercitation ullamco nostrud sed elit exercitation ipsum exercitation quis t",
+   "cache_control": {
+    "type": "ephemeral"
+   }
+  }
+ ],
+ "tools": [
+  {
+   "name": "Agent",
+   "description": "tempor amet do incididunt ad nisi et aliquip ipsum nostrud tempor minim magna sed eiusmod tempor eiusmod ad ex ea labori",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "description": {
+      "description": "quis tempor ut consectetur amet ex ex labo",
+      "type": "string"
+     },
+     "prompt": {
+      "description": "ea aliqua sit consectetur labore",
+      "type": "string"
+     },
+     "subagent_type": {
+      "description": "aliquip ut tempor ad magna do enim elit veniam ips",
+      "type": "string"
+     },
+     "model": {
+      "description": "magna ut tempor minim aliquip do ipsum ex magna magna ea dolore aliquip eiusmod eiusmod dolor eiusmod ipsum magna ullamc",
+      "type": "string",
+      "enum": [
+       "option_0",
+       "option_1",
+       "option_2",
+       "option_3"
+      ]
+     },
+     "effort": {
+      "description": "commodo quis quis et ipsum minim nostrud incididunt ex laboris consectetur exercitation aliqua labore et ea do sit nostr",
+      "type": "string",
+      "enum": [
+       "option_0",
+       "option_1",
+       "option_2",
+       "option_3",
+       "option_4"
+      ]
+     },
+     "run_in_background": {
+      "description": "et dolor sit aliquip sed adipiscing magna ad veniam ipsum consectetur adipiscing lorem ipsum exercitation commodo dolore",
+      "type": "boolean"
+     },
+     "isolation": {
+      "description": "lorem amet amet enim ea ex tempor minim ex laboris incididunt aliqua veniam elit do et commodo sit nisi nostrud dolore i",
+      "type": "string",
+      "enum": [
+       "option_0",
+       "option_1"
+      ]
+     }
+    },
+    "required": [
+     "description",
+     "prompt"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "Bash",
+   "description": "enim dolor ullamco ea sit do nostrud sit quis veniam ut nostrud exercitation nisi sit aliqua laboris veniam adipiscing a",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "command": {
+      "description": "incididunt lorem ut la",
+      "type": "string"
+     },
+     "timeout": {
+      "description": "veniam sit elit nostrud dolore exercitation quis consectetur magna inc",
+      "type": "number"
+     },
+     "description": {
+      "description": "laboris aliqua sed et ea incididunt laboris exercitation et amet commodo amet do magna dolor ea nisi aliqua exercitation",
+      "type": "string"
+     },
+     "run_in_background": {
+      "description": "nisi et lorem dolore ut elit eiusmod minim ea ex sed lorem ut nisi do commodo sed commodo dolor consectetur minim quis e",
+      "type": "boolean"
+     },
+     "dangerouslyDisableSandbox": {
+      "description": "consectetur dolor minim incididunt ut veniam ea veniam lorem dolor exercitation exercitati",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "command"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "CronCreate",
+   "description": "magna ad elit do consectetur ex incididunt quis exercitation magna sed labore commodo exercitation tempor ea sed ad magn",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "cron": {
+      "description": "do et eiusmod ipsum enim exercitation aliquip elit incididunt ipsum labore dolore dolore lorem eiusmod ut elit aliqua do",
+      "type": "string"
+     },
+     "prompt": {
+      "description": "ea ut ad ut elit nisi veniam minim ipsum",
+      "type": "string"
+     },
+     "recurring": {
+      "description": "tempor et veniam enim aliqua labore ut ullamco nisi do ad tempor ad consectetur ipsum commodo quis incididunt ex quis al",
+      "type": "boolean"
+     },
+     "durable": {
+      "description": "incididunt lorem enim do eiusmod laboris sit amet aliqua elit do ipsum eiusmod consectetur commodo tempor elit ad ea exe",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "cron",
+     "prompt"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "CronDelete",
+   "description": "dolor aliqua ex exercitation veniam veniam aliquip et magna labore ad magna do minim consectetur commodo ipsum lorem ips",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "id": {
+      "description": "exercitation consectetur aliqu",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "CronList",
+   "description": "exercitation enim exercitation amet elit commodo exercitation aliquip labore nostrud ut aliqua minim adipi",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "Edit",
+   "description": "ut consectetur sit ullamco eiusmod tempor veniam quis veniam lorem ea ullamco ut nisi aliqua lorem ullamco aliquip ut ul",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "file_path": {
+      "description": "dolor laboris consectetur veniam et tem",
+      "type": "string"
+     },
+     "old_string": {
+      "description": "ea consectetur temp",
+      "type": "string"
+     },
+     "new_string": {
+      "description": "minim ut lorem ex laboris nisi minim sit et quis incididunt lor",
+      "type": "string"
+     },
+     "replace_all": {
+      "description": "eiusmod ea dolor dolore et ut sed ea eiusmod labore c",
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "file_path",
+     "old_string",
+     "new_string"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "ExitWorktree",
+   "description": "lorem lorem lorem et eiusmod magna nisi ullamco ex veniam consectetur adipiscing ullamco enim labore minim labore do sit",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "action": {
+      "description": "laboris ullamco dolore sed do amet tempor ut ex minim elit nostrud te",
+      "type": "string",
+      "enum": [
+       "option_0",
+       "option_1"
+      ]
+     },
+     "discard_changes": {
+      "description": "enim ad ipsum do enim do do commodo ea minim eiusmod do sit nisi quis dolor labore aliqua lorem nisi eiusmod nostrud inc",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "ListAgents",
+   "description": "nostrud do adipiscing dolor minim dolor adipiscing ad labore tempor eiusmod minim labore quis exercitation magna laboris",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "channel": {
+      "description": "ex aliquip veniam tempor consectetur quis",
+      "type": "string",
+      "maxLength": 256
+     },
+     "q": {
+      "description": "ex aliquip veniam tempor consectetur quis",
+      "type": "string",
+      "maxLength": 256
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "NotebookEdit",
+   "description": "amet lorem sed ullamco laboris sit sed exercitation nostrud ea do ea aliqua exercitation enim nisi exercitation ad commo",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "notebook_path": {
+      "description": "laboris sed ea ad et dolor veniam ad aliquip nostrud sit magna magna aliqua ullamco ame",
+      "type": "string"
+     },
+     "cell_id": {
+      "description": "incididunt eiusmod ut consectetur consectetur do labore labore minim consectetur sed lorem enim do ex nostrud ea elit et",
+      "type": "string"
+     },
+     "new_source": {
+      "description": "minim eiusmod dolor lorem u",
+      "type": "string"
+     },
+     "cell_type": {
+      "description": "elit aliquip adipiscing elit sit consectetur minim ad ea ex ex enim ipsum ut exercitation sed ipsum exercitation ullamco",
+      "type": "string",
+      "enum": [
+       "option_0",
+       "option_1"
+      ]
+     },
+     "edit_mode": {
+      "description": "sit et ipsum quis do enim et ea dolor amet tempor sit ullamco minim amet",
+      "type": "string",
+      "enum": [
+       "option_0",
+       "option_1",
+       "option_2"
+      ]
+     }
+    },
+    "required": [
+     "notebook_path",
+     "new_source"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "Read",
+   "description": "aliquip ad minim incididunt tempor ullamco enim tempor ea lorem quis veniam dolore aliquip commodo sed minim ad laboris",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "file_path": {
+      "description": "et ut eiusmod adipiscing lorem aliqui",
+      "type": "string"
+     },
+     "offset": {
+      "description": "lorem quis dolore dolor veniam exercitation ea commodo nisi incididunt adipiscing nisi ex la",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "limit": {
+      "description": "magna consectetur dolor eiusmod exercitation consectetur quis ipsum laboris elit si",
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+     },
+     "pages": {
+      "description": "ad aliquip ipsum nisi elit et enim sed aliqua incididunt quis elit exercitation minim ut ex dolor elit adipiscing",
+      "type": "string"
+     },
+     "allow_large": {
+      "description": "veniam ipsum dolor eiusmod adipiscing enim minim ullamco elit nisi nostrud aliqua enim laboris labore exercitation minim",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "file_path"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "ReportFindings",
+   "description": "quis sit commodo sit minim et eiusmod labore amet nisi aliqua tempor labore tempor ipsum enim commodo ipsum et minim ips",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "level": {
+      "description": "amet incididunt et ut eiusmod",
+      "type": "string",
+      "enum": [
+       "option_0",
+       "option_1",
+       "option_2",
+       "option_3",
+       "option_4"
+      ]
+     },
+     "findings": {
+      "description": "eiusmod ex commodo consectetur et tempor nisi incididunt lab",
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "file": {
+         "description": "aliqua quis quis dolore ex adipiscing et amet la",
+         "type": "string"
+        },
+        "line": {
+         "description": "ut sed nostrud magna ex labore labore",
+         "type": "integer",
+         "minimum": -9007199254740991,
+         "maximum": 9007199254740991
+        },
+        "summary": {
+         "description": "nostrud quis nisi adipiscing ex veni",
+         "type": "string"
+        },
+        "short_summary": {
+         "description": "commodo aliqua elit ex quis magna consectetur sed lorem minim tempor nostrud exercitation ex et",
+         "type": "string",
+         "maxLength": 60
+        },
+        "failure_scenario": {
+         "description": "laboris do ad amet incididunt elit laboris",
+         "type": "string"
+        },
+        "category": {
+         "description": "veniam exercitation ea sit magna sit sit laboris ex eiusmod laboris nostrud adipiscing quis nisi veniam enim a",
+         "type": "string",
+         "maxLength": 40
+        },
+        "verdict": {
+         "description": "consectetur eiusmod nisi incididunt aliquip amet incididu",
+         "type": "string",
+         "enum": [
+          "option_0",
+          "option_1"
+         ]
+        },
+        "outcome": {
+         "description": "nostrud minim ad lorem nisi do enim lorem do quis dolore enim minim ad lorem e",
+         "type": "string",
+         "enum": [
+          "option_0",
+          "option_1",
+          "option_2"
+         ]
+        }
+       },
+       "required": [
+        "file",
+        "summary",
+        "failure_scenario"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "findings"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "ScheduleWakeup",
+   "description": "elit magna ut ex amet tempor do tempor minim nostrud aliqua ipsum veniam laboris aliquip sed nisi sit elit enim lorem et",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "delaySeconds": {
+      "description": "aliqua eiusmod dolor ex incididunt commodo eiusmod labore aliqua aliquip veniam minim ad ut ex ali",
+      "type": "number"
+     },
+     "reason": {
+      "description": "lorem quis ea lorem aliquip aliqua nisi dolore incididunt adipiscing minim consectetur ex laboris nostrud veniam do enim",
+      "type": "string"
+     },
+     "prompt": {
+      "description": "dolor ipsum nisi laboris labore elit tempor do enim minim aliqua amet do labore amet laboris ullamco dolor et tempor lab",
+      "type": "string"
+     },
+     "stop": {
+      "description": "dolore laboris aliqua veniam ullamco amet amet enim ut ex nisi ut consectetur quis tempor lorem lorem lorem aliqua sed e",
+      "type": "boolean"
+     },
+     "noop": {
+      "description": "nostrud nisi ullamco sit nisi lorem aliquip commodo ipsum labore do labore magna veniam magna ad amet ex sed commodo sit",
+      "type": "boolean"
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "SendMessage",
+   "description": "sed lorem tempor sit nisi quis do laboris ex ex sed elit elit ad veniam ex consectetur aliquip tempor tempor ea quis do",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "to": {
+      "description": "elit adipiscing ad et aliquip commodo incididunt commodo dolore minim exercitation incididunt veniam do nostrud elit lab",
+      "type": "string",
+      "allOf": [
+       {
+        "pattern": "veniam ips"
+       },
+       {
+        "pattern": "minim consectet"
+       }
+      ]
+     },
+     "summary": {
+      "description": "adipiscing incididunt labore ad minim eiusmod amet sit amet quis magna adipiscing nostrud elit do do aliquip ullamco ull",
+      "type": "string",
+      "maxLength": 200
+     },
+     "message": {
+      "default": "",
+      "description": "laboris nisi ut veniam amet ut elit ea et ipsum elit laboris ullamco exercitation aliquip labore consectetur quis ea sed",
+      "type": "string"
+     },
+     "notify_when_idle": {
+      "description": "commodo ex aliquip minim veniam do elit veniam do nisi sed enim adipiscing et aliquip nostrud do ipsum dolore magna labo",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "to",
+     "message"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "Skill",
+   "description": "lorem consectetur ut quis sed quis ut ullamco sit ipsum consectetur ut dolor et eiusmod tempor sed sit labore sed eiusmo",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "skill": {
+      "description": "elit quis adipiscing commodo sit do aliqua sit enim et exercitation mag",
+      "type": "string"
+     },
+     "args": {
+      "description": "ea ea amet ut quis sed lorem ea",
+      "type": "string"
+     }
+    },
+    "required": [
+     "skill"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "TaskStop",
+   "description": "lorem ad ut ullamco labore amet ullamco ea nisi ullamco ex ad ut elit nisi ut magna et aliqua adipiscing ea ullamco cons",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "task_id": {
+      "description": "exercitation exercitation aliquip ad ipsum nisi adipiscing eiusmod elit incididunt magna dolor et eiusmod magna et ad ad",
+      "type": "string"
+     },
+     "shell_id": {
+      "description": "dolor commodo et nostrud magna",
+      "type": "string"
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "WebFetch",
+   "description": "elit elit nisi aliqua commodo adipiscing eiusmod adipiscing ut exercitation exercitation ea aliquip nisi ex veniam et ei",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "url": {
+      "description": "nostrud nostrud lorem ad sed",
+      "type": "string",
+      "format": "uri"
+     },
+     "prompt": {
+      "description": "lorem commodo et tempor magna dolor et a",
+      "type": "string"
+     },
+     "offset": {
+      "description": "dolore elit dolor do aliquip eiusmod quis ea do dolore ipsum consectetur do amet sit laboris ipsum ullamco labore labori",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "url",
+     "prompt"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "WebSearch",
+   "description": "sit ut veniam minim ea adipiscing labore laboris dolore sed aliquip ex amet dolor labore lorem dolor aliqua sed tempor m",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "query": {
+      "description": "exercitation aliquip ei",
+      "type": "string",
+      "minLength": 2
+     },
+     "allowed_domains": {
+      "description": "eiusmod consectetur lorem adipiscing adipiscin",
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "blocked_domains": {
+      "description": "enim tempor adipiscing exercitation sed enim el",
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "Workflow",
+   "description": "minim aliquip enim do tempor laboris ea do ipsum et minim minim amet magna dolor et ex aliquip ut aliqua nisi ullamco co",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "script": {
+      "description": "ad ullamco sed labore quis ipsum amet commodo do minim aliquip do labore incididunt adipiscing do laboris nisi veniam ex",
+      "type": "string",
+      "maxLength": 524288
+     },
+     "name": {
+      "description": "ex veniam enim eiusmod commodo tempor adipiscing sed eiusmod minim incididunt ullamco laboris enim commod",
+      "type": "string"
+     },
+     "description": {
+      "description": "exercitation ex ut veniam nostrud consectetur consectetur aliqua sit",
+      "type": "string"
+     },
+     "title": {
+      "description": "adipiscing laboris nisi exercitation ad et tempor incididunt i",
+      "type": "string"
+     },
+     "args": {
+      "description": "lorem consectetur magna sit nisi incididunt aliquip ipsum ea ipsum magna ex enim veniam nisi dolor sit aliquip incididun"
+     },
+     "scriptPath": {
+      "description": "do ullamco do aliqua consectetur ad nostrud incididunt et et incididunt do enim veniam labore elit commodo adipiscing do",
+      "type": "string"
+     },
+     "resumeFromRunId": {
+      "description": "quis nisi veniam labore minim elit minim lorem incididunt veniam ea et ex ut eiusmod aliquip labore nostrud consectetur",
+      "type": "string",
+      "pattern": "tempor nisi labori"
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "Write",
+   "description": "commodo ut laboris eiusmod ipsum do quis enim ut aliqua aliquip labore dolor dolore commodo ex sit aliqua enim tempor ni",
+   "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+     "file_path": {
+      "description": "ad incididunt lorem aliqua enim ipsum commodo elit exercitation do dolo",
+      "type": "string"
+     },
+     "content": {
+      "description": "et dolor quis ea nostrud eiusmod",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_path",
+     "content"
+    ],
+    "additionalProperties": false
+   }
+  }
+ ],
+ "metadata": {
+  "user_id": "ullamco dolor adipiscing ex consectetur dolor incididunt do enim magna ullamco enim nisi ipsum minim exercitation quis e"
+ },
+ "max_tokens": 32000,
+ "thinking": {
+  "type": "adaptive",
+  "display": "omitted"
+ },
+ "context_management": {
+  "edits": [
+   {
+    "type": "clear_thinking_20251015",
+    "keep": "all"
+   }
+  ]
+ },
+ "output_config": {
+  "effort": "high"
+ },
+ "stream": true
+}
