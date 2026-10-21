@@ -24,6 +24,7 @@ not upstream API keys.
 | `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
 | `anyrouter` | [AnyRouter](https://docs.anyrouter.dev/api-reference/overview) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live model catalog, including `stealth/fledge-alpha`. |
 | `mistral-vibe` (`mistral` also supported) | [Mistral Vibe](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles) | Chat Completions | Mistral API keys, live chat-model catalog; Messages and Responses clients use translation. `mistral-vibe` stamps `metadata.call_source="vibe_code"` so usage meters against the Vibe Code allowance. |
+| `paperinstruments` | [Paper Instruments](https://docs.paperinstruments.com/docs/ultramarine) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs (`https://api.paperinstruments.com/v1`, `pi_live_` keys); live catalog with `ultramarine-1-flash`. See [Paper Instruments](#paper-instruments). |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
 | `opencode-zen` (`opencode` also supported) | [OpenCode Zen](https://opencode.ai/docs/zen/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | The proxy selects Zen's documented endpoint per model and translates other client APIs. |
 | `opencode-go` | [OpenCode Go](https://opencode.ai/docs/go/) | Model-specific: Anthropic Messages, Chat Completions, or Responses | Model IDs use the `opencode-go/<id>` qualified form; the proxy selects Go's documented endpoint per model. |
@@ -59,6 +60,24 @@ The proxy fetches the live `GET /v1/models` catalog. The available model IDs
 include `abliterated-model`, `abliterated-model-large-v2`, and
 `abliterated-model-large`; use a qualified route such as
 `abliteration/abliterated-model` to pin this backend.
+
+### Paper Instruments
+
+[Paper Instruments](https://docs.paperinstruments.com/docs/ultramarine) serves
+the Ultramarine models over native Chat Completions, Responses, and Anthropic
+Messages APIs. Create a key in the Paper Instruments console (it needs funds
+on the Billing page):
+
+```yaml
+backends:
+  - type: paperinstruments
+    api_key_env: PAPERINSTRUMENTS_API_KEY
+```
+
+The catalog comes from `GET /v1/models` (currently `ultramarine-1-flash`), so
+`paperinstruments/ultramarine-1-flash` pins this backend. `max_completion_tokens`
+covers reasoning and visible output together, so a `finish_reason` of `length`
+usually means the budget was spent thinking.
 
 ### Apodex
 
@@ -1059,7 +1078,7 @@ non-loopback listener; intentional loopback-only operation remains supported.
 | `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
 | `minimax_code_auto_checkin` | `LLM_PROXY_MINIMAX_CODE_AUTO_CHECKIN` | `true` | Automatically claim eligible MiniMax daily rewards at startup and on hourly checks. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`, `paperinstruments`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
