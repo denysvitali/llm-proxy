@@ -297,14 +297,31 @@ func TestToResponses(t *testing.T) {
 			},
 		},
 		{
-			name:    "thinking budgets are not guessed as effort",
-			wantErr: true,
+			name: "thinking budgets are not guessed as effort",
 			request: `{"model":"m","max_tokens":64,"thinking":{"type":"enabled","budget_tokens":1024},` +
+				`"messages":[{"role":"user","content":"Puzzle"}]}`,
+			check: func(t *testing.T, out map[string]any) {
+				if _, ok := out["reasoning"]; ok {
+					t.Fatalf("reasoning guessed from thinking budget: %v", out["reasoning"])
+				}
+			},
+		},
+		{
+			// Claude Code sends this shape on every turn; the effort maps and the
+			// telemetry and context-management annotations are dropped.
+			name: "claude code controls degrade gracefully",
+			request: `{"model":"m","max_tokens":64,"thinking":{"type":"adaptive"},"output_config":{"effort":"max"},` +
+				`"metadata":{"user_id":"u"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},` +
 				`"messages":[{"role":"user","content":"Puzzle"}]}`,
 			check: func(t *testing.T, out map[string]any) {
 				reasoning := jmap(t, out["reasoning"], "reasoning")
 				if got := jstr(t, reasoning["effort"]); got != "high" {
 					t.Fatalf("effort = %q", got)
+				}
+				for _, key := range []string{"metadata", "context_management", "output_config", "thinking"} {
+					if _, ok := out[key]; ok {
+						t.Fatalf("%s forwarded: %v", key, out)
+					}
 				}
 			},
 		},

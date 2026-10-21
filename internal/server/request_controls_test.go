@@ -51,9 +51,8 @@ func TestTranslatedControlRejectionPreservesNativeRequests(t *testing.T) {
 
 func TestMessagesTranslationBoundariesPreserveNative(t *testing.T) {
 	for _, extra := range []string{
-		`"thinking":{"type":"enabled","budget_tokens":8}`,
 		`"safeguards":{"example":true}`,
-		`"output_config":{"effort":"medium"}`,
+		`"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}}`,
 		`"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral"}}]`,
 		`"tools":[{"name":"f","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}]`,
 	} {

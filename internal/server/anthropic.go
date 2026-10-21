@@ -64,15 +64,6 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}), env)
 }
 
-// wantsThinking reports whether a successfully parsed Anthropic request asked
-// for extended thinking; nil requests never do.
-func wantsThinking(request *translate.Request) bool {
-	if request == nil {
-		return false
-	}
-	return request.WantsThinking()
-}
-
 // relayUpstreamError forwards a non-2xx upstream response to the client: the
 // upstream body verbatim (capped at maxErrorRelay) when there is one, an
 // Anthropic-shaped error derived from the status otherwise.

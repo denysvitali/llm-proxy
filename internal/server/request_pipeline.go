@@ -83,11 +83,9 @@ func prepareRouteRequest(rt route, wire resolvedWire, env *translateEnv) ([]byte
 		return rewritten, nil
 	}
 	if env.kind == backend.KindAnthropic {
-		request, err := translate.ParseRequest(env.body)
-		if err != nil {
+		if _, err := translate.ParseRequest(env.body); err != nil {
 			return nil, fmt.Errorf("invalid Anthropic Messages request: %v", err)
 		}
-		env.thinking = wantsThinking(request)
 	}
 	payload, err := wire.path.encode(*env)
 	if err != nil {

@@ -790,12 +790,14 @@ base64 data with an explicit media type.
 
 Tool choices map `auto`/`any`/`none`/named `tool`, with explicit
 `disable_parallel_tool_use` inverted into `parallel_tool_calls`. Chat retains
-stop sequences; Responses rejects nonempty stop sequences. `top_k`, thinking
-controls, metadata, and unsupported tool or request fields are rejected rather
-than dropped. Thinking budgets are never guessed as reasoning effort. These
-boundaries do not modify native Messages requests. In particular, Messages
-`safeguards` and `output_config` currently require native Messages routing;
-they are not silently dropped or converted into unrelated OpenAI controls.
+stop sequences; Responses rejects nonempty stop sequences. `top_k`, `safeguards`,
+and unsupported tool or request fields are rejected rather than dropped. The
+controls Claude Code sends on every turn degrade gracefully instead:
+`output_config.effort` maps to the OpenAI reasoning effort (`max` becomes
+`high`), while `thinking`, `metadata`, and `context_management` are accepted
+and dropped. `output_config.format` still requires a native Messages route.
+Thinking budgets are never guessed as reasoning effort. These boundaries do not
+modify native Messages requests.
 
 ### OpenAI tool-result boundaries
 
@@ -892,12 +894,9 @@ where the destination supports them. Empty annotation/citation arrays are accept
 Namespaced upstream Responses calls require native routing because Chat/Messages
 cannot carry their namespace identity. Plain Messages thinking is display text on
 OpenAI output, not portable signed state; provider signatures are not replayed.
-OpenAI reasoning is suppressed on Messages output when thinking is not requested.
-If signed thinking is requested, nonempty unsigned reasoning fails conversion;
-no synthetic thinking block or signature is emitted. The same boundary applies to
-streaming: before any output the translator returns an error, and after output it
-returns an error for the exchange layer to surface without replaying the response.
-Messages thinking request controls already require a native Messages route.
+Unsigned OpenAI reasoning is suppressed on translated Messages output, whether
+or not thinking was requested; no synthetic thinking block or signature is
+emitted, buffered or streaming.
 Native responses retain their bytes and provider-specific output.
 
 ### Translated OpenAI request controls

@@ -76,6 +76,7 @@ type openAIRequest struct {
 	Tools              []openAITool    `json:"tools,omitempty"`
 	ToolChoice         any             `json:"tool_choice,omitempty"`
 	ParallelToolCalls  *bool           `json:"parallel_tool_calls,omitempty"`
+	ReasoningEffort    string          `json:"reasoning_effort,omitempty"`
 	StreamOptionsUsage *streamOptions  `json:"stream_options,omitempty"`
 }
 
@@ -161,6 +162,7 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 	if request.Stream {
 		converted.StreamOptionsUsage = &streamOptions{IncludeUsage: true}
 	}
+	converted.ReasoningEffort, _ = anthropicEffort(request.fields["output_config"])
 
 	system, err := anthropicSystemContent(request.System)
 	if err != nil {

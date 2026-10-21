@@ -28,7 +28,6 @@ type translateEnv struct {
 	body            []byte       // raw inbound request body
 	model           string       // upstream model name sent to the backend
 	clientModel     string       // model name echoed back to the client
-	thinking        bool         // Anthropic client asked for extended thinking
 	streaming       bool         // client requested an SSE stream
 	reasoningEffort string       // Codex selector effort, applied only to Codex Responses wire
 }
@@ -56,11 +55,14 @@ var translations = map[[2]backend.Kind]*translationPath{
 			}
 			return translate.ToOpenAI(request, env.model)
 		},
+		// Unsigned OpenAI reasoning is always suppressed on Messages output,
+		// even when the client requested thinking: it cannot become a signed
+		// thinking block, and dropping it beats failing the whole turn.
 		decode: func(env translateEnv, data []byte) ([]byte, error) {
-			return translate.FromOpenAI(data, env.clientModel, env.thinking)
+			return translate.FromOpenAI(data, env.clientModel, false)
 		},
 		stream: func(env translateEnv, client io.Writer, flush func()) streamTranslator {
-			return translate.NewStreamWriter(client, flush, env.clientModel, env.thinking)
+			return translate.NewStreamWriter(client, flush, env.clientModel, false)
 		},
 	},
 	{backend.KindAnthropic, backend.KindOpenAIResponses}: {
@@ -73,10 +75,10 @@ var translations = map[[2]backend.Kind]*translationPath{
 			return translate.ToResponses(request, env.model)
 		},
 		decode: func(env translateEnv, data []byte) ([]byte, error) {
-			return translate.FromResponses(data, env.clientModel, env.thinking)
+			return translate.FromResponses(data, env.clientModel, false)
 		},
 		stream: func(env translateEnv, client io.Writer, flush func()) streamTranslator {
-			return translate.NewResponsesStreamWriter(client, flush, env.clientModel, env.thinking)
+			return translate.NewResponsesStreamWriter(client, flush, env.clientModel, false)
 		},
 	},
 

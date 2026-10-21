@@ -100,3 +100,30 @@ func TestChatStreamRejectsTruncation(t *testing.T) {
 		t.Fatalf("failure stream = %s", got)
 	}
 }
+
+func TestClaudeCodeControlsToOpenAIChat(t *testing.T) {
+	for effort, want := range map[string]string{"low": "low", "medium": "medium", "high": "high", "max": "high"} {
+		req, err := ParseRequest([]byte(`{"model":"m","max_tokens":64,"thinking":{"type":"enabled","budget_tokens":1024},` +
+			`"output_config":{"effort":"` + effort + `"},"metadata":{"user_id":"u"},"context_management":{"edits":[]},` +
+			`"messages":[{"role":"user","content":"hi"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := ToOpenAI(req, "model")
+		if err != nil {
+			t.Fatalf("effort %s: %v", effort, err)
+		}
+		var got map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &got); err != nil {
+			t.Fatal(err)
+		}
+		if string(got["reasoning_effort"]) != `"`+want+`"` {
+			t.Fatalf("effort %s: reasoning_effort = %s", effort, got["reasoning_effort"])
+		}
+		for _, key := range []string{"metadata", "context_management", "output_config", "thinking"} {
+			if _, ok := got[key]; ok {
+				t.Fatalf("%s forwarded: %s", key, encoded)
+			}
+		}
+	}
+}

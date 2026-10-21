@@ -115,12 +115,6 @@ func TestRequestPipelineAnthropicThinking(t *testing.T) {
 				"alias": {Backend: "chat", Model: "upstream"},
 			})
 			rec := postOpenAI(t, s, "/v1/messages", `{"model":"alias","max_tokens":128,"messages":[{"role":"user","content":"hello"}]`+thinking+`}`)
-			if enabled {
-				if rec.Code != http.StatusBadRequest || fb.lastRequest() != nil {
-					t.Fatalf("unsupported thinking dispatched: status = %d, body = %s", rec.Code, rec.Body.String())
-				}
-				return
-			}
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 			}
@@ -139,8 +133,10 @@ func TestRequestPipelineAnthropicThinking(t *testing.T) {
 					found = true
 				}
 			}
-			if found != enabled {
-				t.Errorf("thinking block present = %t, want %t; body = %s", found, enabled, rec.Body.String())
+			// Requested or not, unsigned reasoning is suppressed rather than
+			// failing the turn or being presented as signed thinking.
+			if found {
+				t.Errorf("unsigned reasoning presented as thinking; body = %s", rec.Body.String())
 			}
 		})
 	}

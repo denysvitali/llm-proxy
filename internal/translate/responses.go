@@ -181,6 +181,9 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 		Temperature:     request.Temperature,
 		TopP:            request.TopP,
 	}
+	if effort, _ := anthropicEffort(request.fields["output_config"]); effort != "" {
+		converted.Reasoning = &responsesReasoning{Effort: effort}
+	}
 
 	var inputItems []responsesInputItem
 	system, err := anthropicSystemContent(request.System)
