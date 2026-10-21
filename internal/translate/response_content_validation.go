@@ -29,6 +29,7 @@ func validateResponsesOutput(body []byte, status string) error {
 			Name             string            `json:"name"`
 			Arguments        *string           `json:"arguments"`
 			EncryptedContent json.RawMessage   `json:"encrypted_content"`
+			Phase            string            `json:"phase"`
 		}
 		if err := decodeContentPart(raw, &item); err != nil {
 			return fmt.Errorf("unsupported upstream output item %d: %w", i, err)
@@ -39,7 +40,10 @@ func validateResponsesOutput(body []byte, status string) error {
 		allowed := []string{"id", "type", "status"}
 		switch item.Type {
 		case "message":
-			allowed = append(allowed, "role", "content")
+			// phase ("commentary" or "final_answer", sent by the ChatGPT Codex
+			// endpoint) labels the message's role in the turn; the text itself
+			// is unchanged, so the label is dropped on translation.
+			allowed = append(allowed, "role", "content", "phase")
 		case "reasoning":
 			allowed = append(allowed, "summary", "content", "encrypted_content")
 		case "function_call":

@@ -53,8 +53,8 @@ func TestMessagesTranslationBoundariesPreserveNative(t *testing.T) {
 	for _, extra := range []string{
 		`"safeguards":{"example":true}`,
 		`"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}}`,
-		`"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral"}}]`,
-		`"tools":[{"name":"f","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}]`,
+		`"system":[{"type":"document","source":{"type":"text","data":"system"}}]`,
+		`"tools":[{"name":"f","input_schema":{"type":"object"},"input_examples":[{}]}]`,
 	} {
 		for _, kind := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat, backend.KindOpenAIResponses} {
 			t.Run(string(kind)+"/"+extra, func(t *testing.T) {

@@ -127,3 +127,83 @@ func TestClaudeCodeControlsToOpenAIChat(t *testing.T) {
 		}
 	}
 }
+
+// Claude Code marks cache breakpoints on system, message, and tool blocks,
+// replays signed thinking, and offers Anthropic server tools; all of these
+// must degrade rather than fail the turn on OpenAI routes.
+func TestClaudeCodeAnnotationsDegrade(t *testing.T) {
+	body := []byte(`{"model":"m","max_tokens":64,
+		"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"1h"}}],
+		"messages":[
+			{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]},
+			{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"sig"},{"type":"redacted_thinking","data":"x"},{"type":"text","text":"ok","citations":null},{"type":"tool_use","id":"toolu_1","name":"Read","input":{},"cache_control":{"type":"ephemeral"}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"data","cache_control":{"type":"ephemeral"}}],"cache_control":{"type":"ephemeral"}}]},
+			{"role":"assistant","content":[{"type":"thinking","thinking":"only","signature":"sig"}]},
+			{"role":"user","content":"next"}
+		],
+		"tools":[
+			{"name":"Read","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"},"eager_input_streaming":true},
+			{"type":"web_search_20250305","name":"web_search","max_uses":5}
+		]}`)
+	for _, convert := range []func(*Request, string) ([]byte, error){ToOpenAI, ToResponses} {
+		req, err := ParseRequest(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := convert(req, "model")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, leaked := range []string{"cache_control", "thinking", "signature", "web_search", "eager_input_streaming", "citations"} {
+			if strings.Contains(string(out), leaked) {
+				t.Fatalf("%s leaked: %s", leaked, out)
+			}
+		}
+		if !strings.Contains(string(out), `"Read"`) || !strings.Contains(string(out), `"next"`) {
+			t.Fatalf("content lost: %s", out)
+		}
+	}
+}
+
+// Claude Code 2.1.3xx carries hook context as system messages inside messages.
+func TestClaudeCodeMidConversationSystem(t *testing.T) {
+	body := []byte(`{"model":"m","max_tokens":64,"messages":[
+		{"role":"user","content":"hi"},
+		{"role":"system","content":[{"type":"text","text":"hook context","cache_control":{"type":"ephemeral"}}]},
+		{"role":"system","content":"more context"}]}`)
+	for _, convert := range []func(*Request, string) ([]byte, error){ToOpenAI, ToResponses} {
+		req, err := ParseRequest(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := convert(req, "model")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(string(out), `"role":"system"`) != 2 || !strings.Contains(string(out), "hook context") {
+			t.Fatalf("system messages not carried: %s", out)
+		}
+	}
+	req, err := ParseRequest([]byte(`{"model":"m","max_tokens":64,"messages":[{"role":"system","content":[{"type":"image","source":{"type":"url","url":"https://example.invalid/a.png"}}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := ToOpenAI(req, "model"); err == nil {
+		t.Fatalf("non-text system message accepted: %s", out)
+	}
+}
+
+// The ChatGPT Codex endpoint labels message items with a phase.
+func TestCodexPhaseLabelDropped(t *testing.T) {
+	body := []byte(`{"id":"resp_1","status":"completed","model":"gpt","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","phase":"final_answer","content":[{"type":"output_text","text":"pong","annotations":[],"logprobs":[]}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+	out, err := FromResponses(body, "m", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"text":"pong"`) || strings.Contains(string(out), "phase") {
+		t.Fatalf("FromResponses = %s", out)
+	}
+	if _, err := ChatFromResponses(body, "m"); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -222,7 +222,9 @@ The session is stored at `~/.config/llm-proxy/codex-auth.json` with mode
 level to change the path. The live authenticated catalog is cached for five
 minutes, and models are available as `codex/<model>`. The backend calls
 ChatGPT's Codex Responses service, so Chat Completions and Anthropic Messages
-clients use the proxy's normal translation paths.
+clients use the proxy's normal translation paths. That service rejects
+plain-string `input` and typed system messages, so the backend wraps string
+input as a user message and sends system prompts as `developer` messages.
 
 ### ZCode Start Plan
 
@@ -782,8 +784,13 @@ explicit `[Tool execution failed]\n` text prefix (or initial text part), since
 OpenAI has no equivalent flag. This is a visible, non-reversible error annotation,
 not a claim of native tool-error support.
 
-Opaque thinking/redacted-thinking blocks, cache controls, documents, unknown block
-fields, and assistant images require a native route. Chat cannot preserve text
+Documents, populated citations, unknown block fields, and assistant images
+require a native route. Annotations Claude Code sends on every turn degrade
+instead: `cache_control` hints and empty `citations` are stripped, replayed
+thinking/redacted-thinking blocks are dropped (their signed state is useless to
+an OpenAI backend), Anthropic server tools such as `web_search_*` are skipped,
+and mid-conversation `role: "system"` messages become system messages on the
+target wire. Chat cannot preserve text
 following a tool call inside one assistant message and rejects that ordering;
 Responses retains it as ordered input items. Images require a URL source or
 base64 data with an explicit media type.

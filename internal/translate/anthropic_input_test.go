@@ -103,8 +103,8 @@ func TestAnthropicToolOutputFidelity(t *testing.T) {
 func TestAnthropicOpenAIRejectsUnsupportedContent(t *testing.T) {
 	for _, content := range []string{
 		`[]`, `null`,
-		`[{"type":"thinking","thinking":"private","signature":"opaque"}]`,
-		`[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]`,
+		`[{"type":"text","text":"hi","citations":[{"type":"char_location","cited_text":"x"}]}]`,
+		`[{"type":"text","text":"hi","extra":true}]`,
 		`[{"type":"text","text":null}]`,
 		`[{"type":"document","source":{"type":"text","data":"hello"}}]`,
 		`[{"type":"image","source":{"type":"base64","data":"YWJj"}}]`,
@@ -128,7 +128,7 @@ func TestAnthropicOpenAIControlBoundaries(t *testing.T) {
 		if responses {
 			convert = ToResponses
 		}
-		for _, field := range []string{`"top_k":1`, `"thinking":{"budget_tokens":8}`, `"output_config":{"format":{"type":"json_schema"}}`, `"output_config":{"effort":"extreme"}`, `"safeguards":{"example":true}`, `"tools":[{"name":"f","cache_control":{"type":"ephemeral"}}]`, `"tool_choice":{"type":"banana"}`, `"tool_choice":{"type":"tool"}`} {
+		for _, field := range []string{`"top_k":1`, `"thinking":{"budget_tokens":8}`, `"output_config":{"format":{"type":"json_schema"}}`, `"output_config":{"effort":"extreme"}`, `"safeguards":{"example":true}`, `"tools":[{"name":"f","input_examples":[{}]}]`, `"tool_choice":{"type":"banana"}`, `"tool_choice":{"type":"tool"}`} {
 			req, err := ParseRequest([]byte(`{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` + field + `}`))
 			if err != nil {
 				t.Fatal(err)

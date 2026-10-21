@@ -235,8 +235,7 @@ func TestToResponses(t *testing.T) {
 			},
 		},
 		{
-			name:    "thinking blocks require a native route",
-			wantErr: true,
+			name: "replayed thinking blocks are dropped",
 			request: `{"model":"m","max_tokens":64,"messages":[` +
 				`{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"sig"},` +
 				`{"type":"text","text":"Answer"}]},` +

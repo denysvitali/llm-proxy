@@ -212,6 +212,15 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 // message; OpenAI needs a separate "tool" message per result.
 func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 	role := message.Role
+	if role == "system" {
+		// Claude Code places mid-conversation system messages (hook context)
+		// in messages; they carry text only, like the top-level system.
+		content, err := anthropicSystemContent(message.Content)
+		if err != nil || content == nil {
+			return nil, fmt.Errorf("system message requires text content")
+		}
+		return []openAIMessage{{Role: "system", Content: content}}, nil
+	}
 	if role != "user" && role != "assistant" {
 		return nil, fmt.Errorf("unsupported Messages role %q", role)
 	}
@@ -223,7 +232,11 @@ func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 		return nil, err
 	}
 	if len(blocks) == 0 {
-		return nil, fmt.Errorf("message content must not be an empty array")
+		if bytes.Equal(bytes.TrimSpace(message.Content), []byte("[]")) {
+			return nil, fmt.Errorf("message content must not be an empty array")
+		}
+		// Only replayed thinking, which was dropped; the turn adds nothing.
+		return nil, nil
 	}
 	var messages []openAIMessage
 	var parts []any

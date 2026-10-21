@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -186,18 +187,12 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 	}
 
 	var inputItems []responsesInputItem
-	system, err := anthropicSystemContent(request.System)
+	system, err := responsesSystemItem(request.System)
 	if err != nil {
 		return nil, err
 	}
 	if system != nil {
-		if _, ok := plainString(system); !ok {
-			system, err = openAIToolOutput(system, false)
-			if err != nil {
-				return nil, err
-			}
-		}
-		inputItems = append(inputItems, responsesInputItem{Type: "message", Role: "system", Content: system})
+		inputItems = append(inputItems, *system)
 	}
 	for _, message := range request.Messages {
 		items, err := responsesItems(message)
@@ -240,6 +235,13 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 // function_call_output items, keeping their relative order intact.
 func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 	role := message.Role
+	if role == "system" {
+		item, err := responsesSystemItem(message.Content)
+		if err != nil || item == nil {
+			return nil, fmt.Errorf("system message requires text content")
+		}
+		return []responsesInputItem{*item}, nil
+	}
 	if role != "user" && role != "assistant" {
 		return nil, fmt.Errorf("unsupported Messages role %q", role)
 	}
@@ -257,7 +259,11 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 		return nil, err
 	}
 	if len(blocks) == 0 {
-		return nil, fmt.Errorf("message content must not be an empty array")
+		if bytes.Equal(bytes.TrimSpace(message.Content), []byte("[]")) {
+			return nil, fmt.Errorf("message content must not be an empty array")
+		}
+		// Only replayed thinking, which was dropped; the turn adds nothing.
+		return nil, nil
 	}
 
 	var items []responsesInputItem
@@ -314,6 +320,22 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 	}
 	flushText()
 	return items, nil
+}
+
+// responsesSystemItem renders Messages system content (top-level or a
+// mid-conversation system message) as a system input item; nil when absent.
+func responsesSystemItem(raw json.RawMessage) (*responsesInputItem, error) {
+	system, err := anthropicSystemContent(raw)
+	if err != nil || system == nil {
+		return nil, err
+	}
+	if _, ok := plainString(system); !ok {
+		system, err = openAIToolOutput(system, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &responsesInputItem{Type: "message", Role: "system", Content: system}, nil
 }
 
 func responsesMessageItem(role, contentType, text string) responsesInputItem {

@@ -42,16 +42,32 @@ func validateAnthropicTranslation(request *Request, responses bool) error {
 	if responses && len(request.StopSequences) != 0 {
 		return fmt.Errorf("responses cannot represent stop_sequences")
 	}
-	if raw, ok := request.fields["tools"]; ok {
+	if raw, ok := request.fields["tools"]; ok && !isJSONNull(raw) {
 		var tools []json.RawMessage
 		if err := json.Unmarshal(raw, &tools); err != nil {
 			return err
 		}
+		// Server tools (web_search_*, bash_*, ...) run on Anthropic's side and
+		// cannot execute behind an OpenAI backend, so they are skipped, the
+		// same way the Responses path skips client-executed tools. Hints with
+		// no OpenAI effect on what is computed are stripped.
+		request.Tools = request.Tools[:0]
 		for _, rawTool := range tools {
+			var header struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(rawTool, &header); err != nil {
+				return fmt.Errorf("messages tool must be an object")
+			}
+			if header.Type != "" && header.Type != "custom" {
+				continue
+			}
+			rawTool = stripAnthropicAnnotations(rawTool, "type", "cache_control", "defer_loading", "eager_input_streaming", "strict")
 			var tool AnthropicTool
 			if err := decodeContentPart(rawTool, &tool); err != nil {
 				return fmt.Errorf("unsupported Messages tool fields: %w", err)
 			}
+			request.Tools = append(request.Tools, tool)
 		}
 	}
 	for _, tool := range request.Tools {

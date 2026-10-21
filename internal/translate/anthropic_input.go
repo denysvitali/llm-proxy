@@ -1,12 +1,17 @@
 package translate
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
 
-// anthropicInputBlocks validates content before cross-wire conversion. Opaque
-// reasoning and provider-only block fields have no lossless OpenAI equivalent.
+// anthropicInputBlocks validates content before cross-wire conversion.
+// Provider-only block fields with meaning (documents, unknown block fields)
+// have no OpenAI equivalent and are rejected. Annotations Claude Code sends on
+// every turn degrade instead: cache_control is a caching hint and empty
+// citations carry nothing, so both are stripped, and replayed thinking blocks
+// are opaque provider state the OpenAI side cannot use, so they are dropped.
 func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 	var parts []json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil || parts == nil {
@@ -20,8 +25,11 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 		if err := json.Unmarshal(part, &header); err != nil {
 			return nil, fmt.Errorf("content block must be an object")
 		}
+		part = stripAnthropicAnnotations(part, "cache_control", "citations")
 		var block anthropicBlock
 		switch header.Type {
+		case "thinking", "redacted_thinking":
+			continue
 		case "text":
 			var value struct {
 				Type string  `json:"type"`
@@ -71,6 +79,35 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 		blocks = append(blocks, block)
 	}
 	return blocks, nil
+}
+
+// stripAnthropicAnnotations removes hint fields that do not change what the
+// backend computes. citations is only stripped when null or empty, since
+// populated citations are content the OpenAI wire cannot carry.
+func stripAnthropicAnnotations(raw json.RawMessage, keys ...string) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return raw
+	}
+	changed := false
+	for _, key := range keys {
+		value, ok := fields[key]
+		if !ok {
+			continue
+		}
+		if key == "citations" {
+			trimmed := bytes.TrimSpace(value)
+			if !isJSONNull(value) && !bytes.Equal(trimmed, []byte("[]")) {
+				continue
+			}
+		}
+		delete(fields, key)
+		changed = true
+	}
+	if !changed {
+		return raw
+	}
+	return mustMarshal(fields)
 }
 
 func anthropicImageURL(source *anthropicSource) (string, error) {
