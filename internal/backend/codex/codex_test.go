@@ -89,8 +89,10 @@ func TestSendPreservesSystemInputPosition(t *testing.T) {
 		if len(request.MaxTokens) != 0 {
 			t.Errorf("max_output_tokens was forwarded: %s", request.MaxTokens)
 		}
-		if len(request.Input) != 2 || request.Input[0]["role"] != "system" || request.Input[0]["content"] != "system rules" || request.Input[1]["role"] != "user" {
-			t.Errorf("input = %#v, want unchanged system then user", request.Input)
+		// The live endpoint answers typed system items with "System messages
+		// are not allowed"; developer keeps the prompt in place.
+		if len(request.Input) != 2 || request.Input[0]["role"] != "developer" || request.Input[0]["content"] != "system rules" || request.Input[1]["role"] != "user" {
+			t.Errorf("input = %#v, want developer then user in place", request.Input)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: done\n\n"))
@@ -100,6 +102,25 @@ func TestSendPreservesSystemInputPosition(t *testing.T) {
 	client.HTTP = server.Client()
 	body := []byte(`{"model":"gpt-5.6-sol","max_output_tokens":1024,"input":[{"type":"message","role":"system","content":"system rules"},{"type":"message","role":"user","content":"hello"}]}`)
 	resp, err := client.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIResponses, RawBody: body, Streaming: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+}
+
+func TestSendWrapsStringInput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if want := `"input":[{"content":[{"text":"hello","type":"input_text"}],"role":"user","type":"message"}]`; !strings.Contains(string(body), want) {
+			t.Errorf("body = %s, want %s", body, want)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: done\n\n"))
+	}))
+	defer server.Close()
+	client := New(server.URL, staticCredentials{Credentials{AccessToken: "token", AccountID: "account"}})
+	client.HTTP = server.Client()
+	resp, err := client.Send(t.Context(), &backend.Request{Kind: backend.KindOpenAIResponses, RawBody: []byte(`{"model":"m","input":"hello"}`), Streaming: true})
 	if err != nil {
 		t.Fatal(err)
 	}
