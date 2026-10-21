@@ -57,6 +57,32 @@ func TestAnthropicInstructionFidelity(t *testing.T) {
 	}
 }
 
+// Messages has one instruction tier: leading developer messages fold into the
+// top-level system, and later prompt messages keep their position as system
+// messages inside messages.
+func TestAnthropicInstructionPlacement(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		convert     func([]byte, string) ([]byte, error)
+	}{
+		{"chat", "messages", ChatToAnthropic},
+		{"responses", "input", ResponsesToAnthropic},
+	} {
+		for _, test := range []struct{ name, messages, want string }{
+			{"developer", `{"role":"developer","content":"rules"},{"role":"user","content":"hi"}`, `"system":"rules"`},
+			{"late system", `{"role":"user","content":"hi"},{"role":"system","content":"rules"}`, `{"role":"system","content":"rules"}`},
+			{"late developer", `{"role":"user","content":"hi"},{"role":"developer","content":"rules"}`, `{"role":"system","content":"rules"}`},
+		} {
+			t.Run(tc.name+"/"+test.name, func(t *testing.T) {
+				out, err := tc.convert([]byte(`{"model":"m","`+tc.field+`":[`+test.messages+`]}`), "upstream")
+				if err != nil || !strings.Contains(string(out), test.want) {
+					t.Fatalf("output = %s, error = %v; want %s", out, err, test.want)
+				}
+			})
+		}
+	}
+}
+
 func TestAnthropicInstructionBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		name, field, textType string
@@ -66,8 +92,6 @@ func TestAnthropicInstructionBoundaries(t *testing.T) {
 		{"responses", "input", "input_text", ResponsesToAnthropic},
 	} {
 		for _, test := range []struct{ name, messages, reason string }{
-			{"developer", `{"role":"developer","content":"rules"},{"role":"user","content":"hi"}`, "authority"},
-			{"late system", `{"role":"user","content":"hi"},{"role":"system","content":"rules"}`, "position"},
 			{"empty array", `{"role":"system","content":[]},{"role":"user","content":"hi"}`, "non-empty"},
 			{"missing text", `{"role":"system","content":[{"type":"` + tc.textType + `"}]},{"role":"user","content":"hi"}`, "string text"},
 			{"null text", `{"role":"system","content":[{"type":"` + tc.textType + `","text":null}]},{"role":"user","content":"hi"}`, "string text"},

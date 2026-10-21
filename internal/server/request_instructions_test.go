@@ -8,6 +8,8 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/config"
 )
 
+// Developer and late system messages translate onto Messages (folded into
+// system, or kept in position) and stay byte-identical on native routes.
 func TestInstructionAuthorityBoundary(t *testing.T) {
 	for _, input := range []struct {
 		path, field string
@@ -42,8 +44,8 @@ func TestInstructionAuthorityBoundary(t *testing.T) {
 						if string(request.RawBody) != body {
 							t.Fatalf("native instructions changed: %s", request.RawBody)
 						}
-					} else if rec.Code != http.StatusBadRequest || fb.lastRequest() != nil {
-						t.Fatalf("unsupported instruction mapping dispatched: %d %s", rec.Code, rec.Body.String())
+					} else if rec.Code != http.StatusOK || fb.lastRequest() == nil {
+						t.Fatalf("instruction mapping rejected: %d %s", rec.Code, rec.Body.String())
 					}
 				})
 			}

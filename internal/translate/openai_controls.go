@@ -95,8 +95,11 @@ func translatedOpenAIControls(body []byte, source, target string) (map[string]js
 		if !present(name) {
 			continue
 		}
+		// Identity, routing, and cache hints that Codex sends on every turn
+		// have no Messages counterpart and do not change what is computed,
+		// so they are dropped rather than failing the request.
 		if target == "anthropic" {
-			return nil, reject(name)
+			continue
 		}
 		out[name] = fields[name]
 	}
@@ -105,10 +108,14 @@ func translatedOpenAIControls(body []byte, source, target string) (map[string]js
 		if json.Unmarshal(fields["store"], &store) != nil {
 			return nil, fmt.Errorf("store must be a boolean")
 		}
-		if target == "anthropic" {
+		// store:false (always sent by Codex) is what Messages does anyway;
+		// only a request to persist the response is unrepresentable.
+		if target == "anthropic" && store {
 			return nil, reject("store")
 		}
-		out["store"] = fields["store"]
+		if target != "anthropic" {
+			out["store"] = fields["store"]
+		}
 	}
 	if present("response_format") {
 		if target != "openai-responses" {
@@ -146,9 +153,6 @@ func translatedOpenAIControls(body []byte, source, target string) (map[string]js
 		out["reasoning"] = mustMarshal(map[string]json.RawMessage{"effort": fields["reasoning_effort"]})
 	}
 	if present("reasoning") {
-		if target != "openai-chat" {
-			return nil, reject("reasoning")
-		}
 		var allowed map[string]json.RawMessage
 		if err := decodeContentPart(fields["reasoning"], &allowed); err != nil || allowed == nil {
 			return nil, fmt.Errorf("translated reasoning requires an object")
@@ -168,7 +172,12 @@ func translatedOpenAIControls(body []byte, source, target string) (map[string]js
 			if err := json.Unmarshal(raw, &effort); err != nil {
 				return nil, fmt.Errorf("reasoning.effort must be a string")
 			}
-			out["reasoning_effort"] = mustMarshal(effort)
+			// Messages has no portable effort control (output_config is not
+			// accepted by every Anthropic-compatible backend, and minimal or
+			// xhigh have no counterpart), so effort is a hint dropped there.
+			if target == "openai-chat" {
+				out["reasoning_effort"] = mustMarshal(effort)
+			}
 		}
 	}
 	return out, nil

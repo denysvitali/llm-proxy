@@ -239,8 +239,9 @@ func TestResponsesStreamFromAnthropic(t *testing.T) {
 	}
 }
 
-// Developer authority has no distinct counterpart in Anthropic Messages.
-func TestResponsesToAnthropicRejectsDeveloperAuthorityChange(t *testing.T) {
+// Messages has a single instruction tier, so Codex's developer messages fold
+// into system after the instructions, in order and without joining.
+func TestResponsesToAnthropicFoldsDeveloperIntoSystem(t *testing.T) {
 	in := []byte(`{
 		"model": "ignored",
 		"instructions": "be terse",
@@ -252,7 +253,12 @@ func TestResponsesToAnthropicRejectsDeveloperAuthorityChange(t *testing.T) {
 			{"type":"message","role":"user","content":"hello"}
 		]
 	}`)
-	if out, err := ResponsesToAnthropic(in, "claude-mock"); err == nil {
-		t.Fatalf("developer authority silently changed: %s", out)
+	out, err := ResponsesToAnthropic(in, "claude-mock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"system":[{"type":"text","text":"be terse"},{"type":"text","text":"\u003cskills\u003ea\u003c/skills\u003e"},{"type":"text","text":"\u003cpermissions\u003eb\u003c/permissions\u003e"}]`
+	if !strings.Contains(string(out), want) {
+		t.Fatalf("output = %s, want %s", out, want)
 	}
 }

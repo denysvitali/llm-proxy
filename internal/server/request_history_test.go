@@ -12,7 +12,6 @@ import (
 
 func TestResponsesOpaqueHistoryAndToolsRequireNative(t *testing.T) {
 	for _, fields := range []string{
-		`"input":[{"role":"user","content":"hi"},{"type":"reasoning","encrypted_content":"opaque"}]`,
 		`"input":[{"role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"web_search"}]}]`,
 		`"input":[{"type":"custom_tool_call","call_id":"c1","name":"shell","input":"ls"},{"type":"custom_tool_call_output","call_id":"c1","output":"ok"}]`,
 	} {

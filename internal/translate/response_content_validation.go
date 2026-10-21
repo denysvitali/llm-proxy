@@ -34,9 +34,10 @@ func validateResponsesOutput(body []byte, status string) error {
 		if err := decodeContentPart(raw, &item); err != nil {
 			return fmt.Errorf("unsupported upstream output item %d: %w", i, err)
 		}
-		if nonNullJSON(item.EncryptedContent) {
-			return fmt.Errorf("opaque Responses reasoning requires a native route")
-		}
+		// Opaque encrypted reasoning (the ChatGPT Codex endpoint returns it on
+		// every reasoning item, requested or not) cannot be carried to chat or
+		// Messages clients; like unsigned reasoning it is dropped, not fatal.
+		_ = item.EncryptedContent
 		allowed := []string{"id", "type", "status"}
 		switch item.Type {
 		case "message":

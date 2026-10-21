@@ -18,7 +18,7 @@ func TestTranslatedControlRejectionPreservesNativeRequests(t *testing.T) {
 		{"/v1/chat/completions", `"messages":[{"role":"user","content":"hi"}]`, backend.KindOpenAIChat},
 		{"/v1/responses", `"input":"hi"`, backend.KindOpenAIResponses},
 	} {
-		for _, control := range []string{`"previous_response_id":"prior"`, `"store":false`, `"tool_choice":"provider_extension"`, `"provider_extension":false`} {
+		for _, control := range []string{`"previous_response_id":"prior"`, `"store":true`, `"tool_choice":"provider_extension"`, `"provider_extension":false`} {
 			for _, native := range []bool{false, true} {
 				name := api.path + "/" + control + "/translated"
 				kind := backend.KindAnthropic

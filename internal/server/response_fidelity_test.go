@@ -172,7 +172,7 @@ func TestUnsupportedBufferedOutputHTTPBoundary(t *testing.T) {
 		path, request, body string
 	}{
 		{backend.KindOpenAIChat, "/v1/chat/completions", `{"model":"alias","messages":[{"role":"user","content":"hello"}]}`, ` {"id":"chat_1","choices":[{"finish_reason":"stop","message":{"audio":{"id":"audio"}}}]} `},
-		{backend.KindOpenAIResponses, "/v1/responses", `{"model":"alias","input":"hello"}`, ` {"id":"resp_1","status":"completed","output":[{"type":"reasoning","encrypted_content":"opaque"}]} `},
+		{backend.KindOpenAIResponses, "/v1/responses", `{"model":"alias","input":"hello"}`, ` {"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x","annotations":[{"type":"url_citation"}]}]}]} `},
 		{backend.KindAnthropic, "/v1/messages", `{"model":"alias","max_tokens":12,"messages":[{"role":"user","content":"hello"}]}`, ` {"id":"msg_1","stop_reason":"end_turn","content":[{"type":"redacted_thinking","data":"opaque"}]} `},
 	} {
 		t.Run(string(tc.kind), func(t *testing.T) {

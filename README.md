@@ -742,11 +742,13 @@ explicit empty Messages system string. When followed by leading system input,
 that empty instruction remains the first ordered block rather than disappearing
 or acquiring an invented separator.
 
-When translating Chat or Responses **to Messages**, only leading system messages
-can map to Anthropic's top-level system area. Multiple leading system messages
-retain separate, ordered text blocks; no separators are invented. Developer
-messages and system messages after conversation input are rejected because their
-authority or position cannot be represented. System content must be a string or
+When translating Chat or Responses **to Messages**, leading system and developer
+messages map to Anthropic's top-level system area (Messages has a single
+instruction tier; Codex sends its permissions and environment as developer
+messages). Multiple leading prompt messages retain separate, ordered text
+blocks; no separators are invented. Prompt messages after conversation input
+keep their position as `role: "system"` messages inside `messages`, the shape
+Claude Code itself sends. System content must be a string or
 a non-empty array of supported text parts with a string `text` field; unsupported
 part fields are rejected rather than discarded. Native routes do not impose
 these cross-wire instruction restrictions.
@@ -894,8 +896,10 @@ are independent of tool call IDs. Message/tool item status reflects incomplete
 generation. This pinned contract does not qualify all SDK versions or output types.
 
 Buffered translation rejects server/custom-tool outputs, audio/images, unknown
-content types/fields, nonempty citations/annotations/logprobs, encrypted/redacted
-reasoning, and nonterminal output items rather than silently deleting them.
+content types/fields, nonempty citations/annotations/logprobs, and nonterminal
+output items rather than silently deleting them. Encrypted reasoning (returned
+by the ChatGPT Codex endpoint on every reasoning item) is opaque provider state
+and is dropped, as is the Codex `phase` label on message items.
 Required text/refusal/argument values must be strings, including empty strings
 where the destination supports them. Empty annotation/citation arrays are accepted.
 Namespaced upstream Responses calls require native routing because Chat/Messages
@@ -921,8 +925,12 @@ For Chat/Responses → Messages, `parallel_tool_calls` maps to the inverse
 `tool_choice.disable_parallel_tool_use`, including explicit `false`. A `none`
 choice already disables tools and receives no parallel flag. Chat `stop` maps to
 `stop_sequences`; it is rejected on Chat → Responses. Temperatures above 1,
-OpenAI storage/metadata controls, structured output, reasoning controls, and tool
-`strict` are rejected on these Messages translations rather than silently lost.
+`store: true`, and structured output are rejected on these Messages translations
+rather than silently lost. Hints Codex sends on every turn are dropped instead:
+metadata, `user`, `safety_identifier`, `service_tier`, `prompt_cache_key`,
+`prompt_cache_retention`, `store: false`, and `reasoning` (Messages has no
+portable effort control). Replayed `reasoning` input items are dropped on Chat
+and Messages translations.
 
 Translated OpenAI requests accept only `n=1` and supported named-function or
 `auto`/`none`/`required` tool choices. Unresolved continuation (`previous_response_id`,

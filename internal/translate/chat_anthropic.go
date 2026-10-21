@@ -87,7 +87,16 @@ func ChatToAnthropic(body []byte, model string) ([]byte, error) {
 	for i, message := range chat.Messages {
 		if isPromptRole(message.Role) {
 			var err error
-			converted.System, err = appendAnthropicInstruction(converted.System, message.Role, message.Content, "text", conversationStarted)
+			if conversationStarted {
+				flushToolResults()
+				var msg AnthropicMessage
+				if msg, err = anthropicSystemMessage(message.Content, "text"); err != nil {
+					return nil, fmt.Errorf("message %d: %w", i, err)
+				}
+				converted.Messages = append(converted.Messages, msg)
+				continue
+			}
+			converted.System, err = appendAnthropicInstruction(converted.System, message.Content, "text")
 			if err != nil {
 				return nil, fmt.Errorf("message %d: %w", i, err)
 			}

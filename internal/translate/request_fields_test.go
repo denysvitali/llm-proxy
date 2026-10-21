@@ -64,7 +64,8 @@ func TestResponsesRequestFieldBoundaries(t *testing.T) {
 			{"call content field", `{"type":"function_call","call_id":"c","name":"f","arguments":"{}","content":"hi"}`, "content"},
 			{"call missing name", `{"type":"function_call","call_id":"c","arguments":"{}"}`, "name"},
 			{"output name field", `{"type":"function_call_output","call_id":"c","name":"f","output":"hi"}`, "name"},
-			{"reasoning item", `{"type":"reasoning","input":"opaque"}`, "native route"},
+			// Replayed reasoning is opaque provider state and is dropped.
+			{"only reasoning", `{"type":"reasoning","summary":[],"encrypted_content":"opaque"}`, "no input items"},
 		} {
 			t.Run(route.name+"/"+tc.name, func(t *testing.T) {
 				out, err := route.convert([]byte(`{"input":[`+tc.item+`]}`), "target")

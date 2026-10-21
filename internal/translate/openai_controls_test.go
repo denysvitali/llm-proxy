@@ -140,7 +140,7 @@ func TestTranslatedControlBoundaries(t *testing.T) {
 	}{
 		{`{"messages":[{"role":"user","content":"hi"}],"stop":"END"}`, ChatToResponses},
 		{`{"messages":[{"role":"user","content":"hi"}],"temperature":1.1}`, ChatToAnthropic},
-		{`{"input":"hi","store":false}`, ResponsesToAnthropic},
+		{`{"input":"hi","store":true}`, ResponsesToAnthropic},
 		{`{"input":"hi","text":{"verbosity":"low"}}`, ResponsesToChat},
 	} {
 		if out, err := tc.convert([]byte(tc.body), "model"); err == nil {

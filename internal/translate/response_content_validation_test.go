@@ -9,7 +9,6 @@ func TestBufferedUnsupportedOutputBoundaries(t *testing.T) {
 	for _, output := range []string{
 		`[{"type":"web_search_call","status":"completed"}]`,
 		`[{"type":"custom_tool_call","name":"shell","input":"pwd"}]`,
-		`[{"type":"reasoning","encrypted_content":"opaque"}]`,
 		`[{"type":"reasoning","summary":[{"type":"other","text":"lost"}]}]`,
 		`[{"type":"reasoning","content":[{"type":"reasoning_text","text":null}]}]`,
 		`[{"type":"message","content":[{"type":"output_audio","audio":"data"}]}]`,

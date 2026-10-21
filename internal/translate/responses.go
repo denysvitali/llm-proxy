@@ -53,6 +53,16 @@ func (r *responsesRequest) inputItems() ([]responsesInputItem, error) {
 	}
 	items := make([]responsesInputItem, 0, len(rawItems))
 	for i, raw := range rawItems {
+		// Codex replays its earlier reasoning items (summary plus opaque
+		// encrypted_content) in history. Neither chat nor Messages can carry
+		// that provider state back, so the items are dropped, as the
+		// encrypted content would be meaningless to another backend.
+		var header struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &header) == nil && header.Type == "reasoning" {
+			continue
+		}
 		item, err := decodeResponsesInputItem(raw)
 		if err != nil {
 			return nil, fmt.Errorf("input item %d: %w", i, err)

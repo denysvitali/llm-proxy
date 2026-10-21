@@ -65,7 +65,15 @@ func ResponsesToAnthropic(body []byte, model string) ([]byte, error) {
 	conversationStarted := false
 	for i, item := range input {
 		if item.Type == "message" && isPromptRole(item.Role) {
-			converted.System, err = appendAnthropicInstruction(converted.System, item.Role, item.Content, "input_text", conversationStarted)
+			if conversationStarted {
+				msg, err := anthropicSystemMessage(item.Content, "input_text")
+				if err != nil {
+					return nil, fmt.Errorf("input item %d: %w", i, err)
+				}
+				converted.Messages = append(converted.Messages, msg)
+				continue
+			}
+			converted.System, err = appendAnthropicInstruction(converted.System, item.Content, "input_text")
 			if err != nil {
 				return nil, fmt.Errorf("input item %d: %w", i, err)
 			}
