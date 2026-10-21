@@ -7,6 +7,15 @@ import { fmtInt } from '../../format'
 import { EmptyState } from '../EmptyState'
 import { statusSeverity, severityColor, statusDescription } from '../../lib/httpStatus'
 
+// A captured attempt is treated as freshly landed (and highlighted) when the
+// event arrived moments ago; the highlight fades naturally as time passes.
+const FRESH_WINDOW_MS = 15_000
+
+function isFresh(at: string) {
+  const parsed = Date.parse(at)
+  return !Number.isNaN(parsed) && Date.now() - parsed < FRESH_WINDOW_MS
+}
+
 // Compact timestamp: same-day events show clock time, older ones get a
 // short date + time; the tooltip always carries the full locale timestamp
 // so the exact moment is never hidden by the compact form.
@@ -139,7 +148,7 @@ export function RecentRequestsCard({
       ) : isMobile ? (
         <Stack gap={6}>
           {shown.map((request) => (
-            <Box key={request.id} className="overview-activity-item">
+            <Box key={request.id} className="overview-activity-item" data-fresh={isFresh(request.at) || undefined}>
               <div className="overview-activity-item-main">
                 <div className="overview-activity-item-meta">
                   <EventTime at={request.at} />
@@ -170,7 +179,7 @@ export function RecentRequestsCard({
           </Table.Thead>
           <Table.Tbody>
             {shown.map((request) => (
-              <Table.Tr key={request.id}>
+              <Table.Tr key={request.id} data-fresh={isFresh(request.at) || undefined}>
                 <Table.Td>
                   <EventTime at={request.at} />
                 </Table.Td>

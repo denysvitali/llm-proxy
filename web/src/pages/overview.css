@@ -3,8 +3,6 @@
 .overview-stat-grid { align-items: stretch; }
 .overview-stat-grid .stat-tile { height: 100%; }
 .overview-summary-footer { padding: 8px 2px 0; }
-.overview-errors .mantine-Card-root,
-.overview-chart-card { box-shadow: none; }
 .overview-gateway { display: grid; gap: 8px; min-width: 0; }
 .overview-gateway-heading {
   display: flex;

@@ -6,7 +6,8 @@
   --motion-fast: 120ms;
   --motion-slow: 200ms;
   --numeric-font: var(--mantine-font-family-monospace);
-  --shadow-card: none;
+  --shadow-card: 0 1px 2px rgba(20, 24, 32, 0.04), 0 12px 32px -16px rgba(20, 24, 32, 0.14);
+  --shadow-card-hover: 0 2px 4px rgba(20, 24, 32, 0.05), 0 16px 40px -16px rgba(20, 24, 32, 0.18);
   color-scheme: light;
 }
 
@@ -49,6 +50,8 @@ html:root[data-mantine-color-scheme='light'] {
 
 html:root[data-mantine-color-scheme='dark'] {
   color-scheme: dark;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -20px rgba(0, 0, 0, 0.6);
+  --shadow-card-hover: var(--shadow-card);
   --canvas: #0c0e13;
   --sidebar: #10131a;
   --card: #171a21;
@@ -102,7 +105,7 @@ body { min-width: 280px; }
   background-color: var(--card);
   border: 1px solid var(--hairline);
   border-color: var(--hairline);
-  box-shadow: none;
+  box-shadow: var(--shadow-card);
   border-radius: var(--radius-card);
 }
 .mantine-AppShell-navbar.app-sidebar,
@@ -114,6 +117,11 @@ body { min-width: 280px; }
 .mantine-AppShell-header, .mantine-AppShell-footer {
   background-color: var(--card);
   border-color: var(--hairline);
+}
+.mantine-AppShell-header {
+  background-color: color-mix(in srgb, var(--card) 80%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 .mantine-AppShell-main { background: var(--canvas); }
 .mantine-AppShell-footer { padding-bottom: env(safe-area-inset-bottom, 0px); }
@@ -238,12 +246,45 @@ body { min-width: 280px; }
 }
 .header-connect:hover { color: var(--accent); }
 .live-status {
-  min-width: 106px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   height: 28px;
   background: var(--card);
   border-color: var(--hairline);
   border-radius: 999px;
   font-weight: 550;
+}
+.live-status[data-connected='true'] { border-color: color-mix(in srgb, var(--data-good) 40%, var(--hairline)); }
+/* Traffic LED: solid when connected, blips on every request event (the span
+   remounts per event in App.tsx so the animation restarts). */
+.live-led {
+  position: relative;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--data-good);
+}
+.live-led[data-pulse='on'] { animation: live-led-blip 900ms ease-out; }
+.live-led[data-pulse='off'] { opacity: 0.65; }
+@keyframes live-led-blip {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--data-good) 55%, transparent); transform: scale(1); }
+  25% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--data-good) 25%, transparent); transform: scale(1.25); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--data-good) 0%, transparent); transform: scale(1); }
+}
+.live-count {
+  font-family: var(--numeric-font);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* Live-injected rows (fresh attempts) glow once, then settle into the table. */
+@keyframes activity-row-fresh {
+  0% { background-color: color-mix(in srgb, var(--data-good) 16%, var(--card)); }
+  100% { background-color: transparent; }
 }
 .color-scheme-control { border: 1px solid var(--hairline); background: var(--segmented-track); }
 .bottom-navigation { height: 64px; display: flex; align-items: stretch; gap: 4px; padding: 6px 8px; background: var(--card); }
@@ -279,22 +320,36 @@ body { min-width: 280px; }
   --stat-accent: var(--muted);
   position: relative;
   overflow: hidden;
-  padding: 14px 16px 12px;
+  padding: 16px 18px 14px;
   background: var(--card);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
-  box-shadow: none;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--motion-slow) ease, border-color var(--motion-slow) ease;
 }
 .stat-tile[data-accent='teal'] { --stat-accent: var(--data-good); }
 .stat-tile[data-accent='orange'] { --stat-accent: var(--data-warning); }
 .stat-tile[data-accent='grape'] { --stat-accent: var(--accent); }
 .stat-tile[data-accent='gray'] { --stat-accent: var(--muted); }
 .stat-tile[data-accent='red'] { --stat-accent: var(--data-critical); }
-.stat-icon { display: inline-grid; place-items: center; flex-shrink: 0; width: 22px; height: 22px; color: var(--stat-accent); }
-.stat-icon svg { width: 16px; height: 16px; }
+@media (hover: hover) {
+  .stat-tile:hover { box-shadow: var(--shadow-card-hover); border-color: color-mix(in srgb, var(--stat-accent) 35%, var(--hairline)); }
+}
+/* Tinted chip behind the tile icon so the accent reads without color-carrying meaning. */
+.stat-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--stat-accent);
+  background: color-mix(in srgb, var(--stat-accent) 12%, var(--card));
+}
+.stat-icon svg { width: 15px; height: 15px; }
 .stat-value { letter-spacing: -0.03em; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
-.stat-tile .stat-value { font-size: 26px; font-weight: 600; line-height: 1.15; }
-.stat-hint { margin-top: auto; padding-top: 8px; }
+.stat-tile .stat-value { font-size: 28px; font-weight: 650; line-height: 1.15; }
+.stat-hint { margin-top: auto; padding-top: 10px; }
 .empty-state-icon {
   display: inline-grid;
   place-items: center;
@@ -317,7 +372,9 @@ body { min-width: 280px; }
 .catalog-model-name, .catalog-model-id, .provider-model, .overview-identifier { overflow-wrap: anywhere; }
 
 .activity-row { border-radius: 8px; padding: 8px 10px; }
-.provider-card { box-shadow: none; }
+.mantine-Table-tr[data-fresh] td, .overview-activity-item[data-fresh] {
+  animation: activity-row-fresh 1.6s ease-out both;
+}
 .provider-model { display: block; max-width: 100%; overflow-wrap: anywhere; font-family: var(--numeric-font); font-size: 11px; }
 
 .mantine-SegmentedControl-root { background: var(--segmented-track); padding: 3px; }

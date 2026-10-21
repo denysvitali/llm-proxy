@@ -129,16 +129,19 @@ test('live invalidation preserves in-flight requests and includes every usage pr
 test('continuous updates refresh on the first event deadline instead of starving', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   let refreshes = 0
+  // Default window is 150ms; under this 100ms event cadence the timer fires on
+  // the first tick past each deadline (200, 400, ... 1400) — once per window,
+  // never per event.
   const scheduler = createLiveRefreshScheduler(() => refreshes++)
   for (let time = 0; time < 1500; time += 100) {
     scheduler.schedule()
     t.mock.timers.tick(100)
   }
-  assert.equal(refreshes, 3)
+  assert.equal(refreshes, 7)
   scheduler.schedule()
   scheduler.cancel()
   t.mock.timers.tick(500)
-  assert.equal(refreshes, 3, 'unmount cancels pending refresh')
+  assert.equal(refreshes, 7, 'unmount cancels pending refresh')
 })
 
 test('visibility refresh clears the pending batch without a duplicate refresh', (t) => {
@@ -150,4 +153,21 @@ test('visibility refresh clears the pending batch without a duplicate refresh', 
   scheduler.flush()
   t.mock.timers.tick(500)
   assert.equal(refreshes, 1)
+})
+
+test('live request events prepend to the recent-requests cache, deduped and capped', async (t) => {
+  const { injectLiveRequestIntoCache } = await import('../src/useLiveUpdates.ts')
+  const existing = (id) => ({ id, at: '2026-10-21T07:00:00Z', backend: 'venice', model: 'm', status: '200' })
+  const old = { requests: [existing('b'), existing('a')] }
+  const live = { id: 'c', at: '2026-10-21T07:05:00Z', backend: 'venice', model: 'm', status: '429' }
+  const first = injectLiveRequestIntoCache(live, old)
+  assert.deepEqual(first.requests.map((entry) => entry.id), ['c', 'b', 'a'], 'live request lands newest first')
+  const replays = injectLiveRequestIntoCache(live, first)
+  assert.deepEqual(replays.requests.map((entry) => entry.id), ['c', 'b', 'a'], 'a replayed event dedupes by id')
+  for (let i = 0; i < 60; i++) old.requests.push(existing(`r${i}`))
+  const capped = injectLiveRequestIntoCache(live, old)
+  assert.equal(capped.requests.length, 50, 'cache never grows past the cap')
+  assert.equal(capped.requests[0].id, 'c')
+  const empty = injectLiveRequestIntoCache(live, undefined)
+  assert.deepEqual(empty.requests.map((entry) => entry.id), ['c'], 'missing cache is filled from empty')
 })

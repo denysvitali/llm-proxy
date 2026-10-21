@@ -188,11 +188,14 @@ function HeaderBrand({ subtitle }: { subtitle?: string }) {
 }
 
 function LiveStatusBadge() {
-  const connected = useLiveStatsUpdates()
+  const { connected, live } = useLiveStatsUpdates()
   return (
-    <Tooltip label={connected ? 'Receiving live traffic updates' : 'Live updates disconnected; periodic refresh remains available'}>
-      <Badge variant="dot" color={connected ? 'teal' : 'gray'} tt="none" className="live-status" aria-live="polite">
-        <span className="live-status-text">{connected ? 'Live updates' : 'Updates offline'}</span>
+    <Tooltip label={connected ? 'Receiving live traffic updates; every request blips this indicator' : 'Live updates disconnected; periodic refresh remains available'}>
+      <Badge variant="outline" color={connected ? 'teal' : 'gray'} tt="none" className="live-status" data-connected={connected} aria-live="polite">
+        {/* Remount on each live request to restart the blip animation. */}
+        <span key={live?.count ?? 'idle'} className="live-led" data-pulse={live ? 'on' : 'off'} aria-hidden="true" />
+        <span className="live-status-text">{connected ? 'Live' : 'Offline'}</span>
+        {live && <span className="live-count">{live.count}</span>}
       </Badge>
     </Tooltip>
   )
