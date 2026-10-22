@@ -131,7 +131,7 @@ export function Snippet({
 
   return (
     <Box miw={0}>
-      <Stack gap="sm" p="lg">
+      <Stack gap="sm" p="lg" className="setup-snippet-content">
         <Text size="sm" fw={600}>{title} configuration</Text>
         <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{description}</Text>
         <Group justify="space-between" gap="sm" wrap="wrap" className="setup-snippet-toolbar">

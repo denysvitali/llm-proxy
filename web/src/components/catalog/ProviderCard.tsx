@@ -74,7 +74,7 @@ export default function ProviderCard({
         <Button
           aria-label={`Inspect ${backend.name}`}
           onClick={onInspect}
-          variant="light"
+          variant="subtle"
           color="brand"
           size="xs"
           mih={44}

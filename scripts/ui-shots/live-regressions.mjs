@@ -38,7 +38,7 @@ export async function checkLiveRegressions(browser, base, overview) {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}/`);
     await page.getByRole('heading', { level: 1, name: 'Overview', exact: true }).waitFor();
-    await page.getByText('Live updates', { exact: true }).waitFor();
+    await page.locator('.live-status[data-connected="true"]').waitFor();
     assert.equal(sockets.size, 1, 'header and Overview share one open live-update connection');
     const initialConnectionCount = connectionCount;
     for (const name of ['Providers', 'Models', 'Setup', 'Overview']) {

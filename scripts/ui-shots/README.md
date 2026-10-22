@@ -83,7 +83,10 @@ Setup and shell checks cover client tabs, exact snippet copying, line wrapping,
 explicit health checks and failure recovery, plus keyboard navigation that
 ignores typing, modified keys, and open dialogs. Health responses are intercepted;
 these checks never send inference. Catalog checks cover pagination, provider
-filtering, empty results, and model/provider detail navigation.
+filtering, empty results, and model/provider detail navigation. Layout checks
+cover all four pages at 320, 390, 768, 769, 1024, and 1440px, compact mobile
+Setup steps, anchor clearance below the header, and aligned provider metrics
+and 44px actions when hostnames wrap.
 
 Against the harness-owned local production server only, `--regression` also
 intercepts each lazy model/provider detail JS chunk in a fresh browser context.

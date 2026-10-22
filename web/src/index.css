@@ -6,8 +6,8 @@
   --motion-fast: 120ms;
   --motion-slow: 200ms;
   --numeric-font: var(--mantine-font-family-monospace);
-  --shadow-card: 0 1px 2px rgba(20, 24, 32, 0.04), 0 12px 32px -16px rgba(20, 24, 32, 0.14);
-  --shadow-card-hover: 0 2px 4px rgba(20, 24, 32, 0.05), 0 16px 40px -16px rgba(20, 24, 32, 0.18);
+  --shadow-card: none;
+  --shadow-card-hover: none;
   color-scheme: light;
 }
 
@@ -50,7 +50,7 @@ html:root[data-mantine-color-scheme='light'] {
 
 html:root[data-mantine-color-scheme='dark'] {
   color-scheme: dark;
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -20px rgba(0, 0, 0, 0.6);
+  --shadow-card: none;
   --shadow-card-hover: var(--shadow-card);
   --canvas: #0c0e13;
   --sidebar: #10131a;
@@ -129,7 +129,7 @@ body { min-width: 280px; }
 .page-container { padding: 20px 24px 28px; }
 .page-header {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 12px 16px;
   flex-wrap: wrap;
@@ -349,7 +349,7 @@ body { min-width: 280px; }
 .stat-icon svg { width: 15px; height: 15px; }
 .stat-value { letter-spacing: -0.03em; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
 .stat-tile .stat-value { font-size: 28px; font-weight: 650; line-height: 1.15; }
-.stat-hint { margin-top: auto; padding-top: 10px; }
+.stat-hint { padding-top: 10px; }
 .empty-state-icon {
   display: inline-grid;
   place-items: center;
@@ -382,6 +382,8 @@ body { min-width: 280px; }
 .mantine-SegmentedControl-label { display: flex; align-items: center; justify-content: center; min-height: 28px; }
 .mantine-Button-root, .mantine-ActionIcon-root, .mantine-Input-input { border-radius: var(--radius-control); }
 .mantine-Drawer-content {
+  border-radius: 0;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   max-height: 100dvh;
@@ -449,6 +451,7 @@ a, .mantine-UnstyledButton-root { -webkit-tap-highlight-color: transparent; }
   .mantine-SegmentedControl-label { min-height: 44px; min-width: 44px; }
   .color-scheme-control .mantine-SegmentedControl-label { min-height: 44px; min-width: 44px; padding-inline: 0; }
   .bottom-nav-link { min-height: 44px; }
+  .overview-activity-item button, .overview-gateway a { min-height: 44px; min-width: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

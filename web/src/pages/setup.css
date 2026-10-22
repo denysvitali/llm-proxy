@@ -38,7 +38,8 @@
 .setup-accounts-card,
 .setup-connection-check { border-color: var(--hairline); }
 .setup-section-heading { padding: 20px 24px; background: color-mix(in srgb, var(--sunken) 45%, var(--card)); }
-.setup-client-card { border-top: 0; }
+.setup-client-card { border-top: 1px solid var(--hairline); }
+#setup-client, #setup-auth, #setup-verify { scroll-margin-top: 76px; }
 .setup-gateway-card .setup-context-row + .setup-context-row { border-top: 1px solid var(--hairline); padding-top: 8px; margin-top: 8px; }
 .setup-accounts-card .setup-account { padding: 14px 0; }
 .setup-connection-check { border-style: dashed; }
@@ -77,13 +78,15 @@
 .setup-connection-check { background: var(--card); }
 @media (max-width: 48em) {
   .setup-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .setup-sequence { grid-template-columns: minmax(0, 1fr); }
-  .setup-sequence a + a { border-left: 0; border-top: 1px solid var(--hairline); }
+  .setup-sequence a { flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px; }
+  .setup-sequence strong { font-size: 12px; line-height: 1.4; }
+  .setup-sequence small { display: none; }
+  .setup-sequence a + a { border-left: 1px solid var(--hairline); }
   .setup-layout > :nth-child(2) { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); align-items: start; gap: 12px; }
   .setup-section-heading { padding: 16px; }
   .setup-client-card .snippet-block { padding: 16px; }
   .setup-client-tabs { padding-inline: 6px; }
-  .setup-client-card .mantine-Stack-root,
+  .setup-snippet-content,
   .setup-key-note { padding: 16px; }
   .setup-inline-link { min-height: 44px; }
 }

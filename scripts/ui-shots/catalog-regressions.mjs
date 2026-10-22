@@ -21,7 +21,7 @@ const model = (name, requests, successes) => ({
 })
 const backend = (name) => ({
   name,
-  host: `${name}.invalid`,
+  host: name === 'beta' ? 'long-provider-hostname.with-multiple-regions.example.invalid' : `${name}.invalid`,
   enabled: true,
   hasKey: true,
   authConfigured: true,
@@ -172,9 +172,34 @@ export async function checkCatalogRegressions(browser, base) {
     await page.getByRole('button', { name: 'Performance history', exact: true }).click()
     await page.getByText('Latency', { exact: true }).waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false)
+    await page.keyboard.press('Escape')
+    for (const width of [320, 390, 768, 769, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`${base}/providers`)
+      await page.getByRole('button', { name: 'Inspect beta', exact: true }).waitFor()
+      const geometry = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll('.catalog-provider-card')]
+        const metrics = cards.map((card) => card.querySelector('.catalog-provider-metrics').getBoundingClientRect())
+        const actions = cards.map((card) => card.querySelector('.catalog-provider-inspect').getBoundingClientRect())
+        const tops = cards.map((card) => card.getBoundingClientRect().top)
+        return {
+          overflow: document.documentElement.scrollWidth > innerWidth + 1,
+          sameRow: Math.abs(tops[0] - tops[1]) < 1,
+          metricsAligned: Math.abs(metrics[0].top - metrics[1].top) < 1,
+          actionsAligned: Math.abs(actions[0].top - actions[1].top) < 1,
+          targets: actions.every((rect) => rect.height >= 44 && rect.width >= 44),
+        }
+      })
+      assert.equal(geometry.overflow, false, `provider layout fits at ${width}px`)
+      assert.equal(geometry.targets, true, 'provider actions retain 44px targets')
+      if (geometry.sameRow) {
+        assert.equal(geometry.metricsAligned, true, `provider metrics align at ${width}px`)
+        assert.equal(geometry.actionsAligned, true, `provider actions align at ${width}px`)
+      }
+    }
     assert.deepEqual(errors, [])
     console.error(
-      '[ui-check] PASS catalog: desktop/mobile catalog pagination and provider filtering; zero vs unknown success; keyboard model inspection; model history tab; provider health filter/history disclosure; no page errors or mobile overflow',
+      '[ui-check] PASS catalog: desktop/mobile catalog pagination and provider filtering; zero vs unknown success; keyboard model inspection; model history tab; provider health filter/history disclosure; responsive metrics/actions; no page errors or mobile overflow',
     )
   } finally {
     await context.close()

@@ -27,7 +27,7 @@ function lastValue(points: SeriesPoint[] | undefined): number | undefined {
 
 function ChartCard({ title, headline, caption, children }: { title: string; headline: string; caption: string; children: React.ReactNode }) {
   return (
-    <Card withBorder radius="lg" p="lg" className="overview-chart-card">
+    <Card withBorder radius="lg" p="md" className="overview-chart-card">
       <Title order={3} fz={13} fw={650}>{title}</Title>
       <div className="overview-chart-headline" aria-label={title}><span className="tabular">{headline}</span><Text size="xs" c="dimmed">{caption}</Text></div>
       <div className="overview-chart-body">{children}</div>
@@ -64,7 +64,7 @@ export default function OverviewHistory({ query, range, onRangeChange }: {
       description={query.isError ? 'History unavailable' : requestCount === undefined ? 'Volume, reliability, latency and tokens' : `${requestCount.toLocaleString('en-US')} requests in range`}
       extra={<TimeRangeControl value={range} onChange={onRangeChange} />}>
       {query.isPending ? <div className="overview-history-grid">{Array.from({ length: 4 }, (_, i) => (
-        <Card key={i} withBorder radius="lg" p="lg" className="overview-chart-card" aria-hidden>
+        <Card key={i} withBorder radius="lg" p="md" className="overview-chart-card" aria-hidden>
           <Skeleton height={13} width={88} radius="sm" />
           <Skeleton height={22} width={132} radius="sm" mt={12} mb={14} />
           <Skeleton height={150} radius="sm" />

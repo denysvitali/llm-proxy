@@ -102,20 +102,30 @@ export async function checkRegressions(browser, base, outDir) {
         brokenOverview = false;
         await page.getByRole('button', { name: 'Reload page', exact: true }).click();
         await visible(page.getByRole('heading', { name: 'Choose your client' }));
-        for (const width of [320, 768, 769, 1024]) {
+        for (const width of [320, 390, 768, 769, 1024, 1440]) {
           await page.setViewportSize({ width, height: 900 });
-          await page.waitForFunction((mobile) => Boolean(document.querySelector('.bottom-navigation')) === mobile, width <= 768);
-          await page.waitForFunction((mobile) => {
-            const left = mobile ? 0 : document.querySelector('.app-sidebar').getBoundingClientRect().right;
-            return Math.abs(document.querySelector('.page-container').getBoundingClientRect().left - left) < 0.1;
-          }, width <= 768);
-          const geometry = await page.evaluate(() => ({
-            left: document.querySelector('.page-container').getBoundingClientRect().left,
-            expectedLeft: document.querySelector('.app-sidebar')?.getBoundingClientRect().right ?? 0,
-            overflow: document.documentElement.scrollWidth > innerWidth + 1,
-          }));
-          assert.equal(geometry.left, geometry.expectedLeft, `shell offset at ${width}px`);
-          assert.equal(geometry.overflow, false, `no horizontal overflow at ${width}px`);
+          for (const [slug, heading] of [['', 'Overview'], ['models', 'Models'], ['providers', 'Providers'], ['setup', 'Setup']]) {
+            await page.goto(`${base}/${slug}`);
+            await visible(page.getByRole('heading', { level: 1, name: heading, exact: true }));
+            await page.waitForFunction((mobile) => Boolean(document.querySelector('.bottom-navigation')) === mobile, width <= 768);
+            await page.waitForFunction((mobile) => {
+              const left = mobile ? 0 : document.querySelector('.app-sidebar').getBoundingClientRect().right;
+              return Math.abs(document.querySelector('.page-container').getBoundingClientRect().left - left) < 0.1;
+            }, width <= 768);
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false,
+              `${heading}: no horizontal overflow at ${width}px`);
+            if (slug === 'setup') {
+              if (width <= 768) {
+                assert.ok((await page.locator('.setup-sequence').boundingBox()).height < 110, 'mobile steps remain a compact strip');
+              }
+              await page.locator('.setup-sequence a[href="#setup-auth"]').click();
+              await page.waitForFunction(() => {
+                const section = document.querySelector('#setup-auth').getBoundingClientRect();
+                const header = document.querySelector('.mantine-AppShell-header').getBoundingClientRect();
+                return section.top >= header.bottom && section.top < innerHeight;
+              });
+            }
+          }
         }
 
       }
