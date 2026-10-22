@@ -247,7 +247,10 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 	role := message.Role
 	if role == "system" {
 		item, err := responsesSystemItem(message.Content)
-		if err != nil || item == nil {
+		if err != nil {
+			return nil, fmt.Errorf("system message: %w", err)
+		}
+		if item == nil {
 			return nil, fmt.Errorf("system message requires text content")
 		}
 		return []responsesInputItem{*item}, nil

@@ -216,7 +216,10 @@ func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 		// Claude Code places mid-conversation system messages (hook context)
 		// in messages; they carry text only, like the top-level system.
 		content, err := anthropicSystemContent(message.Content)
-		if err != nil || content == nil {
+		if err != nil {
+			return nil, fmt.Errorf("system message: %w", err)
+		}
+		if content == nil {
 			return nil, fmt.Errorf("system message requires text content")
 		}
 		return []openAIMessage{{Role: "system", Content: content}}, nil
