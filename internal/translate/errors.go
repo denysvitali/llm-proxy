@@ -16,9 +16,9 @@ type UpstreamError struct {
 }
 
 // InvalidRequest identifies rejections that cannot be recovered by replaying
-// the same input, including Responses context-window failures.
+// the same input, including Responses context-window and policy failures.
 func (e *UpstreamError) InvalidRequest() bool {
-	return e.Type == "invalid_request_error" || e.Code == "context_length_exceeded"
+	return e.Type == "invalid_request_error" || e.Code == "context_length_exceeded" || e.Code == "cyber_policy"
 }
 
 // ResponsesFailure extracts only the error from a Responses failure event;
@@ -42,9 +42,9 @@ func ResponsesFailure(payload []byte) *UpstreamError {
 	}
 	if err.Type == "" {
 		err.Type = "api_error"
-		if err.Code == "context_length_exceeded" {
-			err.Type = "invalid_request_error"
-		}
+	}
+	if err.InvalidRequest() {
+		err.Type = "invalid_request_error"
 	}
 	if err.Message == "" {
 		err.Message = "upstream stream failed"

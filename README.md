@@ -1038,6 +1038,10 @@ primary fails **before anything has reached the client** — transport errors,
 a spent retry budget, or a terminal 5xx. Once streaming content has flowed,
 the break is surfaced in-band instead; replaying on another backend would
 duplicate output. Client-side rejections (4xx) are relayed, not failed over.
+Responses failures with `code: "cyber_policy"` are definitive rejections, not
+transient gateway failures: they return HTTP 400 without retries or fallback,
+preserving the provider's message. If streaming output has already started,
+the rejection is surfaced in-band instead of changing the HTTP status.
 
 ```yaml
 backends:
