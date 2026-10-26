@@ -194,6 +194,44 @@ func TestPreviewPlansSurfacesGatewayRejection(t *testing.T) {
 	}
 }
 
+func TestPreviewPlansDistinguishesMissingDataFromEmptyOffers(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{name: "missing data", body: `{"code":0}`, wantErr: true},
+		{name: "null data", body: `{"code":0,"data":null}`, wantErr: true},
+		{name: "missing plans", body: `{"code":0,"data":{}}`},
+		{name: "null plans", body: `{"code":0,"data":{"plans":null}}`},
+		{name: "empty plans", body: `{"code":0,"data":{"plans":[]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer upstream.Close()
+			manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+			manager.Issuer = upstream.URL
+			manager.HTTPClient = upstream.Client()
+			if err := manager.Store.Save(&Credentials{AccessToken: "preview-test-token"}); err != nil {
+				t.Fatal(err)
+			}
+			plans, err := manager.PreviewPlans(context.Background())
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "missing data") {
+					t.Fatalf("error = %v, want missing data rejection", err)
+				}
+				return
+			}
+			if err != nil || plans == nil || len(plans) != 0 {
+				t.Fatalf("plans = %v, err = %v, want non-nil empty plans", plans, err)
+			}
+		})
+	}
+}
+
 func TestClaimPlanDoesNotReportRejectedOrMalformedResponsesAsSuccess(t *testing.T) {
 	cases := []struct {
 		name     string

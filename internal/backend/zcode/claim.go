@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/sirupsen/logrus"
 )
 
 // ClaimOutcome is the normalized result of a ZCode manual-plan claim. It
@@ -194,39 +196,76 @@ func (m *Manager) PreviewPlans(ctx context.Context) ([]PreviewPlan, error) {
 		return nil, fmt.Errorf("request ZCode plan preview: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Only fixed classifications and aggregate counts belong in this log. Never
+	// attach upstream messages, payloads, account identity, or offer metadata.
+	// A count of -1 means decoding never established that count, not zero offers.
+	diagnostic := logrus.Fields{
+		"app_version": zcodeAppVersion, "http_status": resp.StatusCode,
+		"envelope_code": -1, "data_state": "unknown", "plans_state": "unknown",
+		"plan_count": -1, "accepted_count": 0, "invalid_id_count": -1,
+		"outcome": "read_error",
+	}
+	defer func() { logrus.WithFields(diagnostic).Info("ZCode plan preview completed") }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read ZCode plan preview response: %w", err)
 	}
+	diagnostic["outcome"] = "decode_error"
 	var envelope struct {
-		Code any    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			Plans []struct {
-				PlanID       string               `json:"plan_id"`
-				Name         string               `json:"name"`
-				Description  string               `json:"description"`
-				Priority     int                  `json:"priority"`
-				StartsAt     int64                `json:"starts_at"`
-				EndsAt       int64                `json:"ends_at"`
-				Entitlements []PreviewEntitlement `json:"entitlements"`
-			} `json:"plans"`
-		} `json:"data"`
+		Code any             `json:"code"`
+		Msg  string          `json:"msg"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("decode ZCode plan preview response (HTTP %d)", resp.StatusCode)
 	}
+	diagnostic["data_state"] = previewJSONState(envelope.Data)
+	var data struct {
+		Plans json.RawMessage `json:"plans"`
+	}
+	dataErr := json.Unmarshal(envelope.Data, &data)
+	if len(envelope.Data) > 0 && dataErr == nil {
+		diagnostic["plans_state"] = previewJSONState(data.Plans)
+	}
 	code := numericCode(envelope.Code)
+	diagnostic["envelope_code"] = code
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || code != 0 {
+		diagnostic["outcome"] = "rejected"
 		message := strings.TrimSpace(envelope.Msg)
 		if message == "" {
 			message = http.StatusText(resp.StatusCode)
 		}
 		return nil, fmt.Errorf("ZCode plan preview failed (code %v, HTTP %d): %s", envelope.Code, resp.StatusCode, message)
 	}
-	plans := make([]PreviewPlan, 0, len(envelope.Data.Plans))
-	for _, plan := range envelope.Data.Plans {
+	// The official client rejects missing data rather than presenting a failed
+	// or malformed preview as an account with no available offers.
+	if previewJSONState(envelope.Data) != "present" {
+		diagnostic["outcome"] = "missing_data"
+		return nil, fmt.Errorf("ZCode plan preview response missing data (HTTP %d)", resp.StatusCode)
+	}
+	var upstreamPlans []struct {
+		PlanID       string               `json:"plan_id"`
+		Name         string               `json:"name"`
+		Description  string               `json:"description"`
+		Priority     int                  `json:"priority"`
+		StartsAt     int64                `json:"starts_at"`
+		EndsAt       int64                `json:"ends_at"`
+		Entitlements []PreviewEntitlement `json:"entitlements"`
+	}
+	if dataErr != nil {
+		return nil, fmt.Errorf("decode ZCode plan preview response (HTTP %d)", resp.StatusCode)
+	}
+	if len(data.Plans) > 0 {
+		if err := json.Unmarshal(data.Plans, &upstreamPlans); err != nil {
+			return nil, fmt.Errorf("decode ZCode plan preview response (HTTP %d)", resp.StatusCode)
+		}
+	}
+	diagnostic["plan_count"] = len(upstreamPlans)
+	invalidIDs := 0
+	plans := make([]PreviewPlan, 0, len(upstreamPlans))
+	for _, plan := range upstreamPlans {
 		if strings.TrimSpace(plan.PlanID) == "" {
+			invalidIDs++
 			continue
 		}
 		preview := PreviewPlan{
@@ -251,7 +290,21 @@ func (m *Manager) PreviewPlans(ctx context.Context) ([]PreviewPlan, error) {
 		}
 		plans = append(plans, preview)
 	}
+	diagnostic["accepted_count"] = len(plans)
+	diagnostic["invalid_id_count"] = invalidIDs
+	diagnostic["outcome"] = "ok"
 	return plans, nil
+}
+
+// previewJSONState reports presence without ever returning upstream content.
+func previewJSONState(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "missing"
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "null"
+	}
+	return "present"
 }
 
 func numericCode(code any) int {

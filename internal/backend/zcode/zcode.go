@@ -35,7 +35,7 @@ const (
 	// zcodeAppVersion identifies the current open-source ZCode client build.
 	// Keep this in sync with ZCode's package.json because the plan gateway uses
 	// it for client capability and billing responses.
-	zcodeAppVersion = "3.14.3"
+	zcodeAppVersion = "3.16.2"
 	zcodeLanguage   = "en-US"
 
 	// unusualActivityCooldown is how long model requests pause after the plan
