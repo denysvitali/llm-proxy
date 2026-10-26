@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -21,6 +24,14 @@ type statusRecorder struct {
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
+	if r.status != 0 {
+		return
+	}
+	// Informational responses do not commit the final response status.
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		r.delegate.WriteHeader(code)
+		return
+	}
 	r.status = code
 	r.delegate.WriteHeader(code)
 }
@@ -40,6 +51,9 @@ func (r *statusRecorder) Header() http.Header {
 
 // Flush promotes streaming so SSE handlers flush through the wrapper.
 func (r *statusRecorder) Flush() {
+	if r.status == 0 {
+		r.WriteHeader(http.StatusOK)
+	}
 	if f, ok := r.delegate.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -59,25 +73,65 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		requestID := newRequestID()
 		w.Header().Set("X-Request-Id", requestID)
 		rec := &statusRecorder{delegate: w}
-		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID))
-
-		spanCtx, span := tracer.Start(r.Context(), "llm-proxy request",
-			trace.WithAttributes(
-				attribute.String("http.request.method", r.Method),
-				attribute.String("url.path", r.URL.Path),
-				attribute.String("llm_proxy.request_id", requestID),
-			))
-		r = r.WithContext(spanCtx)
+		// Extract only W3C trace context; external baggage is not needed here.
+		parent := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		parent = context.WithValue(parent, requestIDKey{}, requestID)
+		r = r.WithContext(parent)
+		route := "unmatched"
+		if mux, ok := next.(*http.ServeMux); ok {
+			_, pattern := mux.Handler(r)
+			if pattern != "" {
+				route = routePath(pattern)
+			}
+		}
+		quiet := isProbePath(r.URL.Path) || r.URL.Path == "/metrics"
+		startSpan := func() trace.Span {
+			ctx, span := tracer.Start(parent, "llm-proxy request",
+				trace.WithSpanKind(trace.SpanKindServer),
+				trace.WithTimestamp(start),
+				trace.WithAttributes(
+					attribute.String("http.request.method", metricMethod(r.Method)),
+					attribute.String("url.path", r.URL.Path),
+					attribute.String("http.route", route),
+					attribute.String("llm_proxy.request_id", requestID),
+				))
+			r = r.WithContext(ctx)
+			return span
+		}
+		var span trace.Span
+		if !quiet {
+			span = startSpan()
+		}
 
 		defer func() {
-			if p := recover(); p != nil {
+			p := recover()
+			if p != nil {
 				s.log.WithField("request_id", requestID).
 					Errorf("panic serving %s %s: %v", r.Method, r.URL.Path, p)
 				if rec.status == 0 {
 					writeError(rec, r, http.StatusInternalServerError, "api_error", "internal proxy error")
 				}
 			}
+			if rec.status == 0 {
+				rec.status = http.StatusOK
+			}
+			duration := time.Since(start)
+			s.metrics.observe(r.Method, route, rec.status, duration)
+			if quiet && rec.status < http.StatusBadRequest && p == nil {
+				return
+			}
+			// Probe/scrape spans are created only on failure, with the original
+			// start time and parent. No response buffering or success spans needed.
+			if span == nil {
+				span = startSpan()
+			}
 			span.SetAttributes(attribute.Int("http.response.status_code", rec.status))
+			if p != nil {
+				span.RecordError(fmt.Errorf("panic: %v", p))
+				span.SetStatus(codes.Error, "handler panic")
+			} else if rec.status >= http.StatusInternalServerError {
+				span.SetStatus(codes.Error, http.StatusText(rec.status))
+			}
 			span.End()
 			fields := map[string]any{
 				"request_id": requestID,
@@ -85,13 +139,12 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 				"path":       r.URL.Path,
 				"status":     rec.status,
 				"bytes":      rec.bytes,
-				"duration":   time.Since(start).String(),
+				"duration":   duration.String(),
 			}
 			// Correlate the access log with the trace when one is active.
 			if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
 				fields["trace_id"] = sc.TraceID().String()
 			}
-			s.metrics.observe(r.Method, r.URL.Path, rec.status, time.Since(start))
 			s.log.WithFields(fields).Info("request")
 		}()
 
@@ -100,6 +153,14 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(rec, r)
 	})
+}
+
+// routePath retains the registered template, never a user-supplied path value.
+func routePath(pattern string) string {
+	if _, path, ok := strings.Cut(pattern, " "); ok {
+		return path
+	}
+	return pattern
 }
 
 // isProbePath reports whether a path must stay reachable without an API key

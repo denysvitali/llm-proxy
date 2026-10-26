@@ -72,19 +72,19 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 	}
 	token, err := m.AccessToken(ctx)
 	if err != nil {
-		return ClaimOutcome{}, err
+		return ClaimOutcome{}, schedulerError("authentication_failed", err)
 	}
 	captcha, err := m.TakeCaptchaVerifyParam(ctx)
 	if err != nil {
-		return ClaimOutcome{}, err
+		return ClaimOutcome{}, schedulerError("captcha_preparation_failed", err)
 	}
 	body, err := json.Marshal(map[string]string{"plan_id": planID})
 	if err != nil {
-		return ClaimOutcome{}, err
+		return ClaimOutcome{}, schedulerError("claim_preparation_failed", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(m.Issuer, "/")+"/api/v1/zcode-plan/billing/claim", bytes.NewReader(body))
 	if err != nil {
-		return ClaimOutcome{}, err
+		return ClaimOutcome{}, schedulerError("claim_preparation_failed", err)
 	}
 	req.Header.Set("Authorization", bearerToken(token))
 	req.Header.Set("Content-Type", "application/json")
@@ -106,10 +106,10 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 	defer m.Store.mu.Unlock()
 	current, err := m.Store.loadUnlocked()
 	if err != nil || current == nil || current.AccessToken != token || (expectedToken != "" && token != expectedToken) {
-		return ClaimOutcome{}, fmt.Errorf("ZCode session changed before claim")
+		return ClaimOutcome{}, schedulerError("account_changed", fmt.Errorf("ZCode session changed before claim"))
 	}
 	if err := ctx.Err(); err != nil {
-		return ClaimOutcome{}, err
+		return ClaimOutcome{}, schedulerError("claim_preparation_failed", err)
 	}
 	if before != nil {
 		if err := before(); err != nil {
@@ -118,12 +118,12 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 	}
 	resp, err := m.HTTPClient.Do(req)
 	if err != nil {
-		return ClaimOutcome{}, fmt.Errorf("request ZCode plan claim: %w", err)
+		return ClaimOutcome{}, schedulerError("claim_request_failed", fmt.Errorf("request ZCode plan claim: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return ClaimOutcome{}, fmt.Errorf("read ZCode plan claim response: %w", err)
+		return ClaimOutcome{}, schedulerError("claim_response_failed", fmt.Errorf("read ZCode plan claim response: %w", err))
 	}
 	var envelope struct {
 		Code any    `json:"code"`
@@ -136,7 +136,7 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return ClaimOutcome{}, fmt.Errorf("decode ZCode plan claim response (HTTP %d)", resp.StatusCode)
+		return ClaimOutcome{}, schedulerError("claim_response_invalid", fmt.Errorf("decode ZCode plan claim response (HTTP %d)", resp.StatusCode))
 	}
 	code := numericCode(envelope.Code)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && code == 0 {

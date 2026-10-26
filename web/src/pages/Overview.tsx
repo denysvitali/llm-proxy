@@ -31,7 +31,7 @@ export default function OverviewPage() {
   const zcodeUsageEnabled = ov?.zcodeUsage.configured ?? false
   const minimaxUsageEnabled = ov?.minimaxUsage?.configured ?? false
   const grokUsageQ = useQuery(dashboardQueries.grokUsage(grokUsageEnabled))
-  const zcodeUsageQ = useQuery(dashboardQueries.zcodeUsage(zcodeUsageEnabled))
+  const zcodeQuotaQ = useQuery(dashboardQueries.zcodeQuota(zcodeUsageEnabled))
   const minimaxUsageQ = useQuery(dashboardQueries.minimaxUsage(minimaxUsageEnabled))
   const [range, setRange] = useState('24h')
   const seriesQ = useQuery(dashboardQueries.series(range))
@@ -115,7 +115,7 @@ export default function OverviewPage() {
             </Accordion.Control>
             <Accordion.Panel><SimpleGrid cols={{ base: 1, lg: Math.min(usageNames.length, 2) }} spacing="md" className="overview-usage-grid">
               {grokUsageEnabled && <GrokUsageCard query={grokUsageQ} />}
-              {zcodeUsageEnabled && <ZcodeUsageCard query={zcodeUsageQ} />}
+              {zcodeUsageEnabled && <ZcodeUsageCard query={zcodeQuotaQ} />}
               {minimaxUsageEnabled && <Box style={usageNames.length === 3 ? { gridColumn: '1 / -1' } : undefined}><MiniMaxUsageCard query={minimaxUsageQ} /></Box>}
             </SimpleGrid></Accordion.Panel>
           </Accordion.Item>

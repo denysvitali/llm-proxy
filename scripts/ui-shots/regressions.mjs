@@ -33,7 +33,7 @@ export async function checkRegressions(browser, base, outDir) {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/overview') return route.fulfill({ json: brokenOverview ? { ...overview, backends: [null] } : overview });
         if (path === '/stats') return route.fulfill(unavailableStats ? { status: 503, json: { error: 'unavailable' } } : { json: { models: null } });
-        if (path === '/api/zcode/usage') return route.fulfill({ json: { plans, fetchedAt: new Date().toISOString() } });
+        if (path === '/api/zcode/quota') return route.fulfill({ json: { plans, balances: name === 'populated' ? [{ plan_id: 'regression-plan', entitlement_id: 'tokens', show_name: 'Token quota', meter: 'tokens', total_units: 100, used_units: 25, remaining_units: 70, reserved_units: 5, expires_at: 1893456000 }] : null, fetchedAt: new Date().toISOString() } });
         if (path === '/api/stats/errors') return route.fulfill({ json: { errors: null } });
         if (path === '/api/requests') return route.fulfill({ json: { requests: null } });
         if (path.startsWith('/api/stats')) return route.fulfill({ json: { models: [], series } });
@@ -66,6 +66,12 @@ export async function checkRegressions(browser, base, outDir) {
       await visible(page.getByRole('heading', { level: 1, name: 'Overview' }));
       await page.getByRole('button', { name: /Subscription usage/ }).click();
       await visible(page.getByText(name === 'populated' ? 'Regression plan' : 'No plan usage is available for this account.', { exact: true }));
+      if (name === 'populated') {
+        await visible(page.getByRole('meter', { name: 'Token quota quota used' }));
+        await visible(page.getByText('Reserved units', { exact: true }));
+        await visible(page.getByText('70', { exact: true }));
+        await page.screenshot({ path: path.join(outDir, 'zcode-quota-mobile.png') });
+      }
       await visible(page.getByText('No recent upstream errors', { exact: true }));
       assert.deepEqual(errors, [], `${name} plans must not crash on client-side navigation`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'mobile content must fit');

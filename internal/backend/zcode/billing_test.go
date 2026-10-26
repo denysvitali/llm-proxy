@@ -2,6 +2,7 @@ package zcode
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -144,6 +145,71 @@ func TestPlanQuotaSendsBalanceRequestAndNormalizesBuckets(t *testing.T) {
 	}
 	if balance.ExpiresAt != 1756771199 || len(balance.Capabilities) != 1 || balance.Capabilities[0] != "model:glm-5.3-flash" {
 		t.Fatalf("balance expiry/capabilities = %+v", balance)
+	}
+}
+
+func TestPlanBalanceJSONPreservesCounterPresence(t *testing.T) {
+	fields := []string{"total_units", "used_units", "remaining_units", "available_units", "reserved_units"}
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "absent"},
+		{name: "null", value: "null"},
+		{name: "numeric zero", value: "0", want: "0"},
+		{name: "string zero", value: `"0"`, want: "0"},
+		{name: "numeric nonzero", value: "25.5", want: "25.5"},
+		{name: "string nonzero", value: `"25.5"`, want: "25.5"},
+	} {
+		for _, reportedField := range fields {
+			t.Run(tc.name+"/"+reportedField, func(t *testing.T) {
+				raw := make(map[string]json.RawMessage)
+				if tc.value != "" {
+					raw[reportedField] = json.RawMessage(tc.value)
+				}
+				input, err := json.Marshal([]any{raw})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var payload []planBalancePayload
+				if err := json.Unmarshal(input, &payload); err != nil {
+					t.Fatal(err)
+				}
+				balances := normalizePlanBalances(payload)
+				// The usage cache clones balances by value. Changing the source
+				// after copying must preserve both the copy's counters and presence.
+				copied := balances[0]
+				balances[0].UsedUnits = 13
+				output, err := json.Marshal(copied)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var result map[string]json.RawMessage
+				if err := json.Unmarshal(output, &result); err != nil {
+					t.Fatal(err)
+				}
+				for _, field := range fields {
+					want := ""
+					if field == reportedField {
+						want = tc.want
+					}
+					if got := string(result[field]); got != want {
+						t.Errorf("%s = %q, want %q; JSON: %s", field, got, want, output)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPlanBalanceJSONKeepsCallerProvidedCounters(t *testing.T) {
+	output, err := json.Marshal(PlanBalance{RemainingUnits: 123})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != `{"remaining_units":123}` {
+		t.Fatalf("JSON = %s", output)
 	}
 }
 

@@ -29,7 +29,7 @@ export async function checkLiveRegressions(browser, base, overview) {
       if (path === '/api/requests/shared-feed-test') return route.fulfill(detailStatus === 200
         ? { json: { id: 'shared-feed-test', at: activity[0].at, backend: 'example', model: 'shared-model', status: '429' } }
         : { status: detailStatus, json: { error: 'shared request history unavailable' } });
-      if (path === '/api/zcode/usage') return route.fulfill({ json: { plans: null } });
+      if (path === '/api/zcode/quota') return route.fulfill({ json: { plans: null, balances: null } });
       if (path.startsWith('/api/stats')) return route.fulfill({ json: { models: null, series: null } });
       return route.fulfill({ status: 404, json: { error: 'Unexpected fixture request' } });
     });

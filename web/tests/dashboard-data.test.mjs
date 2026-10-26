@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import {
-  ApiError, claimMiniMaxCheckin, fetchBackendStatsSeries, fetchStats, fetchStatsSeries,
+  ApiError, claimMiniMaxCheckin, fetchBackendStatsSeries, fetchStats, fetchStatsSeries, fetchZcodeQuota,
 } from '../src/api.ts'
 import { dashboardQueries, dashboardQueryDefaults, queryKeys, refreshLiveQueries } from '../src/queries.ts'
 import { createLiveRefreshScheduler } from '../src/liveRefresh.ts'
@@ -71,6 +71,30 @@ test('usage query policy allows only one retry', async (t) => {
   assert.equal(fetch.mock.callCount(), 2)
 })
 
+test('ZCode quota normalizes nullable collections without inventing counters', async (t) => {
+  let body = {}
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    assert.equal(url, '/api/zcode/quota')
+    return Response.json(body)
+  })
+  for (const value of [{}, { plans: null, balances: null }]) {
+    body = value
+    assert.deepEqual(await fetchZcodeQuota(), { plans: [], balances: [] })
+  }
+  body = { plans: [{ plan_id: 'free' }], balances: [
+    { remaining_units: 0, reserved_units: 0, capabilities: null },
+    { available_units: 50 },
+  ] }
+  const quota = await fetchZcodeQuota()
+  assert.deepEqual(quota.plans, body.plans)
+  assert.deepEqual(quota.balances, [
+    { remaining_units: 0, reserved_units: 0, capabilities: [] },
+    { available_units: 50, capabilities: [] },
+  ])
+  assert.equal(quota.balances[1].remaining_units, undefined)
+  assert.equal(quota.balances[1].reserved_units, undefined)
+})
+
 test('permanent HTTP failures and invalid JSON are not retried', async (t) => {
   let response = () => Response.json({ error: 'not authorized' }, { status: 401 })
   const fetch = t.mock.method(globalThis, 'fetch', async () => response())
@@ -104,7 +128,7 @@ test('live invalidation preserves in-flight requests and includes every usage pr
   const client = queryClient(t)
   client.setQueryData(queryKeys.stats, { models: [] })
   client.setQueryData(queryKeys.overview, {})
-  for (const key of [queryKeys.grokUsage, queryKeys.zcodeUsage, queryKeys.minimaxUsage]) client.setQueryData(key, {})
+  for (const key of [queryKeys.grokUsage, queryKeys.zcodeQuota, queryKeys.minimaxUsage]) client.setQueryData(key, {})
   let complete
   let requestSignal
   const fetch = t.mock.method(globalThis, 'fetch', (_, { signal }) => new Promise((resolve) => {
@@ -118,7 +142,7 @@ test('live invalidation preserves in-flight requests and includes every usage pr
   const second = refreshLiveQueries(client)
   assert.equal(fetch.mock.callCount(), 1)
   assert.equal(requestSignal.aborted, false, 'a later event must not restart a slow refresh')
-  for (const key of [queryKeys.grokUsage, queryKeys.zcodeUsage, queryKeys.minimaxUsage]) {
+  for (const key of [queryKeys.grokUsage, queryKeys.zcodeQuota, queryKeys.minimaxUsage]) {
     assert.equal(client.getQueryState(key).isInvalidated, true)
   }
   assert.equal(client.getQueryState(queryKeys.overview).isInvalidated, false)
@@ -155,7 +179,7 @@ test('visibility refresh clears the pending batch without a duplicate refresh', 
   assert.equal(refreshes, 1)
 })
 
-test('live request events prepend to the recent-requests cache, deduped and capped', async (t) => {
+test('live request events prepend to the recent-requests cache, deduped and capped', async () => {
   const { injectLiveRequestIntoCache } = await import('../src/useLiveUpdates.ts')
   const existing = (id) => ({ id, at: '2026-10-21T07:00:00Z', backend: 'venice', model: 'm', status: '200' })
   const old = { requests: [existing('b'), existing('a')] }

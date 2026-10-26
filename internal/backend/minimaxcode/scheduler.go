@@ -36,29 +36,48 @@ func (m *Manager) runAutoCheckin(ctx context.Context, log *logrus.Logger, interv
 			return
 		}
 		if !m.HasSession() {
-			log.WithField("outcome", "skipped").Info("MiniMax Code automatic check-in skipped")
+			m.noteSchedulerResult("skipped", "signed_out")
+			log.WithFields(logrus.Fields{"outcome": "skipped", "reason": "signed_out"}).Info("MiniMax Code automatic check-in skipped")
 			return
 		}
 		_, err := m.claimCheckin(ctx, func(userID string) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			return createCheckinMarker(m.Store.Path, userID, time.Now().UTC())
+			if err := createCheckinMarker(m.Store.Path, userID, time.Now().UTC()); err != nil {
+				if errors.Is(err, ErrAutoCheckinAlreadyAttempted) {
+					return schedulerError("already_attempted", err)
+				}
+				return schedulerError("marker_failed", err)
+			}
+			m.noteSchedulerAttempt()
+			return nil
 		})
+		outcome, reason := "failed", schedulerReason(err)
 		switch {
 		case err == nil:
-			log.WithField("outcome", "success").Info("MiniMax Code automatic check-in completed")
-		case errors.Is(err, ErrAutoCheckinAlreadyAttempted), errors.Is(err, ErrCheckinAlreadyClaimed):
-			log.WithField("outcome", "already_claimed").Info("MiniMax Code automatic check-in skipped")
+			outcome = "success"
+		case errors.Is(err, ErrAutoCheckinAlreadyAttempted):
+			outcome, reason = "already_claimed", "already_attempted"
+		case errors.Is(err, ErrCheckinAlreadyClaimed):
+			outcome, reason = "already_claimed", "already_claimed"
 		case errors.Is(err, ErrCheckinUnavailable):
-			log.WithField("outcome", "unavailable").Info("MiniMax Code automatic check-in skipped")
+			outcome, reason = "unavailable", "no_reward_available"
 		case errors.Is(err, ErrCheckinInProgress):
-			log.WithField("outcome", "skipped").Info("MiniMax Code automatic check-in skipped")
+			outcome, reason = "skipped", "claim_in_progress"
 		case ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
 			// Parent cancellation or deadline is expected during shutdown.
-		default:
-			// Error strings may contain account or upstream details; log only a category.
-			log.WithField("outcome", "failed").Warn("MiniMax Code automatic check-in failed")
+			return
+		}
+		m.noteSchedulerResult(outcome, reason)
+		fields := logrus.Fields{"outcome": outcome, "reason": reason}
+		if outcome == "failed" {
+			// Error strings may contain account or upstream details; use fixed categories.
+			log.WithFields(fields).Warn("MiniMax Code automatic check-in failed")
+		} else if outcome == "success" {
+			log.WithFields(fields).Info("MiniMax Code automatic check-in completed")
+		} else {
+			log.WithFields(fields).Info("MiniMax Code automatic check-in skipped")
 		}
 	}
 	check()

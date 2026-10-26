@@ -124,6 +124,8 @@ func (s *Store) Save(credentials *Credentials) error {
 // to the backend. There is no refresh token in this flow; expired sessions
 // can be replaced by visiting the login page again.
 type Manager struct {
+	schedulerMu      sync.Mutex
+	schedulerStatus  AutoClaimStatus
 	Store            *Store
 	Issuer           string
 	HTTPClient       *http.Client

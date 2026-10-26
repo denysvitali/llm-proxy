@@ -469,19 +469,15 @@ async function capture(outDir, base, shots, opts) {
           await page.getByRole('tab', { name: 'Recorded traffic', exact: true }).click();
         }
         const trigger = page.locator(shot.trigger).first();
-        const n = await page.locator(shot.trigger).count();
-        if (n === 0) {
-          throw new Error(`no element matches ${shot.trigger} for ${shot.id}`);
-        } else {
-          await trigger.click();
-          // Mantine Drawer mounts with role=dialog; wait for it, but do not
-          // allow a short transition before capturing.
-          await page
-            .locator('[role="dialog"]')
-            .first()
-            .waitFor({ state: 'visible', timeout: 5000 });
-          await page.waitForTimeout(800);
-        }
+        await trigger.waitFor({ state: 'visible', timeout: 15000 });
+        await trigger.click();
+        // Mantine Drawer mounts with role=dialog; wait for it, but do not
+        // allow a short transition before capturing.
+        await page
+          .locator('[role="dialog"]')
+          .first()
+          .waitFor({ state: 'visible', timeout: 5000 });
+        await page.waitForTimeout(800);
       }
 
       const file = path.join(outDir, shotFile(shot));

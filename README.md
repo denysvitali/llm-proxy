@@ -1160,9 +1160,13 @@ non-loopback listener; intentional loopback-only operation remains supported.
 Tracing is configured through the standard `OTEL_*` environment variables
 (`OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
 `OTEL_EXPORTER_OTLP_PROTOCOL`). When none is set, tracing stays a no-op.
-With a collector configured, every request gets a span and every backend
-attempt a child span carrying `llm_proxy.backend`, `llm_proxy.model` and the
-attempt's outcome; the access log gains the matching `trace_id`.
+With a collector configured, request spans accept incoming W3C trace context
+and backend attempts get child spans carrying `llm_proxy.backend`,
+`llm_proxy.model` and the attempt's outcome; the access log gains the matching
+`trace_id`. Successful health, readiness, and metrics requests are omitted
+from access logs and traces, but remain in request metrics. Their failures are
+logged and traced. The proxy does not inject trace context or baggage into
+outbound provider requests.
 
 For an HA deployment, configure every proxy instance with the same
 `stats.redis_url` and `stats.redis_key_prefix`. Redis/Valkey becomes the
@@ -1253,6 +1257,12 @@ responses). Raw series for Prometheus/Grafana live under `/metrics`:
 `/metrics` also exposes standard Go runtime (`go_*`) and process (`process_*`)
 collectors for goroutines, heap, GC, CPU, and resident memory. These describe
 only the scraped proxy process, even when request stats are shared via Redis.
+Request metrics use registered route templates rather than raw paths. Account
+scheduler metrics `llm_proxy_account_scheduler_checks_total` and
+`llm_proxy_account_scheduler_last_timestamp_seconds` expose sanitized reason
+categories and the last check, mutation attempt, or successful acknowledgment.
+These are process-local, reset on restart, and an absent timestamp means no
+such event has been observed by that process.
 
 The dashboard's recent-request history retains only request metadata and
 bounded upstream error summaries. Request bodies are never retained or exposed

@@ -8,27 +8,37 @@ import {
   Text,
 } from '@mantine/core'
 import type { UseQueryResult } from '@tanstack/react-query'
-import type { ZcodePlanUsage, ZcodeUsage } from '../api'
+import type { ZcodeBalance, ZcodePlanUsage, ZcodeQuota } from '../api'
 import { fmtInt } from '../format'
 import { usageTone } from './usageFormatting'
 import UsageCardShell from './UsageCardShell'
 
-export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeUsage, Error> }) {
+export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeQuota, Error> }) {
   const usage = query.data
   const error = query.error
 
   return (
-    <UsageCardShell title="ZCode plan" subtitle="Current billing period · units"
+    <UsageCardShell title="ZCode plan" subtitle="Live account quota · units"
       isFetching={query.isFetching} isPending={query.isPending} hasData={!!usage}
       error={error ? new Error(sanitizeZcodeError(error.message)) : null} updated={usage?.fetchedAt}>
-      {usage?.plans.length ? (
+      {usage && (usage.plans.length > 0 || usage.balances.length > 0) ? (
         <Stack gap="md">
           {usage.plans.map((plan, index) => (
-            <Box key={plan.plan_id}>
+            <Box key={plan.user_plan_id || `${plan.plan_id}-${index}`}>
               {index > 0 && <Divider mb="md" />}
               <PlanRow plan={plan} />
             </Box>
           ))}
+          {usage.balances.length > 0 && <Stack gap="md" aria-label="ZCode quota balances">
+            {usage.plans.length > 0 && <Divider label="Quota balances" labelPosition="left" />}
+            {usage.balances.map((balance, index) => (
+              <Box key={`${balance.plan_id}-${balance.entitlement_id}-${balance.meter}-${index}`}>
+                {index > 0 && <Divider mb="md" />}
+                <BalanceRow balance={balance} plans={usage.plans} />
+              </Box>
+            ))}
+          </Stack>}
+          {usage.balances.length === 0 && <Text size="sm" c="dimmed">No quota balances are available for this account.</Text>}
         </Stack>
       ) : usage || !error ? (
         <Text size="sm" c="dimmed">No plan usage is available for this account.</Text>
@@ -38,21 +48,36 @@ export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeU
 }
 
 function PlanRow({ plan }: { plan: ZcodePlanUsage }) {
-  // The API omits zero-valued fields, so a missing counter can be zero OR
-  // unreported. Do not turn an absent used counter into a reassuring 0%.
-  const total = validUnits(plan.total_units)
-  const used = validUnits(plan.used_units)
-  const available = validUnits(plan.available_units)
+  const period = formatUnixPeriod(plan.starts_at ?? plan.period_start, plan.ends_at ?? plan.period_end)
+  const status = [plan.status, plan.kind].filter(Boolean).join(' · ')
+  return (
+    <Box style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+      <Text size="sm" fw={600}>{plan.name || plan.plan_id}</Text>
+      {status && <Text size="xs" c="dimmed">{status}</Text>}
+      {plan.reason && <Text size="xs" c="dimmed" mt={4}>{plan.reason}</Text>}
+      {period && <Text size="xs" c="dimmed" mt={4}>{period}</Text>}
+      {!!plan.entitlements?.length && <Stack gap={4} mt={6}>
+        {plan.entitlements.map((entitlement, index) => <Text size="xs" c="dimmed" key={`${entitlement.entitlement_id}-${index}`}>
+          {[entitlement.show_name || entitlement.entitlement_id, entitlement.period].filter(Boolean).join(' · ')}
+        </Text>)}
+      </Stack>}
+    </Box>
+  )
+}
+
+function BalanceRow({ balance, plans }: { balance: ZcodeBalance; plans: ZcodePlanUsage[] }) {
+  // Reported zero counters stay zero; absent counters remain unknown.
+  // Do not turn an absent used counter into a reassuring 0%.
+  const total = validUnits(balance.total_units)
+  const used = validUnits(balance.used_units)
   const ratio = total !== null && total > 0 && used !== null ? (used / total) * 100 : null
   const percent = ratio !== null && Number.isFinite(ratio) ? ratio : null
   const color = usageTone(percent)
-  const estimatedRemaining = available === null && total !== null && used !== null
-    ? Math.max(total - used, 0)
-    : null
-  const remaining = available ?? estimatedRemaining
-  const title = plan.name || plan.plan_id
-  const status = [plan.status, plan.kind].filter(Boolean).join(' · ')
-  const period = formatUnixPeriod(plan.period_start, plan.period_end)
+  const plan = balance.plan_id ? plans.find((candidate) => candidate.plan_id === balance.plan_id || candidate.user_plan_id === balance.plan_id) : undefined
+  const entitlement = plan?.entitlements?.find((candidate) => candidate.entitlement_id === balance.entitlement_id)
+  const title = balance.show_name || entitlement?.show_name || balance.entitlement_id || 'Quota balance'
+  const status = [plan?.name, balance.meter, ...balance.capabilities].filter(Boolean).join(' · ')
+  const expires = unixDate(balance.expires_at)
   const description = percent === null ? '' : `${percent.toFixed(1)}% used${percent > 100 ? ', over plan limit' : ''}; ${used?.toLocaleString('en-US')} of ${total?.toLocaleString('en-US')} units used`
 
   return (
@@ -90,20 +115,15 @@ function PlanRow({ plan }: { plan: ZcodePlanUsage }) {
             </Text>
           )}
         </>
-      ) : (
-        <Text size="sm" c="dimmed">
-          {plan.reason || 'Usage percentage unavailable — quota totals or usage were not reported.'}
-        </Text>
-      )}
+      ) : null}
       <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="sm" verticalSpacing="xs" mt="sm">
         <QuotaValue label="Used units" value={used} />
-        <QuotaValue label={estimatedRemaining !== null ? 'Remaining (estimated)' : 'Remaining units'} value={remaining} />
+        <QuotaValue label="Remaining units" value={validUnits(balance.remaining_units)} />
+        <QuotaValue label="Available units" value={validUnits(balance.available_units)} />
+        <QuotaValue label="Reserved units" value={validUnits(balance.reserved_units)} />
         <QuotaValue label="Total units" value={total} />
       </SimpleGrid>
-      {estimatedRemaining !== null && (
-        <Text size="xs" c="dimmed" mt={6}>Remaining is calculated from total minus used; it may exclude reserved units.</Text>
-      )}
-      {period && <Text size="xs" c="dimmed" mt={8}>{period}</Text>}
+      <Text size="xs" c="dimmed" mt={8}>{expires ? <>Expires <time dateTime={expires.toISOString()}>{expires.toLocaleString()}</time></> : 'Expiry not reported'}</Text>
     </Box>
   )
 }
@@ -133,7 +153,7 @@ function formatUnixPeriod(start?: number, end?: number) {
   const startDate = unixDate(start)
   const endDate = unixDate(end)
   if (startDate && endDate) return `${startDate.toLocaleDateString()} – ${endDate.toLocaleDateString()}`
-  if (endDate) return `Resets ${endDate.toLocaleString()}`
+  if (endDate) return `Ends ${endDate.toLocaleString()}`
   if (startDate) return `Started ${startDate.toLocaleDateString()}`
   return ''
 }
@@ -147,6 +167,6 @@ function unixDate(value?: number) {
 }
 
 function sanitizeZcodeError(message: string) {
-  const decoded = message.startsWith('/api/zcode/usage: ') ? message.slice('/api/zcode/usage: '.length) : message
+  const decoded = message.replace(/^\/api\/zcode\/(?:usage|quota): /, '')
   return decoded || 'Usage information is temporarily unavailable.'
 }

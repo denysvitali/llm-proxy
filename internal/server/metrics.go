@@ -29,11 +29,11 @@ func newMetrics() *Metrics {
 	m := &Metrics{
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "llm_proxy_requests_total",
-			Help: "Requests handled, by method, path, and status.",
+			Help: "Requests handled, by method, registered route template (unmatched for no route), and status.",
 		}, []string{"method", "path", "status"}),
 		requestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "llm_proxy_request_duration_seconds",
-			Help:    "Request latency in seconds.",
+			Help:    "Request latency in seconds, by method and registered route template (unmatched for no route).",
 			Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
 		}, []string{"method", "path"}),
 		authSuccesses: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -124,8 +124,18 @@ func (m *Metrics) observe(method, path string, status int, d time.Duration) {
 	if code == 0 {
 		code = http.StatusOK
 	}
-	m.requests.WithLabelValues(method, path, strconv.Itoa(code)).Inc()
-	m.requestDuration.WithLabelValues(method, path).Observe(d.Seconds())
+	m.requests.WithLabelValues(metricMethod(method), path, strconv.Itoa(code)).Inc()
+	m.requestDuration.WithLabelValues(metricMethod(method), path).Observe(d.Seconds())
+}
+
+func metricMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace, http.MethodPatch:
+		return method
+	default:
+		return "OTHER"
+	}
 }
 
 func (m *Metrics) handler() http.Handler {

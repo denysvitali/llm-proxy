@@ -244,11 +244,11 @@ func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID stri
 	defer cancel()
 	token, userID, err := m.accountIdentity(ctx)
 	if err != nil {
-		return nil, err
+		return nil, schedulerError("identity_failed", err)
 	}
 	panel, err := m.checkinStatus(ctx, token, userID)
 	if err != nil {
-		return nil, err
+		return nil, schedulerError("eligibility_failed", err)
 	}
 	claimable := false
 	for _, day := range panel.Days {
@@ -263,7 +263,7 @@ func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID stri
 	// A new login must not redirect a pending claim to another account.
 	current, err := m.Store.Load()
 	if err != nil || current == nil || current.AccessToken != token {
-		return nil, errors.New("MiniMax Code account changed; refresh before checking in")
+		return nil, schedulerError("account_changed", errors.New("MiniMax Code account changed; refresh before checking in"))
 	}
 	if beforeClaim != nil {
 		if err := beforeClaim(userID); err != nil {
@@ -275,20 +275,20 @@ func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID stri
 	}
 	body, err := m.accountRequest(ctx, "/minimax-cloud/api/v1/signin/claim", http.MethodPost, "{}", token, userID, true)
 	if err != nil {
-		return nil, err
+		return nil, schedulerError("claim_request_failed", err)
 	}
 	current, err = m.Store.Load()
 	if err != nil || current == nil || current.AccessToken != token {
-		return nil, errors.New("MiniMax Code account changed; refresh to confirm check-in status")
+		return nil, schedulerError("account_changed", errors.New("MiniMax Code account changed; refresh to confirm check-in status"))
 	}
 	data := object(body["data"])
 	result, day, points, expiry := number(data["claim_result"]), number(data["day_no"]), number(data["points"]), number(data["expire_at_ms"])
 	if nonempty(data["claim_id"]) == "" || result == nil || (*result != 1 && *result != 2) || day == nil || *day < 1 || *day > 7 || *day != math.Trunc(*day) || points == nil || *points < 0 || expiry == nil {
-		return nil, errors.New("MiniMax Code returned an invalid check-in claim")
+		return nil, schedulerError("claim_response_invalid", errors.New("MiniMax Code returned an invalid check-in claim"))
 	}
 	panel, err = parseCheckinPanel(data["panel"])
 	if err != nil {
-		return nil, err
+		return nil, schedulerError("claim_response_invalid", err)
 	}
 	return &CheckinClaim{ClaimResult: int(*result), DayNo: int(*day), Points: *points, ExpireAtMS: *expiry, Panel: *panel}, nil
 }
@@ -332,7 +332,7 @@ func parseCheckinPanel(value any) (*CheckinPanel, error) {
 func (m *Manager) accountIdentity(ctx context.Context) (string, string, error) {
 	token, err := m.AccessToken(ctx)
 	if err != nil {
-		return "", "", errors.New("MiniMax Code sign-in is unavailable; sign in again")
+		return "", "", schedulerError("authentication_failed", errors.New("MiniMax Code sign-in is unavailable; sign in again"))
 	}
 	body, err := m.accountRequest(ctx, "/v1/api/user/info", http.MethodGet, "", token, "0", false)
 	if err != nil {
@@ -347,7 +347,7 @@ func (m *Manager) accountIdentity(ctx context.Context) (string, string, error) {
 		userID = nonempty(info["real_user_id"])
 	}
 	if userID == "" {
-		return "", "", errors.New("MiniMax Code account identity is unavailable")
+		return "", "", schedulerError("identity_unavailable", errors.New("MiniMax Code account identity is unavailable"))
 	}
 	return token, userID, nil
 }
@@ -399,24 +399,35 @@ func (m *Manager) readAccountResponse(req *http.Request) (map[string]any, error)
 		if req.Context().Err() != nil {
 			return nil, req.Context().Err()
 		}
-		return nil, errors.New("MiniMax Code account request failed")
+		return nil, schedulerError("network_error", errors.New("MiniMax Code account request failed"))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("MiniMax Code account request returned HTTP %d", resp.StatusCode)
+		reason := "upstream_http_error"
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized:
+			reason = "authentication_failed"
+		case resp.StatusCode == http.StatusForbidden:
+			reason = "access_denied"
+		case resp.StatusCode == http.StatusTooManyRequests:
+			reason = "rate_limited"
+		case resp.StatusCode >= 500:
+			reason = "upstream_unavailable"
+		}
+		return nil, schedulerError(reason, fmt.Errorf("MiniMax Code account request returned HTTP %d", resp.StatusCode))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, accountResponseLimit+1))
 	if err != nil || len(data) > accountResponseLimit {
-		return nil, errors.New("MiniMax Code account response could not be read")
+		return nil, schedulerError("response_read_failed", errors.New("MiniMax Code account response could not be read"))
 	}
 	var body map[string]any
 	if err := json.Unmarshal(data, &body); err != nil || body == nil {
-		return nil, errors.New("MiniMax Code account response is invalid")
+		return nil, schedulerError("response_invalid", errors.New("MiniMax Code account response is invalid"))
 	}
 	for _, item := range []struct{ parent, key string }{{"base_resp", "status_code"}, {"statusInfo", "code"}} {
 		status := object(body[item.parent])[item.key]
 		if status != nil && !isNumber(status, 0) {
-			return nil, errors.New("MiniMax Code account request was rejected")
+			return nil, schedulerError("upstream_rejected", errors.New("MiniMax Code account request was rejected"))
 		}
 	}
 	return body, nil

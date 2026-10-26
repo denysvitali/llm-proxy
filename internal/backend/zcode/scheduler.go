@@ -51,11 +51,14 @@ func (m *Manager) runAutoClaim(ctx context.Context, log *logrus.Logger, interval
 		case ctx.Err() != nil:
 			return
 		}
+		reason := schedulerReason(err)
+		m.noteSchedulerResult(outcome, reason)
+		fields := logrus.Fields{"outcome": outcome, "reason": reason}
 		// Never log upstream errors, plan text, JWTs, CAPTCHA proofs or account IDs.
 		if outcome == "failed" {
-			log.WithField("outcome", outcome).Warn("ZCode automatic claim failed")
+			log.WithFields(fields).Warn("ZCode automatic claim failed")
 		} else {
-			log.WithField("outcome", outcome).Info("ZCode automatic claim completed")
+			log.WithFields(fields).Info("ZCode automatic claim completed")
 		}
 	}
 	check()
@@ -76,51 +79,61 @@ func (m *Manager) autoClaim(ctx context.Context, now time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if now.Hour() < 11 || !m.HasSession() {
-		return errAutoClaimUnavailable
+	if now.Hour() < 11 {
+		return schedulerError("before_claim_window", errAutoClaimUnavailable)
+	}
+	if !m.HasSession() {
+		return schedulerError("signed_out", errAutoClaimUnavailable)
 	}
 	token, err := m.AccessToken(ctx)
 	if err != nil {
-		return err
+		return schedulerError("authentication_failed", err)
 	}
 	subject, err := autoClaimSubject(token)
 	if err != nil {
-		return err
+		return schedulerError("identity_unavailable", err)
 	}
 	path := autoClaimMarkerPath(m.Store.Path, subject, now)
 	if _, err := os.Stat(path); err == nil {
-		return errAutoClaimAttempted
+		return schedulerError("already_attempted", errAutoClaimAttempted)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return schedulerError("marker_failed", err)
 	}
 	plans, err := m.PreviewPlans(ctx)
 	if err != nil {
-		return err
+		return schedulerError("preview_failed", err)
 	}
 	var selected *PreviewPlan
 	for i := range plans {
 		if dailyFreeOffer(plans[i], now) {
 			// An ambiguous preview is not permission to make multiple mutations.
 			if selected != nil {
-				return errAutoClaimUnavailable
+				return schedulerError("ambiguous_offer", errAutoClaimUnavailable)
 			}
 			selected = &plans[i]
 		}
 	}
 	if selected == nil {
-		return errAutoClaimUnavailable
+		return schedulerError("no_eligible_offer", errAutoClaimUnavailable)
 	}
 	outcome, err := m.claimPlan(ctx, selected.PlanID, token, func() error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return createAutoClaimMarker(path)
+		if err := createAutoClaimMarker(path); err != nil {
+			if errors.Is(err, errAutoClaimAttempted) {
+				return schedulerError("already_attempted", err)
+			}
+			return schedulerError("marker_failed", err)
+		}
+		m.noteSchedulerAttempt()
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 	if !outcome.OK {
-		return errors.New("ZCode automatic claim rejected")
+		return schedulerError("claim_"+outcome.FailureKind, errors.New("ZCode automatic claim rejected"))
 	}
 	return nil
 }

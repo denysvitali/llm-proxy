@@ -84,6 +84,8 @@ func (s *Store) Save(credentials *Credentials) error {
 }
 
 type Manager struct {
+	schedulerMu     sync.Mutex
+	schedulerStatus AutoCheckinStatus
 	Store           *Store
 	OAuthBaseURL    string
 	AccountBaseURL  string

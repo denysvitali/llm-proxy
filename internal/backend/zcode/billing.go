@@ -55,6 +55,42 @@ type PlanBalance struct {
 	AvailableUnits float64  `json:"available_units,omitempty"`
 	ReservedUnits  float64  `json:"reserved_units,omitempty"`
 	ExpiresAt      int64    `json:"expires_at,omitempty"`
+
+	// Keep presence as values so cached balances remain safe to copy. The
+	// exported counters retain their existing numeric interface for callers.
+	totalReported     bool
+	usedReported      bool
+	remainingReported bool
+	availableReported bool
+	reservedReported  bool
+}
+
+// MarshalJSON preserves reported zero counters while leaving absent or null
+// upstream counters unknown. Nonzero counters set by callers remain visible.
+func (balance PlanBalance) MarshalJSON() ([]byte, error) {
+	type balanceJSON PlanBalance
+	return json.Marshal(struct {
+		balanceJSON
+		TotalUnits     *float64 `json:"total_units,omitempty"`
+		UsedUnits      *float64 `json:"used_units,omitempty"`
+		RemainingUnits *float64 `json:"remaining_units,omitempty"`
+		AvailableUnits *float64 `json:"available_units,omitempty"`
+		ReservedUnits  *float64 `json:"reserved_units,omitempty"`
+	}{
+		balanceJSON:    balanceJSON(balance),
+		TotalUnits:     reportedBalanceUnits(balance.TotalUnits, balance.totalReported),
+		UsedUnits:      reportedBalanceUnits(balance.UsedUnits, balance.usedReported),
+		RemainingUnits: reportedBalanceUnits(balance.RemainingUnits, balance.remainingReported),
+		AvailableUnits: reportedBalanceUnits(balance.AvailableUnits, balance.availableReported),
+		ReservedUnits:  reportedBalanceUnits(balance.ReservedUnits, balance.reservedReported),
+	})
+}
+
+func reportedBalanceUnits(value float64, reported bool) *float64 {
+	if !reported && value == 0 {
+		return nil
+	}
+	return &value
 }
 
 // PlanQuota is the normalized response from ZCode's billing/balance
@@ -90,17 +126,17 @@ type planEntitlementPayload struct {
 }
 
 type planBalancePayload struct {
-	EntitlementID  string        `json:"entitlement_id"`
-	PlanID         string        `json:"plan_id"`
-	ShowName       string        `json:"show_name"`
-	Meter          string        `json:"meter"`
-	Capabilities   []string      `json:"capabilities"`
-	TotalUnits     flexibleFloat `json:"total_units"`
-	UsedUnits      flexibleFloat `json:"used_units"`
-	RemainingUnits flexibleFloat `json:"remaining_units"`
-	AvailableUnits flexibleFloat `json:"available_units"`
-	ReservedUnits  flexibleFloat `json:"reserved_units"`
-	ExpiresAt      flexibleFloat `json:"expires_at"`
+	EntitlementID  string         `json:"entitlement_id"`
+	PlanID         string         `json:"plan_id"`
+	ShowName       string         `json:"show_name"`
+	Meter          string         `json:"meter"`
+	Capabilities   []string       `json:"capabilities"`
+	TotalUnits     *flexibleFloat `json:"total_units"`
+	UsedUnits      *flexibleFloat `json:"used_units"`
+	RemainingUnits *flexibleFloat `json:"remaining_units"`
+	AvailableUnits *flexibleFloat `json:"available_units"`
+	ReservedUnits  *flexibleFloat `json:"reserved_units"`
+	ExpiresAt      flexibleFloat  `json:"expires_at"`
 }
 
 type planBillingEnvelope struct {
@@ -232,18 +268,30 @@ func normalizePlanEntitlements(payload []planEntitlementPayload) []PlanEntitleme
 func normalizePlanBalances(payload []planBalancePayload) []PlanBalance {
 	balances := make([]PlanBalance, 0, len(payload))
 	for _, balance := range payload {
+		value := func(counter *flexibleFloat) float64 {
+			if counter == nil {
+				return 0
+			}
+			return float64(*counter)
+		}
 		balances = append(balances, PlanBalance{
 			EntitlementID:  balance.EntitlementID,
 			PlanID:         balance.PlanID,
 			ShowName:       balance.ShowName,
 			Meter:          balance.Meter,
 			Capabilities:   append([]string(nil), balance.Capabilities...),
-			TotalUnits:     float64(balance.TotalUnits),
-			UsedUnits:      float64(balance.UsedUnits),
-			RemainingUnits: float64(balance.RemainingUnits),
-			AvailableUnits: float64(balance.AvailableUnits),
-			ReservedUnits:  float64(balance.ReservedUnits),
+			TotalUnits:     value(balance.TotalUnits),
+			UsedUnits:      value(balance.UsedUnits),
+			RemainingUnits: value(balance.RemainingUnits),
+			AvailableUnits: value(balance.AvailableUnits),
+			ReservedUnits:  value(balance.ReservedUnits),
 			ExpiresAt:      int64(balance.ExpiresAt),
+
+			totalReported:     balance.TotalUnits != nil,
+			usedReported:      balance.UsedUnits != nil,
+			remainingReported: balance.RemainingUnits != nil,
+			availableReported: balance.AvailableUnits != nil,
+			reservedReported:  balance.ReservedUnits != nil,
 		})
 	}
 	return balances

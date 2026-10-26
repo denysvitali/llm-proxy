@@ -2,7 +2,7 @@ import { queryOptions, type QueryClient } from '@tanstack/react-query'
 import {
   ApiError, fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage,
   fetchOverview, fetchRequests, fetchStats, fetchStatsSeries,
-  fetchUpstreamErrors, fetchZcodeUsage,
+  fetchUpstreamErrors, fetchZcodeQuota,
 } from './api.ts'
 
 const retryTransient = (limit: number) => (failureCount: number, error: Error) =>
@@ -25,7 +25,7 @@ export const queryKeys = {
   errors: ['upstream-errors'],
   requests: ['recent-requests'],
   grokUsage: ['grok-usage'],
-  zcodeUsage: ['zcode-usage'],
+  zcodeQuota: ['zcode-quota'],
   minimaxUsage: ['minimax-usage'],
 } as const
 
@@ -76,10 +76,10 @@ export const dashboardQueries = {
     queryFn: ({ signal }) => fetchGrokUsage(signal),
     enabled,
   }),
-  zcodeUsage: (enabled: boolean) => queryOptions({
+  zcodeQuota: (enabled: boolean) => queryOptions({
     ...usageOptions,
-    queryKey: queryKeys.zcodeUsage,
-    queryFn: ({ signal }) => fetchZcodeUsage(signal),
+    queryKey: queryKeys.zcodeQuota,
+    queryFn: ({ signal }) => fetchZcodeQuota(signal),
     enabled,
   }),
   minimaxUsage: (enabled: boolean) => queryOptions({
@@ -92,7 +92,7 @@ export const dashboardQueries = {
 
 const liveQueryRoots = new Set<string>([
   queryKeys.stats[0], queryKeys.series[0], queryKeys.errors[0], queryKeys.requests[0],
-  queryKeys.grokUsage[0], queryKeys.zcodeUsage[0], queryKeys.minimaxUsage[0],
+  queryKeys.grokUsage[0], queryKeys.zcodeQuota[0], queryKeys.minimaxUsage[0],
 ])
 
 export function refreshLiveQueries(queryClient: QueryClient) {

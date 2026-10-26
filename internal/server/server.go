@@ -61,6 +61,7 @@ func NewWithDependencies(deps Dependencies) *Server {
 	}
 	cfg.Defaults()
 	metrics := newMetrics()
+	metrics.reg.MustRegister(newAccountSchedulerCollector(deps.Accounts))
 	updates := newUpdateHub()
 	stats := newStats(metrics.reg, cfg.Stats)
 	stats.updates = updates

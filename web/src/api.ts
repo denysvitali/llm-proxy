@@ -173,6 +173,7 @@ export type ZcodeUsageMetadata = GrokUsageMetadata
 
 export interface ZcodePlanUsage {
   plan_id: string
+  user_plan_id?: string
   name?: string
   status?: string
   kind?: string
@@ -182,11 +183,37 @@ export interface ZcodePlanUsage {
   available_units?: number
   period_start?: number
   period_end?: number
+  starts_at?: number
+  ends_at?: number
+  entitlements?: {
+    entitlement_id?: string
+    show_name?: string
+    period?: string
+    effective_at?: number
+  }[] | null
 }
 
 export interface ZcodeUsage {
   plans: ZcodePlanUsage[]
   fetchedAt: string
+}
+
+export interface ZcodeBalance {
+  entitlement_id?: string
+  plan_id?: string
+  show_name?: string
+  meter?: string
+  capabilities: string[]
+  total_units?: number
+  used_units?: number
+  remaining_units?: number
+  available_units?: number
+  reserved_units?: number
+  expires_at?: number
+}
+
+export interface ZcodeQuota extends ZcodeUsage {
+  balances: ZcodeBalance[]
 }
 
 export interface MiniMaxQuotaWindow {
@@ -360,6 +387,18 @@ export async function fetchZcodeUsage(signal?: AbortSignal): Promise<ZcodeUsage>
   // so every consumer sees a collection, including during background refresh.
   const usage = await getJSON<Omit<ZcodeUsage, 'plans'> & { plans?: ZcodePlanUsage[] | null }>('/api/zcode/usage', 'GET', signal)
   return { ...usage, plans: usage.plans ?? [] }
+}
+
+export async function fetchZcodeQuota(signal?: AbortSignal): Promise<ZcodeQuota> {
+  const quota = await getJSON<Omit<ZcodeQuota, 'plans' | 'balances'> & {
+    plans?: ZcodePlanUsage[] | null
+    balances?: (Omit<ZcodeBalance, 'capabilities'> & { capabilities?: string[] | null })[] | null
+  }>('/api/zcode/quota', 'GET', signal)
+  return {
+    ...quota,
+    plans: quota.plans ?? [],
+    balances: (quota.balances ?? []).map((balance) => ({ ...balance, capabilities: balance.capabilities ?? [] })),
+  }
 }
 
 export async function fetchMiniMaxUsage(signal?: AbortSignal): Promise<MiniMaxUsage> {
