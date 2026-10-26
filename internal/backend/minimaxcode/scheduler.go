@@ -71,12 +71,13 @@ func (m *Manager) runAutoCheckin(ctx context.Context, log *logrus.Logger, interv
 		}
 		m.noteSchedulerResult(outcome, reason)
 		fields := logrus.Fields{"outcome": outcome, "reason": reason}
-		if outcome == "failed" {
+		switch outcome {
+		case "failed":
 			// Error strings may contain account or upstream details; use fixed categories.
 			log.WithFields(fields).Warn("MiniMax Code automatic check-in failed")
-		} else if outcome == "success" {
+		case "success":
 			log.WithFields(fields).Info("MiniMax Code automatic check-in completed")
-		} else {
+		default:
 			log.WithFields(fields).Info("MiniMax Code automatic check-in skipped")
 		}
 	}
