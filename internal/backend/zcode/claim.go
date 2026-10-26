@@ -25,26 +25,45 @@ type ClaimOutcome struct {
 	EndsAt      int64  `json:"ends_at,omitempty"`
 }
 
+// PreviewEntitlement keeps one grant's identity and quota metadata together.
+// These fields mirror getManualClaimPlanPreviews in the official ZCode client.
+type PreviewEntitlement struct {
+	EntitlementID string `json:"entitlement_id"`
+	ShowName      string `json:"show_name,omitempty"`
+	GrantUnits    int64  `json:"grant_units,omitempty"`
+	UnitType      string `json:"unit_type,omitempty"`
+	Period        string `json:"period,omitempty"`
+}
+
 // PreviewPlan is one claimable offer from ZCode's billing preview endpoint.
 // Fields mirror the parts of the official payload an operator needs to pick
 // an offer to claim.
 type PreviewPlan struct {
-	PlanID       string   `json:"plan_id"`
-	Name         string   `json:"name,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Priority     int      `json:"priority,omitempty"`
-	StartsAt     int64    `json:"starts_at,omitempty"`
-	EndsAt       int64    `json:"ends_at,omitempty"`
-	Entitlements []string `json:"entitlements,omitempty"`
-	GrantUnits   int64    `json:"grant_units,omitempty"`
-	UnitType     string   `json:"unit_type,omitempty"`
-	Period       string   `json:"period,omitempty"`
+	// EntitlementDetails is authoritative for automatic selection. The legacy
+	// flattened fields below remain for existing manual-preview API consumers.
+	EntitlementDetails []PreviewEntitlement `json:"entitlement_details,omitempty"`
+	PlanID             string               `json:"plan_id"`
+	Name               string               `json:"name,omitempty"`
+	Description        string               `json:"description,omitempty"`
+	Priority           int                  `json:"priority,omitempty"`
+	StartsAt           int64                `json:"starts_at,omitempty"`
+	EndsAt             int64                `json:"ends_at,omitempty"`
+	Entitlements       []string             `json:"entitlements,omitempty"`
+	GrantUnits         int64                `json:"grant_units,omitempty"`
+	UnitType           string               `json:"unit_type,omitempty"`
+	Period             string               `json:"period,omitempty"`
 }
 
 // ClaimPlan claims a plan advertised by ZCode's billing preview endpoint.
 // ZCode requires the OAuth JWT, a fresh Aliyun verification parameter, and
 // the same stable client/device identity used by Start Plan model requests.
 func (m *Manager) ClaimPlan(ctx context.Context, planID string) (ClaimOutcome, error) {
+	return m.claimPlan(ctx, planID, "", nil)
+}
+
+// before runs immediately before the POST, after authentication and CAPTCHA
+// preparation. The stored session cannot change during the mutation.
+func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, before func() error) (ClaimOutcome, error) {
 	planID = strings.TrimSpace(planID)
 	if planID == "" {
 		return ClaimOutcome{}, fmt.Errorf("ZCode plan ID is required")
@@ -81,6 +100,20 @@ func (m *Manager) ClaimPlan(ctx context.Context, planID string) (ClaimOutcome, e
 	req.Header.Set(aliyunCaptchaHeader, captcha)
 	req.Header.Set(aliyunCaptchaRegionHeader, aliyunCaptchaRegion)
 
+	m.Store.mu.Lock()
+	defer m.Store.mu.Unlock()
+	current, err := m.Store.loadUnlocked()
+	if err != nil || current == nil || current.AccessToken != token || (expectedToken != "" && token != expectedToken) {
+		return ClaimOutcome{}, fmt.Errorf("ZCode session changed before claim")
+	}
+	if err := ctx.Err(); err != nil {
+		return ClaimOutcome{}, err
+	}
+	if before != nil {
+		if err := before(); err != nil {
+			return ClaimOutcome{}, err
+		}
+	}
 	resp, err := m.HTTPClient.Do(req)
 	if err != nil {
 		return ClaimOutcome{}, fmt.Errorf("request ZCode plan claim: %w", err)
@@ -170,19 +203,13 @@ func (m *Manager) PreviewPlans(ctx context.Context) ([]PreviewPlan, error) {
 		Msg  string `json:"msg"`
 		Data struct {
 			Plans []struct {
-				PlanID       string `json:"plan_id"`
-				Name         string `json:"name"`
-				Description  string `json:"description"`
-				Priority     int    `json:"priority"`
-				StartsAt     int64  `json:"starts_at"`
-				EndsAt       int64  `json:"ends_at"`
-				Entitlements []struct {
-					EntitlementID string `json:"entitlement_id"`
-					ShowName      string `json:"show_name"`
-					GrantUnits    int64  `json:"grant_units"`
-					UnitType      string `json:"unit_type"`
-					Period        string `json:"period"`
-				} `json:"entitlements"`
+				PlanID       string               `json:"plan_id"`
+				Name         string               `json:"name"`
+				Description  string               `json:"description"`
+				Priority     int                  `json:"priority"`
+				StartsAt     int64                `json:"starts_at"`
+				EndsAt       int64                `json:"ends_at"`
+				Entitlements []PreviewEntitlement `json:"entitlements"`
 			} `json:"plans"`
 		} `json:"data"`
 	}
@@ -215,6 +242,7 @@ func (m *Manager) PreviewPlans(ctx context.Context) ([]PreviewPlan, error) {
 				continue
 			}
 			preview.Entitlements = append(preview.Entitlements, entitlement.EntitlementID)
+			preview.EntitlementDetails = append(preview.EntitlementDetails, entitlement)
 			if entitlement.GrantUnits > 0 {
 				preview.GrantUnits = entitlement.GrantUnits
 				preview.UnitType = entitlement.UnitType

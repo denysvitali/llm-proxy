@@ -107,6 +107,8 @@ type Config struct {
 	// ZCodeAuthFile stores the ZCode OAuth session used by the Start Plan
 	// backend. It is populated by browser login and is not an API key.
 	ZCodeAuthFile string `mapstructure:"zcode_auth_file"`
+	// ZCodeAutoClaim defaults to true for an enabled ZCode backend.
+	ZCodeAutoClaim *bool `mapstructure:"zcode_auto_claim"`
 	// MiniMaxCodeAuthFile stores the MiniMax Code OAuth device session.
 	MiniMaxCodeAuthFile string `mapstructure:"minimax_code_auth_file"`
 	// MiniMaxCodeAutoCheckin defaults to true for an enabled MiniMax backend.

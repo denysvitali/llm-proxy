@@ -375,6 +375,34 @@ func TestIsEnabledNilMeansTrue(t *testing.T) {
 	}
 }
 
+func TestLoadZCodeAutoClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml, env string
+		want            bool
+	}{
+		{"default", "", "", true},
+		{"file opt out", "zcode_auto_claim: false\n", "", false},
+		{"environment opt out", "", "false", false},
+		{"environment overrides file", "zcode_auto_claim: false\n", "true", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateEnv(t)
+			isolateHome(t)
+			t.Setenv("LLM_PROXY_CONFIG", writeFile(t, "config.yaml", "log_level: warn\n"+tc.yaml))
+			if tc.env != "" {
+				t.Setenv("LLM_PROXY_ZCODE_AUTO_CLAIM", tc.env)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ZCodeAutoClaim == nil || *cfg.ZCodeAutoClaim != tc.want {
+				t.Fatalf("auto claim = %v, want %v", cfg.ZCodeAutoClaim, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadMiniMaxAutoCheckin(t *testing.T) {
 	for _, tc := range []struct {
 		name, yaml, env string

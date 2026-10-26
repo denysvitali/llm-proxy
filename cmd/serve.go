@@ -179,6 +179,18 @@ func runServe(cfg *config.Config) error {
 			<-checkinDone
 		}()
 	}
+	if zcodeAutoClaimEnabled(cfg) {
+		claimCtx, cancelClaim := context.WithCancel(ctx)
+		claimDone := make(chan struct{})
+		go func() {
+			defer close(claimDone)
+			accounts.ZCode.RunAutoClaim(claimCtx, log)
+		}()
+		defer func() {
+			cancelClaim()
+			<-claimDone
+		}()
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		log.WithField("listen", cfg.Server.Listen).
@@ -224,6 +236,10 @@ func minimaxAutoCheckinEnabled(cfg *config.Config) bool {
 		}
 	}
 	return false
+}
+
+func zcodeAutoClaimEnabled(cfg *config.Config) bool {
+	return (cfg.ZCodeAutoClaim == nil || *cfg.ZCodeAutoClaim) && zcodeEnabled(cfg)
 }
 
 func zcodeEnabled(cfg *config.Config) bool {

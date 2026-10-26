@@ -27,7 +27,7 @@ func Load() (*Config, error) {
 		"stats.persist_file", "stats.persist_interval", "stats.retention_days",
 		"stats.redis_url", "stats.redis_key_prefix",
 		"grok_auth_file", "workbuddy_auth_file", "codex_auth_file",
-		"zcode_auth_file", "minimax_code_auth_file", "minimax_code_auto_checkin",
+		"zcode_auth_file", "zcode_auto_claim", "minimax_code_auth_file", "minimax_code_auto_checkin",
 		"log_level", "log_format",
 	} {
 		if err := v.BindEnv(key); err != nil {
@@ -51,6 +51,7 @@ func Load() (*Config, error) {
 	}
 	v.SetDefault("log_level", "info")
 	v.SetDefault("minimax_code_auto_checkin", true)
+	v.SetDefault("zcode_auto_claim", true)
 	v.SetDefault("log_format", "text")
 
 	path := os.Getenv("LLM_PROXY_CONFIG")

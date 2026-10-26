@@ -315,6 +315,49 @@ counters. Results are cached for one minute to avoid repeatedly polling the
 provider billing service; credentials and raw upstream responses are never
 returned.
 
+ZCode daily free-token auto-claim is enabled by default when the `zcode`
+backend is enabled. It checks at startup and hourly using a fresh billing
+preview, then the existing authenticated claim flow and a fresh CAPTCHA proof.
+Set `zcode_auto_claim: false` or `LLM_PROXY_ZCODE_AUTO_CLAIM=false` to opt out.
+Signed-out accounts and checks before 11:00 UTC do not send claim requests.
+
+The [announced daily offer](https://x.com/zcode_ai/status/2114762939421139426)
+grants 300M GLM-5.3-Flash tokens, with claims opening at 11:00 UTC and usage
+from 15:00 to 01:00 UTC. Automatic matching deliberately fails closed: the
+preview must explicitly name a **free** offer, report the GLM-5.3-Flash
+identity (entitlement ID or model display name) and exactly 300M units with a
+daily period on the **same entitlement**. Model-name spaces, hyphens, and
+underscores are normalized; unit spellings `token`, `tokens`, and the client
+fixture's `units` are accepted only for that exact model/amount/daily grant.
+Usage timestamps are not required: the official client's normalized preview
+does not expose them. The 11:00 UTC claim start is independent of usage hours.
+Missing or ambiguous eligibility metadata, other offers, or an unrecognized
+JWT account subject are skipped; use the dashboard's manual claim for those.
+
+Compatibility is not yet confirmed against a populated daily-offer preview.
+The existing reference account returned an empty offer list during verification.
+The extracted ZCode client's `getManualClaimPlanPreviews` confirms per-entitlement
+`entitlement_id`, `show_name`, `grant_units`, `unit_type`, and `period` fields,
+but does not establish this promotion's actual field values or expose preview
+usage timestamps in its normalized result. The supported unit/daily spellings,
+English free label, and nonempty string JWT `sub` remain conservative matching
+requirements, not verified properties of the live promotion. Other subject
+representations are skipped rather than using a raw token or device identity.
+An authentic populated preview and session-subject schema are still needed
+before automatic claim compatibility can be relied on. No live claim was
+submitted to establish this.
+Plan IDs are discovered, not hardcoded. The proxy does not purchase plans,
+bypass CAPTCHA, retry risk-control failures, or guarantee offer eligibility
+or remaining quota.
+
+An owner-only sidecar directory (`<zcode_auth_file>.autoclaim`) records one
+automatic submission per account and UTC day immediately before the POST.
+Markers survive restart and uncertain responses; a rejected or uncertain POST
+is not automatically retried that day. Preview/authentication/CAPTCHA preparation
+failures do not consume that day's attempt. Replicas must share the credentials
+and marker directory for cross-replica duplicate suppression. Account usage
+endpoints retain their existing one-minute cache after automatic claims.
+
 This uses an undocumented provider gateway discovered from the ZCode client
 and may change with a ZCode release. Confirm that routing your own entitlement
 through a proxy is allowed by the service terms.
