@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   Chip,
-
   createTheme,
   Paper,
   ScrollArea,
@@ -13,33 +12,35 @@ import {
   rem,
 } from '@mantine/core'
 
-// Shared typography and controls; chart colors live in palette.ts.
+// Waypoint — warm-paper light, harbor-dark, teal navigation accent.
+// Chart series colors live in palette.ts; status tokens live in index.css.
 
 const dark: [string, string, string, string, string, string, string, string, string, string] = [
-  '#f3f5f8', // 0 — ink
-  '#d7dee8', // 1
-  '#a3adbd', // 2 — muted
-  '#7d8898', // 3
-  '#2c3240', // 4 — border
-  '#242a36', // 5
-  '#171a21', // 6 — card
-  '#10131a', // 7 — sidebar / body
-  '#0c0e13', // 8 — canvas
-  '#090b10', // 9
+  '#ecf1ec', // 0 — ink
+  '#cfd8d0', // 1
+  '#9aa79c', // 2 — muted
+  '#6f7d73', // 3
+  '#3a453c', // 4 — border
+  '#1f2822', // 5
+  '#151c17', // 6 — card
+  '#1b241d', // 7 — header / rails
+  '#101613', // 8 — canvas
+  '#0b100d', // 9
 ]
 
-// Signal accent is interaction only. Chart series stay in palette.ts.
+// Waypoint accent (teal) is interaction only — links, focus, active nav,
+// primary buttons. Chart series stay in palette.ts.
 const brand: [string, string, string, string, string, string, string, string, string, string] = [
-  '#eef3ff',
-  '#dce6ff',
-  '#c5d4ff',
-  '#a9c0ff',
-  '#8eabff', // 4 — dark accent
-  '#5b82f0',
-  '#2457d6', // 6 — light accent
-  '#1c46b0',
-  '#173890',
-  '#122c70',
+  '#eef8f5',
+  '#d8efe9',
+  '#b0e0d6',
+  '#83cdc0',
+  '#4ecdb9', // 4 — dark accent
+  '#26a896',
+  '#0f766e', // 6 — light accent
+  '#0c5f59',
+  '#094c47',
+  '#073b37',
 ]
 
 export const theme = createTheme({
@@ -51,17 +52,18 @@ export const theme = createTheme({
   defaultRadius: 'md',
   cursorType: 'pointer',
   fontFamily:
-    'Inter, "Inter var", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif',
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif',
   fontFamilyMonospace:
     'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
   headings: {
-    fontWeight: '600',
+    fontWeight: '650',
     sizes: {
-      h1: { fontSize: rem(22), lineHeight: '1.2', fontWeight: '600' },
-      h2: { fontSize: rem(14), lineHeight: '1.3', fontWeight: '600' },
-      h3: { fontSize: rem(15), lineHeight: '1.35', fontWeight: '650' },
-      h4: { fontSize: rem(13), lineHeight: '1.4', fontWeight: '600' },
-      h5: { fontSize: rem(12), lineHeight: '1.45', fontWeight: '600' },
+      h1: { fontSize: rem(24), lineHeight: '1.15', fontWeight: '700' },
+      h2: { fontSize: rem(15), lineHeight: '1.3', fontWeight: '650' },
+      h3: { fontSize: rem(14), lineHeight: '1.35', fontWeight: '650' },
+      h4: { fontSize: rem(13), lineHeight: '1.4', fontWeight: '650' },
+      h5: { fontSize: rem(12), lineHeight: '1.45', fontWeight: '650' },
+      h6: { fontSize: rem(12), lineHeight: '1.45', fontWeight: '650' },
     },
   },
   fontSizes: { xs: rem(12), sm: rem(13), md: rem(14), lg: rem(16) },
@@ -69,8 +71,8 @@ export const theme = createTheme({
   radius: {
     xs: rem(2),
     sm: rem(4),
-    md: rem(8),
-    lg: rem(12),
+    md: rem(6),
+    lg: rem(10),
     xl: rem(14),
   },
   components: {
@@ -84,16 +86,16 @@ export const theme = createTheme({
       defaultProps: { highlightOnHoverColor: 'var(--mantine-color-default-hover)' },
     }),
     Tooltip: Tooltip.extend({
-      defaultProps: { withArrow: true, openDelay: 250, radius: 'md' },
+      defaultProps: { withArrow: true, openDelay: 250, radius: 'sm' },
     }),
     Button: Button.extend({
       defaultProps: { radius: 'md' },
     }),
     Badge: Badge.extend({
-      defaultProps: { radius: 'xl' },
+      defaultProps: { radius: 'sm', fw: 600 },
     }),
     Chip: Chip.extend({
-      defaultProps: { radius: 'md' },
+      defaultProps: { radius: 'sm' },
     }),
     ActionIcon: ActionIcon.extend({
       defaultProps: { radius: 'md' },

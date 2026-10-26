@@ -147,8 +147,10 @@ export async function checkRegressions(browser, base, outDir) {
             await visible(page.getByRole('heading', { level: 1, name: heading, exact: true }));
             await page.waitForFunction((mobile) => Boolean(document.querySelector('.bottom-navigation')) === mobile, width <= 768);
             await page.waitForFunction((mobile) => {
-              const left = mobile ? 0 : document.querySelector('.app-sidebar').getBoundingClientRect().right;
-              return Math.abs(document.querySelector('.page-container').getBoundingClientRect().left - left) < 0.1;
+              const container = document.querySelector('.page-container').getBoundingClientRect();
+              if (mobile) return Math.abs(container.left) < 0.1;
+              const header = document.querySelector('.mantine-AppShell-header')?.getBoundingClientRect();
+              return header ? container.top >= header.bottom - 0.1 : false;
             }, width <= 768);
             assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false,
               `${heading}: no horizontal overflow at ${width}px`);

@@ -1,4 +1,4 @@
-import { Box, Group, Paper, Text } from '@mantine/core'
+import { Box, Group, Text } from '@mantine/core'
 import { useId, type ReactNode } from 'react'
 
 type Accent = 'brand' | 'teal' | 'orange' | 'grape' | 'gray' | 'red'
@@ -11,6 +11,8 @@ interface StatTileProps {
   accent?: Accent
 }
 
+// One tile inside a divided stat band (see .stat-band in index.css): the band
+// surface carries the card chrome, tiles are separated by hairline gaps.
 export default function StatTile({ label, value, hint, icon, accent = 'gray' }: StatTileProps) {
   const labelId = useId()
   const hasValue = value !== null && value !== undefined && value !== '' && typeof value !== 'boolean'
@@ -18,33 +20,18 @@ export default function StatTile({ label, value, hint, icon, accent = 'gray' }: 
   const hasHint = hint !== null && hint !== undefined && hint !== false && hint !== ''
 
   return (
-    <Paper
+    <Box
       className="stat-tile"
       data-accent={accent}
-      withBorder
-      radius="lg"
       role="group"
       aria-labelledby={labelId}
-      h="100%"
-      miw={0}
-      style={{ display: 'flex', flexDirection: 'column' }}
     >
-      <Group justify="space-between" align="center" wrap="nowrap" mb={10} gap="xs">
-        <Text
-          id={labelId}
-          fz={13}
-          c="dimmed"
-          fw={500}
-          lh={1.3}
-          style={{ overflowWrap: 'anywhere', minWidth: 0 }}
-        >
+      <Group className="stat-head" justify="space-between" align="center" wrap="nowrap" gap="xs">
+        <Text id={labelId} className="stat-label" lh={1.35} style={{ minWidth: 0 }}>
           {label}
         </Text>
         {icon && (
-          <span
-            aria-hidden="true"
-            className="stat-icon"
-          >
+          <span aria-hidden="true" className="stat-icon">
             {icon}
           </span>
         )}
@@ -53,8 +40,7 @@ export default function StatTile({ label, value, hint, icon, accent = 'gray' }: 
         <Text
           component="div"
           className="stat-value"
-          fw={600}
-          lh={1.15}
+          lh={1.1}
           style={{ overflowWrap: 'anywhere' }}
         >
           {hasValue ? value : <span role="img" aria-label="No data">—</span>}
@@ -67,6 +53,6 @@ export default function StatTile({ label, value, hint, icon, accent = 'gray' }: 
           </Text>
         </Box>
       )}
-    </Paper>
+    </Box>
   )
 }

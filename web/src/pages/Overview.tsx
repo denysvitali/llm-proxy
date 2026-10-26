@@ -79,13 +79,15 @@ export default function OverviewPage() {
 
         <section aria-label="Traffic summary">
           {statsQ.data ? <>
-            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm" className="overview-stat-grid">
-              <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={16} />} />
-              <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
-                hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={16} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
-              <StatTile label="Tokens served" value={fmtInt(totals.input + totals.output)} hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`} icon={<IconCoins size={16} />} />
-              <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={16} />} />
-            </SimpleGrid>
+            <Card className="stat-band" p={0}>
+              <SimpleGrid cols={{ base: 2, md: 4 }} spacing={1} className="stat-band-grid">
+                <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={15} />} />
+                <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
+                  hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={15} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
+                <StatTile label="Tokens served" value={fmtInt(totals.input + totals.output)} hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`} icon={<IconCoins size={15} />} />
+                <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={15} />} />
+              </SimpleGrid>
+            </Card>
             <Group className="overview-summary-footer" justify="space-between" gap="xs">
               <Text size="xs" c="dimmed">{models.filter((model) => model.requests > 0).length} {models.filter((model) => model.requests > 0).length === 1 ? 'model' : 'models'} with traffic</Text>
               <Group gap="md"><Text size="xs" c="dimmed"><Text span inherit fw={600}>{fmtInt(totals.toolCalls)}</Text> tool calls</Text><Text size="xs" style={{ color: totals.toolErrors ? 'var(--data-critical)' : undefined }} c={totals.toolErrors ? undefined : 'dimmed'}><Text span inherit fw={600}>{fmtInt(totals.toolErrors)}</Text> tool errors{totals.toolCalls > 0 ? ` · ${(100 * clampRate(totals.toolErrors / totals.toolCalls)).toFixed(1)}%` : ''}</Text></Group>

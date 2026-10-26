@@ -1,5 +1,5 @@
 import {
-  Anchor, AppShell, Badge, Box, Container, Group, Kbd, Modal,
+  ActionIcon, Anchor, AppShell, Badge, Box, Group, Kbd, Modal,
   type MantineColorScheme, SegmentedControl, type SegmentedControlItem,
   Skeleton, Stack, Text, Tooltip, UnstyledButton, useMantineColorScheme,
 } from '@mantine/core'
@@ -92,42 +92,42 @@ export default function App() {
     <AppShell
       layout="alt"
       header={{ height: 60 }}
-      navbar={{ width: 232, breakpoint: 'sm', collapsed: { mobile: true, desktop: isMobile } }}
       footer={isMobile ? { height: 'calc(64px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
       padding={0}
     >
       <Anchor href="#main" className="app-skip-link">Skip to content</Anchor>
-      {!isMobile && (
-        <AppShell.Navbar component="aside" className="app-sidebar" p="md">
-          <HeaderBrand />
-          <Navigation />
-          <Stack mt="auto" gap="sm" pt="lg">
-            <UnstyledButton className="shortcut-trigger" onClick={() => setShortcutsOpen(true)}>
-              <IconKeyboard size={17} aria-hidden />
-              <span>Keyboard shortcuts</span>
-              <kbd>?</kbd>
-            </UnstyledButton>
-          </Stack>
-        </AppShell.Navbar>
-      )}
-      <AppShell.Header>
-        <Group h="100%" justify="space-between" px={{ base: 'md', sm: 'xl' }} wrap="nowrap">
-          {isMobile ? <HeaderBrand subtitle={pageName} /> : (
-            <Group gap="sm" className="header-breadcrumb">
-              <Text size="sm" c="dimmed">Gateway</Text>
-              <Text size="sm" c="dimmed" aria-hidden>/</Text>
-              <Text size="sm" fw={600}>{pageName}</Text>
-            </Group>
+      <AppShell.Header className="app-topbar">
+        <div className="topbar-inner">
+          <HeaderBrand subtitle={isMobile ? pageName : undefined} />
+          {!isMobile && (
+            <nav aria-label="Main navigation" className="topbar-navigation topbar-nav-group">
+              {NAV.map(({ path, label, description, icon: Icon }) => (
+                <UnstyledButton key={path} component={NavLink} to={path}
+                  className="topbar-link"
+                  data-active={isActiveNavPath(pathname, path) || undefined}
+                  aria-label={label}
+                  title={description}
+                  aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
+                  <span className="nav-icon"><Icon size={17} stroke={1.75} aria-hidden /></span>
+                  <span className="nav-label">{label}</span>
+                </UnstyledButton>
+              ))}
+            </nav>
           )}
-          <Group gap="md" wrap="nowrap">
+          <div className="topbar-actions">
             <LiveStatusBadge />
-            {!isMobile && <Anchor component={NavLink} to="/setup" className="header-connect" size="sm" underline="never"><IconTerminal2 size={16} aria-hidden /> Connect client</Anchor>}
+            {!isMobile && <Anchor component={NavLink} to="/setup" className="header-connect" underline="never"><IconTerminal2 size={16} aria-hidden /> Connect client</Anchor>}
+            <Tooltip label="Keyboard shortcuts">
+              <ActionIcon variant="default" size={34} aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
+                <IconKeyboard size={17} aria-hidden />
+              </ActionIcon>
+            </Tooltip>
             <ColorSchemeToggle />
-          </Group>
-        </Group>
+          </div>
+        </div>
       </AppShell.Header>
       <AppShell.Main id="main" tabIndex={-1}>
-        <Container size={1600} className="page-container">
+        <div className="page-container">
           <Suspense fallback={<PageLoading name={pageName} />}>
             <PageErrorBoundary key={pathname}>
               <Routes>
@@ -146,7 +146,7 @@ export default function App() {
               <Anchor href="/metrics" size="xs" c="dimmed">Prometheus metrics</Anchor>
             </Group>
           </Group>
-        </Container>
+        </div>
       </AppShell.Main>
       {isMobile && <AppShell.Footer><Navigation mobile /></AppShell.Footer>}
       <Modal opened={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" centered>
@@ -167,9 +167,9 @@ export default function App() {
 function PageLoading({ name }: { name: string }) {
   return (
     <Stack className="page-loading" gap="lg" role="status" aria-label={`Loading ${name.toLowerCase()}`}>
-      <Skeleton height={22} width={180} radius="sm" />
-      <Skeleton height={168} radius="md" />
-      <Skeleton height={220} radius="md" />
+      <Skeleton height={24} width={200} radius="sm" />
+      <Skeleton height={132} radius="lg" />
+      <Skeleton height={220} radius="lg" />
     </Stack>
   )
 }
@@ -178,11 +178,11 @@ function HeaderBrand({ subtitle }: { subtitle?: string }) {
   const { data } = useQuery(dashboardQueries.overview())
   return (
     <UnstyledButton component={NavLink} to="/" className="brand-link" aria-label="llm-proxy home">
-      <span className="brand-mark" aria-hidden>λ</span>
-      <Stack gap={1}>
-        <Text fw={700} size="lg" lh={1.2} lts="-0.03em">llm-proxy</Text>
-        <Text c="dimmed" fz={11} lh={1.4}>{subtitle ?? (data?.version ? `Model gateway · v${data.version}` : 'Model gateway')}</Text>
-      </Stack>
+      <span className="brand-mark" aria-hidden />
+      <span className="brand-text">
+        <strong>llm-proxy</strong>
+        <small>{subtitle ?? (data?.version ? `Model gateway · v${data.version}` : 'Model gateway')}</small>
+      </span>
     </UnstyledButton>
   )
 }
@@ -204,10 +204,10 @@ function LiveStatusBadge() {
 function Navigation({ mobile = false }: { mobile?: boolean }) {
   const { pathname } = useLocation()
   return (
-    <Box component="nav" aria-label="Main navigation" className={mobile ? 'bottom-navigation' : 'side-navigation'}>
+    <Box component="nav" aria-label="Main navigation" className={mobile ? 'bottom-navigation' : 'topbar-navigation'}>
       {NAV.map(({ path, label, description, icon: Icon }) => (
         <UnstyledButton key={path} component={NavLink} to={path}
-          className={mobile ? 'bottom-nav-link' : 'side-nav-link'}
+          className={mobile ? 'bottom-nav-link' : 'topbar-link'}
           data-active={isActiveNavPath(pathname, path) || undefined}
           aria-label={label}
           title={description}
