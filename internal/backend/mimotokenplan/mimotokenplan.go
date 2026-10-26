@@ -85,7 +85,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	// Token Plan documentation specifies api-key for tp- credentials.
 	httpReq.Header.Set("api-key", c.Key)
 
-	return upstream.Send(c.HTTP, httpReq, "MiMo Token Plan")
+	return upstream.SendInference(c.HTTP, httpReq, "MiMo Token Plan", c.BaseURL, req.TracePropagation)
 }
 
 // Models returns the current Token Plan language models. Speech models use

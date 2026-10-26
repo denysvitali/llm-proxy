@@ -65,7 +65,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	return upstream.Send(c.HTTP, httpReq, "Nous Portal")
+	return upstream.SendInference(c.HTTP, httpReq, "Nous Portal", c.BaseURL, req.TracePropagation)
 }
 
 func (c *Client) Models(ctx context.Context) ([]string, error) {

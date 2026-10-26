@@ -135,14 +135,14 @@ func modelKind(model string) backend.Kind {
 // Do performs a request against the Zen API, attaching the bearer token when
 // a key is configured. A nil body means no request body is sent.
 func (c *Client) Do(ctx context.Context, method, path string, body []byte, accept string) (*http.Response, error) {
-	return c.do(ctx, method, path, body, accept, "")
+	return c.do(ctx, method, path, body, accept, "", false)
 }
 
 // do is the request path used by Send when it can preserve the caller's
 // session affinity across retries. Zen's free tier checks for the identity
 // headers emitted by the OpenCode CLI, so every Zen request carries the same
 // compatibility header set.
-func (c *Client) do(ctx context.Context, method, path string, body []byte, accept, session string) (*http.Response, error) {
+func (c *Client) do(ctx context.Context, method, path string, body []byte, accept, session string, propagate bool) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -184,7 +184,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 	// non-OpenCode providers, and Zen accepts it for free-tier access.
 	httpReq.Header.Set("X-Session-Id", session)
 	httpReq.Header.Set("x-opencode-request", requestID)
-	resp, err := c.HTTP.Do(httpReq)
+	resp, err := backend.DoInference(c.HTTP, httpReq, c.BaseURL, propagate)
 	if err != nil {
 		return nil, fmt.Errorf("request to OpenCode Zen failed: %w", err)
 	}
@@ -240,7 +240,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.do(ctx, http.MethodPost, path, body, accept, session)
+	resp, err := c.do(ctx, http.MethodPost, path, body, accept, session, req.TracePropagation)
 	if err != nil {
 		return nil, err
 	}

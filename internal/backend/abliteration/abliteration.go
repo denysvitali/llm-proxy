@@ -86,7 +86,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if req.Kind == backend.KindAnthropic {
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	}
-	return upstream.Send(c.HTTP, httpReq, "abliteration.ai")
+	return upstream.SendInference(c.HTTP, httpReq, "abliteration.ai", c.BaseURL, req.TracePropagation)
 }
 
 func (c *Client) Models(ctx context.Context) ([]string, error) {

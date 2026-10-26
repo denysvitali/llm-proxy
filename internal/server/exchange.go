@@ -214,6 +214,9 @@ func (s *Server) exchange(
 		Header:    header,
 		Streaming: env.streaming,
 	}
+	if bc, ok := s.cfg.BackendByType(rt.backend.Name()); ok {
+		req.TracePropagation = bc.TracePropagation
+	}
 	// Keep only request metadata in the dashboard history. The request and
 	// translated payloads can contain prompts, tool inputs, and credentials;
 	// neither should outlive this exchange in proxy-owned state.

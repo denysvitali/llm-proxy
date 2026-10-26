@@ -1144,6 +1144,7 @@ non-loopback listener; intentional loopback-only operation remains supported.
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
+| `backends[].trace_propagation` | —                                 | `false`                  | Opt a trusted backend into W3C trace context on inference requests to its resolved origin. Baggage is never sent. |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
 | `backends[].fallbacks`       | —                                    | —                        | Alternate backends (with optional model rewrites) tried when this backend fails before anything reaches the client. |
 | `backends[].retry_attempts`  | —                                    | `3`                      | Extra connection-phase attempts after a transient upstream failure.        |
@@ -1165,8 +1166,14 @@ and backend attempts get child spans carrying `llm_proxy.backend`,
 `llm_proxy.model` and the attempt's outcome; the access log gains the matching
 `trace_id`. Successful health, readiness, and metrics requests are omitted
 from access logs and traces, but remain in request metrics. Their failures are
-logged and traced. The proxy does not inject trace context or baggage into
-outbound provider requests.
+logged and traced. Outbound propagation defaults to disabled. Set
+`trace_propagation: true` on an individual trusted backend to send the active attempt's W3C
+`traceparent` and `tracestate` to that backend's resolved origin (scheme,
+host, and port), including its provider default when `base_url` is omitted.
+This applies to all inference backends and each fallback's own setting.
+Redirects to a different origin receive no trace context; catalog, account,
+and authentication requests do not opt in. Baggage is never propagated.
+Per-backend propagation is independent of incoming trace-context acceptance.
 
 For an HA deployment, configure every proxy instance with the same
 `stats.redis_url` and `stats.redis_key_prefix`. Redis/Valkey becomes the

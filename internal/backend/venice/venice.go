@@ -95,7 +95,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	return upstream.Send(c.HTTP, httpReq, "Venice")
+	return upstream.SendInference(c.HTTP, httpReq, "Venice", c.BaseURL, req.TracePropagation)
 }
 
 type modelList struct {

@@ -33,6 +33,9 @@ type BackendConfig struct {
 	// FreeOnly restricts the backend to zero-cost models. Only backends with
 	// published pricing (venice) honor it; others ignore the flag.
 	FreeOnly bool `mapstructure:"free_only"`
+	// TracePropagation opts this trusted backend into outbound W3C trace
+	// context on inference requests. Default false; baggage is never sent.
+	TracePropagation bool `mapstructure:"trace_propagation"`
 	// Fallbacks names alternate backends (with optional model rewrites) that
 	// serve the request when this backend fails before anything has reached
 	// the client. Tried in order after the primary route's own fallbacks.

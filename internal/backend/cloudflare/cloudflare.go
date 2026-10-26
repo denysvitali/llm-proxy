@@ -79,5 +79,5 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	return upstream.Send(c.HTTP, httpReq, "Cloudflare")
+	return upstream.SendInference(c.HTTP, httpReq, "Cloudflare", c.BaseURL, req.TracePropagation)
 }

@@ -142,7 +142,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	}
 
-	return upstream.Send(c.HTTP, httpReq, "OpenCode Go")
+	return upstream.SendInference(c.HTTP, httpReq, "OpenCode Go", c.BaseURL, req.TracePropagation)
 }
 
 // Models lists the models currently available through OpenCode Go.

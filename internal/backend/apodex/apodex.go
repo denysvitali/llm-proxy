@@ -112,7 +112,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if req.Kind == backend.KindAnthropic {
 		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 	}
-	return upstream.Send(c.HTTP, httpReq, "Apodex")
+	return upstream.SendInference(c.HTTP, httpReq, "Apodex", c.BaseURL, req.TracePropagation)
 }
 
 // withExplicitStream pins the "stream" field to what the proxy decided the

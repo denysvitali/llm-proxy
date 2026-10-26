@@ -81,7 +81,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			httpReq.Header.Set("X-Affinity", affinity)
 		}
 	}
-	return upstream.Send(c.HTTP, httpReq, "Mistral")
+	return upstream.SendInference(c.HTTP, httpReq, "Mistral", c.BaseURL, req.TracePropagation)
 }
 
 func (c *Client) Models(ctx context.Context) ([]string, error) {

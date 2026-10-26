@@ -246,7 +246,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.HTTP.Do(httpReq)
+	resp, err := backend.DoInference(c.HTTP, httpReq, c.BaseURL, req.TracePropagation)
 	if err != nil {
 		return nil, fmt.Errorf("request to ZCode failed: %w", err)
 	}
@@ -275,7 +275,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			if buildErr != nil {
 				return nil, buildErr
 			}
-			resp, err = c.HTTP.Do(retryReq)
+			resp, err = backend.DoInference(c.HTTP, retryReq, c.BaseURL, req.TracePropagation)
 			if err != nil {
 				return nil, fmt.Errorf("retry request to ZCode after security challenge failed: %w", err)
 			}

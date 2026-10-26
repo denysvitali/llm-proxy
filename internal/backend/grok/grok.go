@@ -100,7 +100,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if req.Streaming {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
-	resp, err := c.HTTP.Do(httpReq)
+	resp, err := backend.DoInference(c.HTTP, httpReq, c.BaseURL, req.TracePropagation)
 	if err != nil {
 		return nil, fmt.Errorf("request to Grok failed: %w", err)
 	}

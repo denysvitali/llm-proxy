@@ -70,6 +70,7 @@ backends:
     api_key_env: VENICE_API_KEY
     api_key: literal-secret
     enabled: false
+    trace_propagation: true
     default_model: qwen-default
   - type: grok
     enabled: true
@@ -122,6 +123,9 @@ default_route:
 		t.Errorf("Backends[0].Enabled = %v, want false", b0.Enabled)
 	}
 	b1 := cfg.Backends[1]
+	if !b0.TracePropagation || b1.TracePropagation {
+		t.Errorf("trace propagation should be explicit per backend: first=%v second=%v", b0.TracePropagation, b1.TracePropagation)
+	}
 	if b1.Type != "grok" || b1.DefaultModel != "grok-default" {
 		t.Errorf("Backends[1] = %+v", b1)
 	}

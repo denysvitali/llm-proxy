@@ -53,6 +53,16 @@ func Send(client *http.Client, req *http.Request, provider string) (*backend.Res
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
 
+// SendInference applies this backend's explicit propagation policy while
+// retaining Send's response ownership and provider-specific error context.
+func SendInference(client *http.Client, req *http.Request, provider, baseURL string, propagate bool) (*backend.Response, error) {
+	resp, err := backend.DoInference(client, req, baseURL, propagate)
+	if err != nil {
+		return nil, fmt.Errorf("request to %s failed: %w", provider, err)
+	}
+	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
 // CatalogRequest creates the common GET request used by bearer-token catalogs.
 // Providers may add additional headers before passing it to ReadCatalog.
 func CatalogRequest(ctx context.Context, url, key string) (*http.Request, error) {

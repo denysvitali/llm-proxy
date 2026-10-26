@@ -93,7 +93,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			httpReq.Header.Set("Anthropic-Beta", beta)
 		}
 	}
-	return upstream.Send(c.HTTP, httpReq, "AnyRouter")
+	return upstream.SendInference(c.HTTP, httpReq, "AnyRouter", c.BaseURL, req.TracePropagation)
 }
 
 func (c *Client) Models(ctx context.Context) ([]string, error) {

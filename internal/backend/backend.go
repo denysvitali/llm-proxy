@@ -29,6 +29,9 @@ type Request struct {
 	RawBody   []byte
 	Header    http.Header
 	Streaming bool
+	// TracePropagation explicitly permits W3C trace context on inference HTTP
+	// requests to this backend's resolved origin. Baggage is never propagated.
+	TracePropagation bool
 }
 
 // Response is what a backend hands back to the server layer: an upstream HTTP
