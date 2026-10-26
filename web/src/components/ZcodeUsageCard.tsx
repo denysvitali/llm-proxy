@@ -12,6 +12,7 @@ import type { ZcodeBalance, ZcodePlanUsage, ZcodeQuota } from '../api'
 import { fmtInt } from '../format'
 import { usageTone } from './usageFormatting'
 import UsageCardShell from './UsageCardShell'
+import ZcodeOffers from './ZcodeOffers'
 
 export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeQuota, Error> }) {
   const usage = query.data
@@ -43,6 +44,7 @@ export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeQ
       ) : usage || !error ? (
         <Text size="sm" c="dimmed">No plan usage is available for this account.</Text>
       ) : null}
+      <Box mt="md"><ZcodeOffers /></Box>
     </UsageCardShell>
   )
 }

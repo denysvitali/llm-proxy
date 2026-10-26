@@ -106,6 +106,31 @@ func TestClaimPlanClassifiesAndInvalidatesRejectedCaptcha(t *testing.T) {
 	}
 }
 
+func TestClaimPlanDoesNotFollowRedirect(t *testing.T) {
+	var redirected atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirected.Add(1) }))
+	defer target.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer upstream.Close()
+	manager := NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	manager.Issuer, manager.HTTPClient = upstream.URL, upstream.Client()
+	if err := manager.Store.Save(&Credentials{AccessToken: "test-zcode-jwt"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetCaptchaVerifyParam("test-proof"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.ClaimPlan(context.Background(), "current-plan")
+	if err == nil && result.OK {
+		t.Fatal("redirect must not be interpreted as a successful claim")
+	}
+	if redirected.Load() != 0 {
+		t.Fatal("claim request was replayed at redirect target")
+	}
+}
+
 func TestPreviewPlansListsAccountOffers(t *testing.T) {
 	const token = "test-zcode-jwt"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

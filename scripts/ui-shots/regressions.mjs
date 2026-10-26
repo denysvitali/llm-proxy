@@ -29,11 +29,24 @@ export async function checkRegressions(browser, base, outDir) {
     try {
       let brokenOverview = false;
       let unavailableStats = false;
+      let zcodeClaims = 0;
       await context.route(/\/(api\/|stats(?:\?|$))/, async (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/overview') return route.fulfill({ json: brokenOverview ? { ...overview, backends: [null] } : overview });
         if (path === '/stats') return route.fulfill(unavailableStats ? { status: 503, json: { error: 'unavailable' } } : { json: { models: null } });
         if (path === '/api/zcode/quota') return route.fulfill({ json: { plans, balances: name === 'populated' ? [{ plan_id: 'regression-plan', entitlement_id: 'tokens', show_name: 'Token quota', meter: 'tokens', total_units: 100, used_units: 25, remaining_units: 70, reserved_units: 5, expires_at: 1893456000 }] : null, fetchedAt: new Date().toISOString() } });
+        if (path === '/api/zcode/offers') return route.fulfill({ json: { plans: [
+          { plan_id: 'success-plan', name: 'Success offer', entitlement_details: [{ entitlement_id: 'grant', show_name: 'Test model', grant_units: 300000000, unit_type: 'token', period: 'one_time' }] },
+          { plan_id: 'risk-plan', name: 'Risk offer' },
+          { plan_id: 'unknown-plan', name: 'Uncertain offer' },
+        ] } });
+        if (path === '/api/zcode/claim') {
+          zcodeClaims++;
+          const { plan_id } = route.request().postDataJSON();
+          if (plan_id === 'risk-plan') return route.fulfill({ status: 409, json: { ok: false, plan_id, failure_kind: 'risk_blocked' } });
+          if (plan_id === 'unknown-plan') return route.abort('failed');
+          return route.fulfill({ json: { ok: true, plan_id } });
+        }
         if (path === '/api/stats/errors') return route.fulfill({ json: { errors: null } });
         if (path === '/api/requests') return route.fulfill({ json: { requests: null } });
         if (path.startsWith('/api/stats')) return route.fulfill({ json: { models: [], series } });
@@ -71,6 +84,25 @@ export async function checkRegressions(browser, base, outDir) {
         await visible(page.getByText('Reserved units', { exact: true }));
         await visible(page.getByText('70', { exact: true }));
         await page.screenshot({ path: path.join(outDir, 'zcode-quota-mobile.png') });
+        await page.getByRole('button', { name: 'View available offers' }).click();
+        await visible(page.getByText('Success offer', { exact: true }));
+        const verification = page.getByRole('link', { name: /complete human verification/ });
+        assert.equal(await verification.getAttribute('href'), '/login/zcode');
+        assert.equal(await verification.getAttribute('target'), '_blank');
+        await page.getByRole('button', { name: 'Claim Success offer' }).click();
+        await visible(page.getByText('Offer claimed', { exact: true }));
+        await page.getByRole('button', { name: 'Claim Uncertain offer' }).click();
+        await visible(page.getByText('Claim outcome unknown', { exact: true }));
+        await page.getByRole('button', { name: 'Claim Risk offer' }).click();
+        await visible(page.getByText('Claim was not accepted', { exact: true }));
+        assert.equal(zcodeClaims, 3, 'each explicit claim sends exactly one POST');
+        assert.equal(await page.getByRole('button', { name: 'Claim Risk offer' }).isDisabled(), true);
+        assert.equal(await page.getByRole('button', { name: 'Claim Uncertain offer' }).isDisabled(), true);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'claim flow must fit mobile');
+        await page.screenshot({ path: path.join(outDir, 'zcode-offers-mobile.png'), fullPage: true });
+        await page.setViewportSize({ width: 320, height: 844 });
+        await page.addStyleTag({ content: 'html { font-size: 150% !important; }' });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'claim flow must fit 320px with large text');
       }
       await visible(page.getByText('No recent upstream errors', { exact: true }));
       assert.deepEqual(errors, [], `${name} plans must not crash on client-side navigation`);

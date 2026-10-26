@@ -37,6 +37,19 @@ func TestZCodeOffersEndpointListsPlans(t *testing.T) {
 	}
 }
 
+func TestZCodeClaimMissingVerificationIsKnownPreflightFailure(t *testing.T) {
+	manager := zcodebackend.NewManager(filepath.Join(t.TempDir(), "zcode-auth.json"))
+	if err := manager.Store.Save(&zcodebackend.Credentials{AccessToken: "test-zcode-jwt"}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewWithDependencies(Dependencies{Config: &config.Config{}, Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager}})
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/zcode/claim", strings.NewReader(`{"plan_id":"current-plan"}`)))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"failure_kind":"captcha"`) || !strings.Contains(rec.Body.String(), `"plan_id":"current-plan"`) {
+		t.Fatalf("response = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestZCodeClaimEndpointReportsSuccessAndRiskBlock(t *testing.T) {
 	for _, tt := range []struct {
 		name           string
@@ -73,6 +86,13 @@ func TestZCodeClaimEndpointReportsSuccessAndRiskBlock(t *testing.T) {
 			}
 			cfg := &config.Config{Server: config.ServerConfig{Listen: "127.0.0.1:8090"}}
 			s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Accounts: AccountProviders{ZCode: manager}})
+			crossSite := httptest.NewRequest(http.MethodPost, "/api/zcode/claim", strings.NewReader(`{"plan_id":"current-plan"}`))
+			crossSite.Header.Set("Origin", "https://unrelated.example")
+			blocked := httptest.NewRecorder()
+			s.Handler().ServeHTTP(blocked, crossSite)
+			if blocked.Code != http.StatusForbidden || calls != 0 {
+				t.Fatalf("cross-origin claim must be rejected before consuming proof: status=%d calls=%d", blocked.Code, calls)
+			}
 			rec := httptest.NewRecorder()
 			s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/zcode/claim", strings.NewReader(`{"plan_id":"current-plan"}`)))
 			if rec.Code != tt.wantStatus || !strings.Contains(rec.Body.String(), tt.wantBody) {
@@ -90,10 +110,13 @@ func TestZCodeClaimRefreshesBillingSnapshots(t *testing.T) {
 		name        string
 		claimCode   string
 		wantRefresh bool
+		wantStatus  int
 	}{
-		{"successful claim", "0", true},
-		{"already claimed", "1003", true},
-		{"risk blocked", "3012", false},
+		{"successful claim", "0", true, http.StatusOK},
+		{"already claimed", "1003", true, http.StatusOK},
+		{"risk blocked", "3012", true, http.StatusConflict},
+		{"unknown response", `"invalid"`, true, http.StatusConflict},
+		{"uncertain result", "invalid", true, http.StatusBadGateway},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			isolatePrometheus(t)
@@ -102,7 +125,7 @@ func TestZCodeClaimRefreshesBillingSnapshots(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/zcode-plan/billing/claim":
-					claimed = tt.wantRefresh
+					claimed = tt.claimCode != "3012"
 					_, _ = w.Write([]byte(`{"code":` + tt.claimCode + `}`))
 				case "/api/v1/zcode-plan/billing/balance":
 					balanceCalls++
@@ -143,19 +166,16 @@ func TestZCodeClaimRefreshesBillingSnapshots(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/zcode/claim", strings.NewReader(`{"plan_id":"current-plan"}`)))
-			wantStatus := http.StatusConflict
-			if tt.wantRefresh {
-				wantStatus = http.StatusOK
-			}
-			if rec.Code != wantStatus {
+			if rec.Code != tt.wantStatus {
 				t.Fatalf("claim response = %d %s", rec.Code, rec.Body.String())
 			}
 			for _, path := range []string{"/api/zcode/usage", "/api/zcode/quota"} {
 				body := get(path)
-				if strings.Contains(body, `"plan_id":"current-plan"`) != tt.wantRefresh {
-					t.Fatalf("GET %s body=%s, want active plan=%v", path, body, tt.wantRefresh)
+				wantPlan := tt.claimCode != "3012"
+				if strings.Contains(body, `"plan_id":"current-plan"`) != wantPlan {
+					t.Fatalf("GET %s body=%s, want active plan=%v", path, body, wantPlan)
 				}
-				if tt.wantRefresh && path == "/api/zcode/quota" && !strings.Contains(body, `"remaining_units":123`) {
+				if wantPlan && path == "/api/zcode/quota" && !strings.Contains(body, `"remaining_units":123`) {
 					t.Fatalf("quota was not refreshed: %s", body)
 				}
 			}

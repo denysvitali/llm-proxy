@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import {
-  ApiError, claimMiniMaxCheckin, fetchBackendStatsSeries, fetchStats, fetchStatsSeries, fetchZcodeQuota,
+  ApiError, claimMiniMaxCheckin, claimZcodeOffer, fetchBackendStatsSeries, fetchStats, fetchStatsSeries, fetchZcodeOffers, fetchZcodeQuota,
 } from '../src/api.ts'
 import { dashboardQueries, dashboardQueryDefaults, queryKeys, refreshLiveQueries } from '../src/queries.ts'
 import { createLiveRefreshScheduler } from '../src/liveRefresh.ts'
@@ -93,6 +93,53 @@ test('ZCode quota normalizes nullable collections without inventing counters', a
   ])
   assert.equal(quota.balances[1].remaining_units, undefined)
   assert.equal(quota.balances[1].reserved_units, undefined)
+})
+
+test('ZCode offers normalize nullable grants while preserving offer details', async (t) => {
+  let body = {}
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/zcode/offers')
+    assert.equal(options.method, 'GET')
+    return Response.json(body)
+  })
+  for (body of [{}, { plans: null }]) assert.deepEqual(await fetchZcodeOffers(), { plans: [] })
+  body = { plans: [{ plan_id: 'free', description: 'Limited offer', grant_units: 0, entitlements: null, entitlement_details: null }] }
+  assert.deepEqual(await fetchZcodeOffers(), { plans: [{ ...body.plans[0], entitlements: [], entitlement_details: [] }] })
+  body = { plans: [{ plan_id: 'free', entitlements: ['daily'], entitlement_details: [{ entitlement_id: 'daily', grant_units: 50, period: 'day' }] }] }
+  assert.deepEqual(await fetchZcodeOffers(), body)
+})
+
+test('ZCode claims send the selected plan once and preserve structured rejections', async (t) => {
+  const planID = 'offer "quoted"'
+  let status = 200
+  let body = { ok: true, plan_id: planID }
+  const fetch = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/zcode/claim')
+    assert.equal(options.method, 'POST')
+    assert.equal(options.headers['Content-Type'], 'application/json')
+    assert.deepEqual(JSON.parse(options.body), { plan_id: planID })
+    return Response.json(body, { status })
+  })
+  assert.deepEqual(await claimZcodeOffer(planID), body)
+  for (const [httpStatus, failureKind] of [[400, 'captcha'], [401, 'login_required'], [409, 'risk_blocked'], [200, 'already_claimed']]) {
+    status = httpStatus
+    body = { ok: false, plan_id: planID, failure_kind: failureKind, message: 'Provider detail' }
+    assert.deepEqual(await claimZcodeOffer(planID), body)
+  }
+  assert.equal(fetch.mock.callCount(), 5, 'one request per explicit claim')
+})
+
+test('ZCode ambiguous claim failures never retry or become confirmed success', async (t) => {
+  let response = () => Response.json({ error: 'upstream response lost' }, { status: 502 })
+  const fetch = t.mock.method(globalThis, 'fetch', async () => response())
+  await assert.rejects(claimZcodeOffer('offer'), { status: 502 })
+  response = () => { throw new TypeError('connection lost') }
+  await assert.rejects(claimZcodeOffer('offer'), { kind: 'network' })
+  for (const body of [{}, { ok: true, plan_id: 'different-offer' }, { ok: 'true', plan_id: 'offer' }]) {
+    response = () => Response.json(body)
+    await assert.rejects(claimZcodeOffer('offer'), { kind: 'parse' })
+  }
+  assert.equal(fetch.mock.callCount(), 5)
 })
 
 test('permanent HTTP failures and invalid JSON are not retried', async (t) => {

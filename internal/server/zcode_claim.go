@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	zcodebackend "github.com/denysvitali/llm-proxy/internal/backend/zcode"
 )
 
 func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
@@ -28,15 +30,26 @@ func (s *Server) zcodeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	outcome, err := s.accounts.ZCode.ClaimPlan(r.Context(), request.PlanID)
 	if err != nil {
+		if kind := zcodebackend.ClaimPreflightFailure(err); kind != "" {
+			status := http.StatusBadRequest
+			if kind == "login_required" {
+				status = http.StatusUnauthorized
+			}
+			writeJSON(w, status, zcodebackend.ClaimOutcome{PlanID: request.PlanID, FailureKind: kind})
+			return
+		}
+		// A transport or response error may follow a successful upstream claim.
+		// Force the next read to refresh rather than presenting stale balances.
+		s.zcodeUsageCache.invalidate()
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	status := http.StatusConflict
+	// Even an unrecognized or failed response may follow a submitted claim;
+	// subsequent account reads must not reuse a pre-attempt snapshot.
+	s.zcodeUsageCache.invalidate()
 	if outcome.OK || outcome.FailureKind == "already_claimed" {
 		status = http.StatusOK
-		// A claim changes billing state. Do not serve the pre-claim snapshot
-		// when the operator checks whether the entitlement was activated.
-		s.zcodeUsageCache.invalidate()
 	} else if outcome.FailureKind == "captcha" || outcome.FailureKind == "invalid_request" {
 		status = http.StatusBadRequest
 	} else if outcome.FailureKind == "login_required" {

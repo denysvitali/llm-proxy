@@ -2,7 +2,7 @@ import { queryOptions, type QueryClient } from '@tanstack/react-query'
 import {
   ApiError, fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage,
   fetchOverview, fetchRequests, fetchStats, fetchStatsSeries,
-  fetchUpstreamErrors, fetchZcodeQuota,
+  fetchUpstreamErrors, fetchZcodeOffers, fetchZcodeQuota,
 } from './api.ts'
 
 const retryTransient = (limit: number) => (failureCount: number, error: Error) =>
@@ -26,6 +26,7 @@ export const queryKeys = {
   requests: ['recent-requests'],
   grokUsage: ['grok-usage'],
   zcodeQuota: ['zcode-quota'],
+  zcodeOffers: ['zcode-offers'],
   minimaxUsage: ['minimax-usage'],
 } as const
 
@@ -81,6 +82,12 @@ export const dashboardQueries = {
     queryKey: queryKeys.zcodeQuota,
     queryFn: ({ signal }) => fetchZcodeQuota(signal),
     enabled,
+  }),
+  zcodeOffers: () => queryOptions({
+    queryKey: queryKeys.zcodeOffers,
+    queryFn: ({ signal }) => fetchZcodeOffers(signal),
+    retry: false,
+    placeholderData: undefined,
   }),
   minimaxUsage: (enabled: boolean) => queryOptions({
     ...usageOptions,

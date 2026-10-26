@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,6 +64,23 @@ func (m *Manager) ClaimPlan(ctx context.Context, planID string) (ClaimOutcome, e
 	return m.claimPlan(ctx, planID, "", nil)
 }
 
+// ClaimPreflightFailure identifies failures known to occur before a claim POST.
+// Other errors may have happened after submission and must remain uncertain.
+func ClaimPreflightFailure(err error) string {
+	var failure *schedulerFailure
+	if !errors.As(err, &failure) {
+		return ""
+	}
+	switch failure.reason {
+	case "captcha_preparation_failed":
+		return "captcha"
+	case "authentication_failed":
+		return "login_required"
+	default:
+		return ""
+	}
+}
+
 // before runs immediately before the POST, after authentication and CAPTCHA
 // preparation. The stored session cannot change during the mutation.
 func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, before func() error) (ClaimOutcome, error) {
@@ -116,7 +134,10 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 			return ClaimOutcome{}, err
 		}
 	}
-	resp, err := m.HTTPClient.Do(req)
+	// Claim is a mutation; following a 307/308 would replay its body and proof.
+	client := *m.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
 		return ClaimOutcome{}, schedulerError("claim_request_failed", fmt.Errorf("request ZCode plan claim: %w", err))
 	}

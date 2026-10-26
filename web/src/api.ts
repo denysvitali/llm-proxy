@@ -216,6 +216,35 @@ export interface ZcodeQuota extends ZcodeUsage {
   balances: ZcodeBalance[]
 }
 
+export interface ZcodeOffer {
+  plan_id: string
+  name?: string
+  description?: string
+  starts_at?: number
+  ends_at?: number
+  grant_units?: number
+  unit_type?: string
+  period?: string
+  entitlements: string[]
+  entitlement_details: {
+    entitlement_id: string
+    show_name?: string
+    grant_units?: number
+    unit_type?: string
+    period?: string
+  }[]
+}
+
+export interface ZcodeClaimResult {
+  ok: boolean
+  plan_id: string
+  failure_kind?: string
+  code?: number | string
+  message?: string
+  starts_at?: number
+  ends_at?: number
+}
+
 export interface MiniMaxQuotaWindow {
   remaining_percent?: number
   reset_at_ms?: number
@@ -291,20 +320,23 @@ export interface GrokUsage {
 export class ApiError extends Error {
   status: number
   kind: 'network' | 'http' | 'timeout' | 'parse'
+  details?: unknown
 
   constructor(
     message: string,
     status: number,
     kind: 'network' | 'http' | 'timeout' | 'parse',
+    details?: unknown,
   ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.kind = kind
+    this.details = details
   }
 }
 
-async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET', signal?: AbortSignal): Promise<T> {
+async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET', signal?: AbortSignal, body?: unknown): Promise<T> {
   const timeout = AbortSignal.timeout(method === 'POST' ? 60_000 : 10_000)
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
   const checkAborted = () => {
@@ -318,7 +350,7 @@ async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET', signal?: 
     res = await fetch(url, {
       method,
       signal: requestSignal,
-      ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}),
+      ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) } : {}),
     })
   } catch (e) {
     checkAborted()
@@ -327,14 +359,17 @@ async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET', signal?: 
 
   if (!res.ok) {
     let message = `${url}: HTTP ${res.status}`
+    let details: unknown
     try {
       const text = await res.text()
       if (text) {
         message = text
         try {
           const body = JSON.parse(text)
+          details = body
           const detail = typeof body.error === 'string' ? body.error : body.error?.message
           if (typeof detail === 'string') message = detail
+          else if (url === '/api/zcode/claim' && typeof body.message === 'string') message = body.message
           else if (url.startsWith('/api/minimax-code/')) {
             message = [body.accountError, body.checkinError].filter((part) => typeof part === 'string').join(' ') || 'MiniMax account information is temporarily unavailable.'
           }
@@ -346,7 +381,7 @@ async function getJSON<T>(url: string, method: 'GET' | 'POST' = 'GET', signal?: 
       checkAborted()
       // An unreadable error body still has a useful HTTP status.
     }
-    throw new ApiError(message, res.status, 'http')
+    throw new ApiError(message, res.status, 'http', details)
   }
 
   const contentType = res.headers.get('content-type') ?? ''
@@ -399,6 +434,33 @@ export async function fetchZcodeQuota(signal?: AbortSignal): Promise<ZcodeQuota>
     plans: quota.plans ?? [],
     balances: (quota.balances ?? []).map((balance) => ({ ...balance, capabilities: balance.capabilities ?? [] })),
   }
+}
+
+export async function fetchZcodeOffers(signal?: AbortSignal): Promise<{ plans: ZcodeOffer[] }> {
+  const offers = await getJSON<{ plans?: (Omit<ZcodeOffer, 'entitlements' | 'entitlement_details'> & {
+    entitlements?: string[] | null
+    entitlement_details?: ZcodeOffer['entitlement_details'] | null
+  })[] | null }>('/api/zcode/offers', 'GET', signal)
+  return { plans: (offers.plans ?? []).map((plan) => ({
+    ...plan, entitlements: plan.entitlements ?? [], entitlement_details: plan.entitlement_details ?? [],
+  })) }
+}
+
+export async function claimZcodeOffer(planID: string): Promise<ZcodeClaimResult> {
+  // Only an explicit operator action sends this request. Never retry a claim:
+  // a lost response may still have activated the plan.
+  let result: ZcodeClaimResult
+  try {
+    result = await getJSON<ZcodeClaimResult>('/api/zcode/claim', 'POST', undefined, { plan_id: planID })
+  } catch (error) {
+    const detail = error instanceof ApiError ? error.details as Partial<ZcodeClaimResult> | undefined : undefined
+    if (!detail || detail.ok !== false || detail.plan_id !== planID || typeof detail.failure_kind !== 'string') throw error
+    result = detail as ZcodeClaimResult
+  }
+  if (typeof result?.ok !== 'boolean' || result.plan_id !== planID) {
+    throw new ApiError('Could not confirm the ZCode claim result.', 0, 'parse')
+  }
+  return result
 }
 
 export async function fetchMiniMaxUsage(signal?: AbortSignal): Promise<MiniMaxUsage> {

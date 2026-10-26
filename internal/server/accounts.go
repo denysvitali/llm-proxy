@@ -102,7 +102,7 @@ func (s *Server) registerZCodeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/zcode/usage", s.handleZcodeUsage)
 	mux.HandleFunc("GET /api/zcode/quota", s.handleZcodeQuota)
 	mux.HandleFunc("GET /api/zcode/balance", s.handleZcodeQuota)
-	mux.HandleFunc("POST /api/zcode/claim", s.zcodeClaim)
+	mux.Handle("POST /api/zcode/claim", http.NewCrossOriginProtection().Handler(http.HandlerFunc(s.zcodeClaim)))
 	mux.HandleFunc("GET /api/zcode/offers", s.zcodeOffers)
 }
 
