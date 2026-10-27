@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Badge, Box, Button, Card, Group, Loader, Modal, Paper, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core'
+import { Alert, Badge, Button, Card, Group, Loader, Modal, ScrollArea, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconClock, IconListDetails, IconPointFilled, IconServerOff, IconShieldCheck } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { ApiError, fetchRequest, type InspectedRequest, type UpstreamErrorEvent } from '../../api'
@@ -62,51 +62,63 @@ function WireLabel({ kind }: { kind?: string }) {
 export function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
   const shown = errors.slice(0, 6)
   return (
-    <Card p="md" miw={0}>
+    <Card p="md" miw={0} className="activity-card">
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs" mb="sm">
-        <Group gap={8}>
+        <Group gap={8} wrap="nowrap" miw={0}>
           <ThemeIcon variant="light" size="sm" radius="md" aria-hidden="true"
             styles={{ root: { color: 'var(--data-critical)', background: 'color-mix(in srgb, var(--data-critical) 12%, var(--card))' } }}
           >
             <IconServerOff size={13} />
           </ThemeIcon>
-          <Title order={5} fz={13}>Recent upstream errors</Title>
+          <Title order={5} fz={13} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Recent upstream errors</Title>
         </Group>
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
           {errors.length === 1 ? '1 failure' : `${fmtInt(errors.length)} failures · newest first`}
         </Text>
       </Group>
+      <ScrollArea className="activity-feed" type="auto" viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Recent upstream errors' }}>
       {errors.length === 0 ? (
         <EmptyState icon={<IconShieldCheck size={20} />} title="No recent upstream errors"
           hint="No failures are present in the retained error history. This is separate from the chart time range." />
       ) : (
-        <Stack gap={6}>
-          {shown.map((e, i) => (
-            <Paper key={`${e.at}-${i}`} withBorder radius="md" p="xs" bg="var(--sunken)">
-              <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
-                <Box style={{ minWidth: 0 }}>
-                  <Group gap={8} wrap="nowrap">
-                    <StatusBadge status={e.status} />
-                    <EventTime at={e.at} />
+        <Table className="upstream-errors-table" verticalSpacing="xs" horizontalSpacing="sm">
+          <colgroup><col style={{ width: '26%' }} /><col /><col style={{ width: '24%' }} /><col style={{ width: '27%' }} /></colgroup>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th scope="col">Time</Table.Th>
+              <Table.Th scope="col">Backend / model</Table.Th>
+              <Table.Th scope="col">Status</Table.Th>
+              <Table.Th scope="col">Details</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {shown.map((e, i) => (
+              <Table.Tr key={`${e.at}-${i}`} data-fresh={isFresh(e.at) || undefined}>
+                <Table.Td><EventTime at={e.at} /></Table.Td>
+                <Table.Td>
+                  <Text size="sm" truncate title={`${e.backend} / ${e.model}`}>{e.backend} / {e.model}</Text>
+                </Table.Td>
+                <Table.Td><StatusBadge status={e.status} /></Table.Td>
+                <Table.Td>
+                  <Group gap={6} wrap="nowrap" justify="flex-end">
+                    {e.message ? (
+                      <Tooltip label={e.message} multiline maw={320} events={{ hover: true, focus: true, touch: true }}>
+                        <Text size="xs" c="dimmed" truncate tabIndex={0} aria-label={`Error message: ${e.message}`} style={{ cursor: 'default', maxWidth: 88 }}>Message</Text>
+                      </Tooltip>
+                    ) : (
+                      <Text size="xs" c="dimmed">—</Text>
+                    )}
+                    {e.request_id ? <RequestInspectButton id={e.request_id} /> : <Text size="xs" c="dimmed"> </Text>}
                   </Group>
-                  <Text size="sm" fw={500} mt={4} style={{ overflowWrap: 'anywhere' }}>
-                    {e.backend} / {e.model}
-                  </Text>
-                  {e.message && (
-                    <Box component="details" mt={4}>
-                      <Text component="summary" size="xs" c="dimmed" style={{ cursor: 'pointer' }}>View error message</Text>
-                      <Text size="xs" mt={6} style={{ overflowWrap: 'anywhere' }}>{e.message}</Text>
-                    </Box>
-                  )}
-                  {e.request_id && <RequestInspectButton id={e.request_id} />}
-                </Box>
-              </Group>
-            </Paper>
-          ))}
-          {errors.length > shown.length && (
-            <Text size="xs" c="dimmed">Showing the newest {shown.length} of {fmtInt(errors.length)} retained errors.</Text>
-          )}
-        </Stack>
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      )}
+      </ScrollArea>
+      {errors.length > shown.length && (
+        <Text size="xs" c="dimmed" mt="xs">Showing the newest {shown.length} of {fmtInt(errors.length)} retained errors.</Text>
       )}
     </Card>
   )
@@ -115,28 +127,27 @@ export function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] })
 export function RecentRequestsCard({
   requests,
   loading,
-  isMobile,
 }: {
   requests: InspectedRequest[]
   loading: boolean
-  isMobile: boolean
 }) {
   const shown = requests.slice(0, 8)
   return (
-    <Card p="md" miw={0}>
+    <Card p="md" miw={0} className="activity-card">
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs" mb="sm">
-        <Group gap={8}>
+        <Group gap={8} wrap="nowrap" miw={0}>
           <ThemeIcon variant="light" color="indigo" size="sm" radius="md" aria-hidden="true">
             <IconClock size={13} />
           </ThemeIcon>
-          <Title order={5} fz={13}>Recent requests</Title>
+          <Title order={5} fz={13} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Recent requests</Title>
         </Group>
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
           {requests.length > shown.length
             ? `Newest ${shown.length} of ${fmtInt(requests.length)}`
-            : `Last ${fmtInt(requests.length)} upstream attempts`}
+            : `${fmtInt(requests.length)} attempts`}
         </Text>
       </Group>
+      <ScrollArea className="activity-feed" type="auto" viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Recent requests' }}>
       {loading ? (
         <Group justify="center" py="sm" role="status"><Loader size="sm" aria-hidden="true" /></Group>
       ) : requests.length === 0 ? (
@@ -145,25 +156,9 @@ export function RecentRequestsCard({
           title="No requests captured yet"
           hint="The latest upstream attempts appear here once the proxy serves traffic."
         />
-      ) : isMobile ? (
-        <Stack gap={6}>
-          {shown.map((request) => (
-            <Box key={request.id} data-fresh={isFresh(request.at) || undefined} p={6} style={{ borderRadius: 8, minWidth: 0 }}>
-              <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
-                <Box style={{ minWidth: 0 }}>
-                  <EventTime at={request.at} />
-                  <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
-                    {request.backend} / {request.model}
-                  </Text>
-                </Box>
-                <StatusBadge status={request.status} />
-              </Group>
-              <RequestInspectButton id={request.id} />
-            </Box>
-          ))}
-        </Stack>
       ) : (
-        <Table verticalSpacing="xs" horizontalSpacing="sm">
+        <Table verticalSpacing="xs" horizontalSpacing="sm" className="recent-requests-table">
+          <colgroup><col style={{ width: '23%' }} /><col /><col style={{ width: '14%' }} /><col style={{ width: '20%' }} /><col style={{ width: '20%' }} /></colgroup>
           <Table.Thead>
             <Table.Tr>
               <Table.Th scope="col">Time</Table.Th>
@@ -180,7 +175,7 @@ export function RecentRequestsCard({
                   <EventTime at={request.at} />
                 </Table.Td>
                 <Table.Td>
-                  <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{request.backend} / {request.model}</Text>
+                  <Text size="sm" truncate title={`${request.backend} / ${request.model}`}>{request.backend} / {request.model}</Text>
                 </Table.Td>
                 <Table.Td><WireLabel kind={request.kind} /></Table.Td>
                 <Table.Td><StatusBadge status={request.status} /></Table.Td>
@@ -190,6 +185,7 @@ export function RecentRequestsCard({
           </Table.Tbody>
         </Table>
       )}
+      </ScrollArea>
     </Card>
   )
 }

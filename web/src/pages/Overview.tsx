@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
 import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, IconShieldCheck, IconWallet } from '@tabler/icons-react'
-import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { dashboardQueries } from '../queries'
@@ -19,6 +18,7 @@ import ErrorRetryCard from '../components/ErrorRetryCard'
 import OverviewHistory from '../components/overview/OverviewHistory'
 import OverviewTraffic from '../components/overview/OverviewTraffic'
 import { RecentRequestsCard, UpstreamErrorsCard } from '../components/overview/OverviewActivity'
+import './overview.css'
 
 const NO_MODELS: ModelStat[] = []
 
@@ -36,7 +36,6 @@ export default function OverviewPage() {
   const seriesQ = useQuery(dashboardQueries.series(range))
   const errorsQ = useQuery(dashboardQueries.errors())
   const requestsQ = useQuery(dashboardQueries.requests())
-  const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const models = statsQ.data?.models ?? NO_MODELS
   const totals = useMemo(() => {
     const speeds = models.map((model) => model.throughput_tps.p50).filter((speed) => Number.isFinite(speed) && speed > 0).sort((a, b) => a - b)
@@ -126,9 +125,9 @@ export default function OverviewPage() {
               <Stack gap="sm" miw={0}>
                 {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
                   onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />}
-                {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} isMobile={isMobile} />}
+                {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} />}
               </Stack>
-              <Stack gap="sm" miw={0} className="overview-errors">
+              <Stack gap="sm" miw={0}>
                 {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
                   onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
                 {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={240} radius="lg" /> : null}

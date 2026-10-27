@@ -51,6 +51,26 @@ export async function checkLiveRegressions(browser, base, overview) {
       'navigation and mobile layout must retain the existing connection');
     assert.equal(sockets.size, 1,
       'header and Overview share one open live-update connection');
+    await page.getByText('No requests captured yet', { exact: true }).waitFor();
+    // The viewport change above restyles the page; measure only once that
+    // reflow has settled, or it is mistaken for the request moving content.
+    const readiness = page.getByRole('heading', { name: 'Gateway readiness' });
+    await page.waitForFunction(() => {
+      const height = document.documentElement.scrollHeight;
+      const stable = height === window.__layoutHeight;
+      window.__layoutHeight = height;
+      return stable;
+    });
+    const before = await readiness.boundingBox();
+    const badgeBefore = await page.locator('.live-status').boundingBox();
+    sockets.values().next().value.send(JSON.stringify({ type: 'request', request: {
+      id: 'layout-test', at: new Date().toISOString(), backend: 'example', model: 'a-long-model-name-for-layout', status: '200', kind: 'openai-chat',
+    } }));
+    await page.getByRole('button', { name: 'Inspect request layout-test' }).waitFor();
+    const after = await readiness.boundingBox();
+    const badgeAfter = await page.locator('.live-status').boundingBox();
+    assert.ok(Math.abs(after.y - before.y) < 1, `a new request must not move subsequent sections: ${before.y} -> ${after.y}`);
+    assert.ok(Math.abs(badgeAfter.width - badgeBefore.width) < 1, 'a new request must not resize the live indicator');
     const updated = page.waitForResponse((response) => new URL(response.url()).pathname === '/stats');
     sockets.values().next().value.send(JSON.stringify({ type: 'stats-updated' }));
     await updated;

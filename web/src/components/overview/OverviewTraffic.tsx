@@ -1,4 +1,4 @@
-import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
+import { Accordion, Badge, Box, Button, Card, Group, ScrollArea, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { IconArrowUpRight, IconChartBar, IconShieldCheck } from '@tabler/icons-react'
 import { Link } from 'react-router-dom'
 import type { ModelStat } from '../../api'
@@ -13,9 +13,9 @@ import UptimeBadge from '../UptimeBadge'
 
 export default function OverviewTraffic({ models }: { models: ModelStat[] }) {
   const palette = useChartPalette()
-  const ranked = [...models].filter((model) => model.requests > 0).sort((a, b) => b.requests - a.requests).slice(0, 6)
+  const ranked = [...models].filter((model) => model.requests > 0).sort((a, b) => `${a.backend}/${a.model}`.localeCompare(`${b.backend}/${b.model}`))
   const totalRequests = models.reduce((total, model) => total + model.requests, 0)
-  const providers = providerAggregates(models).sort((a, b) => b.requests - a.requests)
+  const providers = providerAggregates(models).sort((a, b) => a.backend.localeCompare(b.backend))
   const mix = new Map(providerSegments(models, palette.series))
 
   return (
@@ -25,37 +25,28 @@ export default function OverviewTraffic({ models }: { models: ModelStat[] }) {
           <Group justify="space-between" align="flex-start" gap="xs" mb="md">
             <Box>
               <Text fw={650} fz={14}>Requests by model</Text>
-              <Text size="xs" c="dimmed">Ranked by recorded request volume</Text>
+              <Text size="xs" c="dimmed">Recorded request volume by model</Text>
             </Box>
             <Button component={Link} to="/models" variant="subtle" size="compact-xs" rightSection={<IconArrowUpRight size={14} />}>All models</Button>
           </Group>
-          {!ranked.length ? <EmptyState icon={<IconChartBar size={20} />} title="No model traffic yet" hint="Models are ranked here after the first request." /> : (
-            <Stack gap={12} component="ol" m={0} p={0} style={{ listStyle: 'none' }}>
-              {ranked.map((model) => {
-                const share = totalRequests ? model.requests / totalRequests * 100 : 0
-                return (
-                  <Stack key={`${model.backend}/${model.model}`} component="li" gap={6} miw={0} m={0} p={0}>
-                    <Group justify="space-between" align="flex-start" gap="xs" wrap="nowrap">
-                      <Box miw={0}>
-                        <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>{model.model}</Text>
-                        <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{model.backend}</Text>
-                      </Box>
-                      <Box ta="right" style={{ flexShrink: 0 }}>
-                        <Text size="sm" fw={600} className="tabular" title={`${model.requests.toLocaleString('en-US')} requests`}>{fmtInt(model.requests)}</Text>
-                        <Text size="xs" c="dimmed">{share.toFixed(1)}%</Text>
-                      </Box>
-                    </Group>
-                    <Tooltip label={`${model.backend}/${model.model}: ${model.requests.toLocaleString('en-US')} requests · ${share.toFixed(1)}% of all traffic`}>
-                      <div className="overview-rank-track" aria-hidden="true">
-                        <div style={{ width: `${share}%`, background: palette.magnitude }} />
-                      </div>
-                    </Tooltip>
-                  </Stack>
-                )
-              })}
-            </Stack>
+          <ScrollArea className="traffic-feed" type="auto" viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Requests by model' }}>
+          {!ranked.length ? <EmptyState icon={<IconChartBar size={20} />} title="No model traffic yet" hint="Models appear here after the first request." /> : (
+            <Table className="traffic-model-table" verticalSpacing="sm">
+              <Table.Thead><Table.Tr><Table.Th scope="col">Model</Table.Th><Table.Th scope="col" ta="right">Requests</Table.Th><Table.Th scope="col" ta="right">Share</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>
+                {ranked.map((model) => {
+                  const share = totalRequests ? model.requests / totalRequests * 100 : 0
+                  return <Table.Tr key={`${model.backend}/${model.model}`}>
+                    <Table.Td><Text size="sm" fw={600} truncate title={model.model}>{model.model}</Text><Text size="xs" c="dimmed" truncate title={model.backend}>{model.backend}</Text></Table.Td>
+                    <Table.Td ta="right" className="tabular">{fmtInt(model.requests)}</Table.Td>
+                    <Table.Td ta="right" className="tabular">{share.toFixed(1)}%</Table.Td>
+                  </Table.Tr>
+                })}
+              </Table.Tbody>
+            </Table>
           )}
-          {ranked.length > 0 && <Text size="xs" c="dimmed" mt="md">{ranked.length === 1 ? 'Top model' : `Top ${ranked.length} models`} · share of all requests</Text>}
+          </ScrollArea>
+          <Text size="xs" c="dimmed" mt="md">{ranked.length ? `${ranked.length} ${ranked.length === 1 ? 'model' : 'models'} · share of all requests` : 'Share of all requests'}</Text>
         </Card>
         <Card p="lg" miw={0}>
           <Group justify="space-between" align="flex-start" gap="xs" mb="md">
@@ -65,6 +56,7 @@ export default function OverviewTraffic({ models }: { models: ModelStat[] }) {
             </Box>
             <Button component={Link} to="/providers" variant="subtle" size="compact-xs" rightSection={<IconArrowUpRight size={14} />}>All providers</Button>
           </Group>
+          <ScrollArea className="traffic-feed" type="auto" viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Provider health' }}>
           {!providers.length ? <EmptyState icon={<IconShieldCheck size={20} />} title="No providers with traffic yet" hint="Backend health appears here after the first request is routed." /> : (
             <Accordion variant="default" miw={0}>
               {providers.map((provider) => {
@@ -102,6 +94,7 @@ export default function OverviewTraffic({ models }: { models: ModelStat[] }) {
               })}
             </Accordion>
           )}
+          </ScrollArea>
         </Card>
       </SimpleGrid>
     </PageSection>

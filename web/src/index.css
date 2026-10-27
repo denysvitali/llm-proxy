@@ -174,13 +174,6 @@ body {
 }
 .live-status[data-connected='true'] .live-led { background: var(--data-good); }
 .live-status[data-connected='true'] .live-led[data-pulse='on'] { animation: live-blip 900ms ease-out; }
-.live-count {
-  font-variant-numeric: tabular-nums;
-  background: color-mix(in srgb, var(--data-good) 14%, transparent);
-  border-radius: 999px;
-  padding: 0 6px;
-  font-size: 11px;
-}
 @keyframes live-blip {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--data-good) 55%, transparent); transform: scale(1); }
   35% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--data-good) 22%, transparent); transform: scale(1.3); }
@@ -420,15 +413,6 @@ body {
   .overview-stat-grid .stat-tile > .mantine-Group-root { margin-bottom: 6px; }
   .overview-summary-footer { justify-content: flex-start; column-gap: 16px; row-gap: 4px; margin-top: 8px; }
 }
-
-/* Model ranking rows on Overview */
-.overview-rank-track {
-  height: 5px;
-  border-radius: 3px;
-  background: var(--sunken);
-  overflow: hidden;
-}
-.overview-rank-track > div { height: 100%; border-radius: 3px; }
 
 .page-loading { padding-top: 8px; }
 

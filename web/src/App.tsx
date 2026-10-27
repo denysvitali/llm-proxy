@@ -198,7 +198,6 @@ function LiveStatusBadge() {
         {/* Remount on each live request to restart the blip animation. */}
         <span key={live?.count ?? 'idle'} className="live-led" data-pulse={live ? 'on' : 'off'} aria-hidden="true" />
         <span className="live-status-text">{connected ? 'Live' : 'Offline'}</span>
-        {live && <span className="live-count">{live.count}</span>}
       </Badge>
     </Tooltip>
   )
