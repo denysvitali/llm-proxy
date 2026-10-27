@@ -121,3 +121,33 @@ func runCodexFailureClientAPIs(t *testing.T, cases []codexFailureCase) {
 		}
 	}
 }
+
+func TestCodexStrictOutputBoundRejectsBeforeUpstream(t *testing.T) {
+	clients := []struct{ path, fields string }{
+		{"/v1/messages", `"max_tokens":128,"messages":[{"role":"user","content":"Hello"}]`},
+		{"/v1/chat/completions", `"max_tokens":128,"messages":[{"role":"user","content":"Hello"}]`},
+		{"/v1/responses", `"max_output_tokens":128,"input":"Hello"`},
+	}
+	for _, client := range clients {
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", client.path, streaming), func(t *testing.T) {
+				var calls atomic.Int32
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(http.StatusOK) }))
+				defer upstream.Close()
+				b := codex.New(upstream.URL, codexErrorToken{})
+				b.HTTP = upstream.Client()
+				fallback := newNamedScripted("second", backend.KindOpenAIResponses, step{resp: sseResponse("text/event-stream", "data: [DONE]\n\n")})
+				s := newFallbackServer(t, b, fallback, config.BackendConfig{Type: "codex"}, map[string]config.ModelRoute{"m1": {Backend: "codex", Model: "gpt-6-luna", Fallbacks: []config.FallbackRoute{{Backend: "second", Model: "fallback-model"}}}})
+				body := fmt.Sprintf(`{"model":"m1","stream":%t,%s}`, streaming, client.fields)
+				r := httptest.NewRequest(http.MethodPost, client.path, strings.NewReader(body))
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("X-LLM-Proxy-Require-Output-Bound", "true")
+				rec := httptest.NewRecorder()
+				s.Handler().ServeHTTP(rec, r)
+				if rec.Code != http.StatusBadRequest || calls.Load() != 0 || fallback.callCount() != 0 || !strings.Contains(rec.Body.String(), "cannot enforce") {
+					t.Fatalf("status=%d upstream=%d fallback=%d body=%s", rec.Code, calls.Load(), fallback.callCount(), rec.Body.String())
+				}
+			})
+		}
+	}
+}

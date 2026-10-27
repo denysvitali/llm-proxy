@@ -226,6 +226,16 @@ clients use the proxy's normal translation paths. That service rejects
 plain-string `input` and typed system messages, so the backend wraps string
 input as a user message and sends system prompts as `developer` messages.
 
+**Output-limit caveat:** the Codex subscription service rejects
+`max_output_tokens`, so this backend removes it before sending upstream. A
+client-provided output limit is advisory here; it is not a provider-side
+billing or usage cap. Callers that require a hard upstream bound can send the
+`X-LLM-Proxy-Require-Output-Bound` header: the Codex backend rejects such
+requests with HTTP 400 before contacting the provider. Header presence triggers
+this rejection regardless of its value. This check does not certify any other
+backend, and cancelling a stream or truncating a response does not bound provider
+billing. Existing requests without the header keep their prior behavior.
+
 ### ZCode Start Plan
 
 The `zcode` backend uses the ZCode Start Plan account session. It does not

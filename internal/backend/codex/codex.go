@@ -124,6 +124,13 @@ func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
+	// Codex subscription requests cannot guarantee provider-side output caps.
+	// Reject strict callers before acquiring credentials or making an upstream request.
+	if len(req.Header.Values("X-Llm-Proxy-Require-Output-Bound")) != 0 {
+		header := make(http.Header)
+		header.Set("Content-Type", "application/json")
+		return &backend.Response{Status: http.StatusBadRequest, Header: header, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"codex subscription backend cannot enforce a provider-side output bound"}}`))}, nil
+	}
 	credentials, err := c.credentials(ctx)
 	if err != nil {
 		return nil, err
