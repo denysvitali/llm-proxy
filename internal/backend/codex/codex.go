@@ -22,9 +22,7 @@ import (
 
 const (
 	defaultBaseURL = "https://chatgpt.com/backend-api/codex"
-	// The Codex catalog is version-gated. Keep this aligned with the current
-	// CLI protocol version; old values can make an otherwise valid session
-	// receive an unusable/empty catalog.
+	// Last-known stable version used when registry discovery is unavailable.
 	clientVersion = "0.164.0"
 	modelCacheTTL = 5 * time.Minute
 )
@@ -37,6 +35,7 @@ type Client struct {
 	modelMu      sync.Mutex
 	cachedModels []string
 	modelsUntil  time.Time
+	versions     *versionDiscovery
 }
 
 func New(baseURL string, tokens backend.TokenSource) *Client {
@@ -85,7 +84,11 @@ func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	endpoint := c.BaseURL + "/models?client_version=" + url.QueryEscape(clientVersion)
+	versions := c.versions
+	if versions == nil {
+		versions = stableCodexVersion
+	}
+	endpoint := c.BaseURL + "/models?client_version=" + url.QueryEscape(versions.latest(ctx))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 )
@@ -22,8 +23,18 @@ func (s staticCredentials) Credentials(context.Context) (Credentials, error) {
 }
 
 func TestModelsUsesChatGPTAccountAuthentication(t *testing.T) {
+	registryRequests, catalogRequests := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/models" || r.URL.Query().Get("client_version") != clientVersion {
+		if r.URL.Path == "/latest" {
+			registryRequests++
+			if r.Header.Get("Authorization") != "" || r.Header.Get("ChatGPT-Account-Id") != "" {
+				t.Errorf("registry auth headers = %#v", r.Header)
+			}
+			writeTestJSON(w, map[string]string{"version": "0.165.0"})
+			return
+		}
+		catalogRequests++
+		if r.URL.Path != "/models" || r.URL.Query().Get("client_version") != "0.165.0" {
 			t.Errorf("request URL = %s", r.URL)
 		}
 		if r.Header.Get("Authorization") != "Bearer token" || r.Header.Get("ChatGPT-Account-Id") != "account" {
@@ -37,9 +48,20 @@ func TestModelsUsesChatGPTAccountAuthentication(t *testing.T) {
 	defer server.Close()
 	client := New(server.URL, staticCredentials{Credentials{AccessToken: "token", AccountID: "account"}})
 	client.HTTP = server.Client()
+	client.versions = &versionDiscovery{client: server.Client(), endpoint: server.URL + "/latest"}
 	models, err := client.Models(t.Context())
 	if err != nil || len(models) != 1 || models[0] != "gpt-codex" {
 		t.Fatalf("Models = %#v, %v", models, err)
+	}
+	models[0] = "modified"
+	models, err = client.Models(t.Context())
+	if err != nil || models[0] != "gpt-codex" || registryRequests != 1 || catalogRequests != 1 {
+		t.Fatalf("cached Models = %#v, %v; registry/catalog requests = %d/%d", models, err, registryRequests, catalogRequests)
+	}
+	client.modelsUntil = time.Time{}
+	_, err = client.Models(t.Context())
+	if err != nil || registryRequests != 1 || catalogRequests != 2 {
+		t.Fatalf("refreshed catalog: %v; registry/catalog requests = %d/%d", err, registryRequests, catalogRequests)
 	}
 }
 
