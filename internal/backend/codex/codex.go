@@ -25,7 +25,7 @@ const (
 	// The Codex catalog is version-gated. Keep this aligned with the current
 	// CLI protocol version; old values can make an otherwise valid session
 	// receive an unusable/empty catalog.
-	clientVersion = "0.145.0"
+	clientVersion = "0.164.0"
 	modelCacheTTL = 5 * time.Minute
 )
 
