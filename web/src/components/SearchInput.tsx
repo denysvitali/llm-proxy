@@ -12,9 +12,8 @@ export default function SearchInput({ value, onChange, placeholder = 'Search…'
   return (
     <TextInput
       ref={inputRef}
-      className="search-input"
       type="search"
-      leftSection={<IconSearch size={17} aria-hidden />}
+      leftSection={<IconSearch size={16} aria-hidden />}
       rightSection={value ? (
         <ActionIcon aria-label="Clear search" variant="subtle" color="gray" onClick={() => { onChange(''); inputRef.current?.focus() }} size={36}>
           <IconX size={16} stroke={1.8} aria-hidden />

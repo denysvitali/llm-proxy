@@ -5,9 +5,9 @@ import {
   Badge,
   Box,
   Button,
+  Card,
   Group,
   Loader,
-  Paper,
   Select,
   Stack,
   Text,
@@ -47,20 +47,14 @@ export default function ModelCatalog() {
   const currentPage = Math.min(page, lastPage)
   const failed = enabled.filter((backend) => !backend.catalogOK).length
   return (
-    <Paper
-      component="section"
-      aria-label="Available model catalog"
-      withBorder
-      radius="lg"
-      className="catalog-panel"
-    >
-      <Group justify="space-between" gap="xs" mb="md" className="catalog-heading">
-        <Group gap="sm" wrap="nowrap" className="catalog-heading-title">
-          <span className="catalog-section-icon">
-            <IconCube size={19} />
+    <Card component="section" aria-label="Available model catalog" miw={0}>
+      <Group justify="space-between" gap="xs" mb="md" wrap="nowrap">
+        <Group gap="sm" wrap="nowrap" miw={0}>
+          <span className="stat-tile-icon" aria-hidden>
+            <IconCube size={17} />
           </span>
-          <Box>
-            <Title order={2} size="h4">
+          <Box miw={0}>
+            <Title order={2} size="h4" fz={15}>
               Available models
             </Title>
             <Text size="xs" c="dimmed">
@@ -68,21 +62,24 @@ export default function ModelCatalog() {
             </Text>
           </Box>
         </Group>
-        <Badge variant="light" color="brand">
+        <Badge variant="light" color="indigo" style={{ flexShrink: 0 }}>
           {query.data ? plural(catalog.length, 'model') : '— models'}
         </Badge>
       </Group>
-      <div className="catalog-search-row">
-        <SearchInput
-          label="Find an available model"
-          placeholder="Search model IDs or providers…"
-          value={filter}
-          onChange={(value) => {
-            setFilter(value)
-            setPage(0)
-          }}
-        />
+      <Group gap="sm" align="flex-start" mb="sm" wrap="wrap">
+        <Box flex={1} miw={220}>
+          <SearchInput
+            label="Find an available model"
+            placeholder="Search model IDs or providers…"
+            value={filter}
+            onChange={(value) => {
+              setFilter(value)
+              setPage(0)
+            }}
+          />
+        </Box>
         <Select
+          w={220}
           aria-label="Filter available models by provider"
           value={provider}
           allowDeselect={false}
@@ -95,7 +92,7 @@ export default function ModelCatalog() {
             ...enabled.map((backend) => ({ value: backend.name, label: backend.name })),
           ]}
         />
-      </div>
+      </Group>
       {query.isPending ? (
         <Group py="lg" justify="center" role="status">
           <Loader size="sm" />
@@ -117,7 +114,7 @@ export default function ModelCatalog() {
               {failed} provider catalog{failed === 1 ? ' is' : 's are'} unavailable.
             </Text>
           )}
-          <Group justify="space-between" gap="xs" mt="md" className="catalog-result-summary">
+          <Group justify="space-between" gap="xs" mt="md" mb="sm">
             <Text size="sm" fw={600}>Model catalog</Text>
             <Text size="xs" c="dimmed" aria-live="polite">
               {visible.length ? `${visible.length} available` : 'No results'} · {plural(enabled.length, 'enabled provider')}
@@ -135,7 +132,7 @@ export default function ModelCatalog() {
                 : 'No available models match that search.'}
             </Text>
           )}
-          <Group className="catalog-pagination" justify="space-between" gap="xs">
+          <Group className="catalog-pagination" justify="space-between" gap="xs" mt="md">
             <Text size="xs" c="dimmed" aria-live="polite">
               {visible.length
                 ? `${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, visible.length)} of ${visible.length}`
@@ -168,7 +165,7 @@ export default function ModelCatalog() {
           </Group>
         </>
       )}
-    </Paper>
+    </Card>
   )
 }
 
@@ -176,9 +173,9 @@ function CatalogModel({ id, providers }: { id: string; providers: string[] }) {
   const clipboard = useClipboard({ timeout: 2000 })
   return (
     <div className="catalog-model-entry">
-      <Box miw={0} className="catalog-model-entry-copy">
-        <Text className="catalog-model-id" title={id} style={{ userSelect: 'text' }}>{id}</Text>
-        <Group gap={5} mt={7} wrap="wrap" className="catalog-model-providers" aria-label="Available from providers">
+      <Box miw={0}>
+        <Text className="catalog-model-id" title={id}>{id}</Text>
+        <Group gap={5} mt={7} wrap="wrap" aria-label="Available from providers">
           {providers.map((provider) => <Badge key={provider} size="xs" variant="light" color="gray">{provider}</Badge>)}
         </Group>
       </Box>
@@ -188,6 +185,7 @@ function CatalogModel({ id, providers }: { id: string; providers: string[] }) {
         size={40}
         aria-label={`Copy ${id}`}
         onClick={() => clipboard.copy(id)}
+        style={{ flexShrink: 0 }}
       >
         {clipboard.copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
       </ActionIcon>

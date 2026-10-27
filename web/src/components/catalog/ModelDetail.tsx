@@ -274,7 +274,7 @@ function DetailStat({ label, value, hint }: { label: string; value: string; hint
 
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Paper withBorder radius="lg" p="md" miw={0}>
+    <Paper withBorder radius="lg" p="md" miw={0} bg="var(--card)">
       <Title order={3} size="h5" mb="md" style={{ overflowWrap: 'anywhere' }}>
         {title}
       </Title>

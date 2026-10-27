@@ -62,20 +62,20 @@ function WireLabel({ kind }: { kind?: string }) {
 export function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] }) {
   const shown = errors.slice(0, 6)
   return (
-    <Card withBorder radius="lg" p="md">
-      <div className="overview-card-header">
+    <Card p="md" miw={0}>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs" mb="sm">
         <Group gap={8}>
           <ThemeIcon variant="light" size="sm" radius="md" aria-hidden="true"
             styles={{ root: { color: 'var(--data-critical)', background: 'color-mix(in srgb, var(--data-critical) 12%, var(--card))' } }}
           >
             <IconServerOff size={13} />
           </ThemeIcon>
-          <Title order={5} className="overview-card-title">Recent upstream errors</Title>
+          <Title order={5} fz={13}>Recent upstream errors</Title>
         </Group>
         <Text size="xs" c="dimmed">
           {errors.length === 1 ? '1 failure' : `${fmtInt(errors.length)} failures · newest first`}
         </Text>
-      </div>
+      </Group>
       {errors.length === 0 ? (
         <EmptyState icon={<IconShieldCheck size={20} />} title="No recent upstream errors"
           hint="No failures are present in the retained error history. This is separate from the chart time range." />
@@ -85,17 +85,17 @@ export function UpstreamErrorsCard({ errors }: { errors: UpstreamErrorEvent[] })
             <Paper key={`${e.at}-${i}`} withBorder radius="md" p="xs" bg="var(--sunken)">
               <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
                 <Box style={{ minWidth: 0 }}>
-                  <div className="overview-error-meta">
+                  <Group gap={8} wrap="nowrap">
                     <StatusBadge status={e.status} />
                     <EventTime at={e.at} />
-                  </div>
-                  <Text size="sm" fw={500} mt={4} className="overview-error-identity">
+                  </Group>
+                  <Text size="sm" fw={500} mt={4} style={{ overflowWrap: 'anywhere' }}>
                     {e.backend} / {e.model}
                   </Text>
                   {e.message && (
-                    <Box component="details" mt={4} className="overview-error-disclosure">
-                      <Text component="summary" size="xs" c="dimmed">View error message</Text>
-                      <Text size="xs" mt={6} className="overview-error-message">{e.message}</Text>
+                    <Box component="details" mt={4}>
+                      <Text component="summary" size="xs" c="dimmed" style={{ cursor: 'pointer' }}>View error message</Text>
+                      <Text size="xs" mt={6} style={{ overflowWrap: 'anywhere' }}>{e.message}</Text>
                     </Box>
                   )}
                   {e.request_id && <RequestInspectButton id={e.request_id} />}
@@ -123,20 +123,20 @@ export function RecentRequestsCard({
 }) {
   const shown = requests.slice(0, 8)
   return (
-    <Card withBorder radius="lg" p="md">
-      <div className="overview-card-header">
+    <Card p="md" miw={0}>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs" mb="sm">
         <Group gap={8}>
-          <ThemeIcon variant="light" color="brand" size="sm" radius="md" aria-hidden="true">
+          <ThemeIcon variant="light" color="indigo" size="sm" radius="md" aria-hidden="true">
             <IconClock size={13} />
           </ThemeIcon>
-          <Title order={5} className="overview-card-title">Recent requests</Title>
+          <Title order={5} fz={13}>Recent requests</Title>
         </Group>
         <Text size="xs" c="dimmed">
           {requests.length > shown.length
             ? `Newest ${shown.length} of ${fmtInt(requests.length)}`
             : `Last ${fmtInt(requests.length)} upstream attempts`}
         </Text>
-      </div>
+      </Group>
       {loading ? (
         <Group justify="center" py="sm" role="status"><Loader size="sm" aria-hidden="true" /></Group>
       ) : requests.length === 0 ? (
@@ -148,26 +148,22 @@ export function RecentRequestsCard({
       ) : isMobile ? (
         <Stack gap={6}>
           {shown.map((request) => (
-            <Box key={request.id} className="overview-activity-item" data-fresh={isFresh(request.at) || undefined}>
-              <div className="overview-activity-item-main">
-                <div className="overview-activity-item-meta">
+            <Box key={request.id} data-fresh={isFresh(request.at) || undefined} p={6} style={{ borderRadius: 8, minWidth: 0 }}>
+              <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+                <Box style={{ minWidth: 0 }}>
                   <EventTime at={request.at} />
-                  <Text size="xs" c="dimmed" className="overview-identifier">
+                  <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
                     {request.backend} / {request.model}
                   </Text>
-                </div>
-                <Group gap={6}>
-                  <StatusBadge status={request.status} />
-                </Group>
-              </div>
-              <div className="overview-activity-item-actions">
-                <RequestInspectButton id={request.id} />
-              </div>
+                </Box>
+                <StatusBadge status={request.status} />
+              </Group>
+              <RequestInspectButton id={request.id} />
             </Box>
           ))}
         </Stack>
       ) : (
-        <Table verticalSpacing="xs" horizontalSpacing="sm" className="overview-activity-table">
+        <Table verticalSpacing="xs" horizontalSpacing="sm">
           <Table.Thead>
             <Table.Tr>
               <Table.Th scope="col">Time</Table.Th>

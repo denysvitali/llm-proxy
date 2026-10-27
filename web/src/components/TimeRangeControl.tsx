@@ -1,4 +1,4 @@
-import { rem, SegmentedControl, VisuallyHidden } from '@mantine/core'
+import { SegmentedControl, VisuallyHidden } from '@mantine/core'
 import { useReducedMotion } from '@mantine/hooks'
 
 const ranges = [
@@ -7,11 +7,6 @@ const ranges = [
   { value: '24h', description: 'Last 24 hours' },
   { value: '7d', description: 'Last 7 days' },
 ]
-
-const trackStyle = {
-  background: 'var(--segmented-track)',
-  padding: 2,
-} as const
 
 export function TimeRangeControl({
   value,
@@ -27,28 +22,18 @@ export function TimeRangeControl({
   return (
     <SegmentedControl
       size="xs"
-      radius="sm"
       aria-label="Time range"
       value={value}
       onChange={onChange}
       disabled={disabled}
-      // Console segmented control: hairline-ruled thumb on the shared
-      // --segmented-* materials, matching the header nav.
       styles={{
-        root: { maxWidth: '100%', flexShrink: 0, ...trackStyle },
-        indicator: {
-          backgroundColor: 'var(--segmented-thumb)',
-          boxShadow: '0 0 0 1px var(--hairline)',
-          transitionDuration: reduceMotion ? '0ms' : undefined,
-        },
+        root: { maxWidth: '100%', flexShrink: 0 },
         label: {
-          color: 'var(--mantine-color-text)',
-          minHeight: rem(44),
-          minWidth: rem(44),
+          minHeight: 44,
+          minWidth: 44,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: `0 ${rem(8)}`,
           transitionDuration: reduceMotion ? '0ms' : undefined,
         },
       }}

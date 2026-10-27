@@ -1,4 +1,4 @@
-import { Box, Group, Text } from '@mantine/core'
+import { Box, Card, Group, Text } from '@mantine/core'
 import { useId, type ReactNode } from 'react'
 
 type Accent = 'brand' | 'teal' | 'orange' | 'grape' | 'gray' | 'red'
@@ -11,8 +11,9 @@ interface StatTileProps {
   accent?: Accent
 }
 
-// One tile inside a divided stat band (see .stat-band in index.css): the band
-// surface carries the card chrome, tiles are separated by hairline gaps.
+// One stat card in the overview band: icon chip, label, measured value,
+// hint. The optional accent re-tints the icon chip (e.g. the success-rate
+// tile turns warning-colored under 99%).
 export default function StatTile({ label, value, hint, icon, accent = 'gray' }: StatTileProps) {
   const labelId = useId()
   const hasValue = value !== null && value !== undefined && value !== '' && typeof value !== 'boolean'
@@ -20,18 +21,20 @@ export default function StatTile({ label, value, hint, icon, accent = 'gray' }: 
   const hasHint = hint !== null && hint !== undefined && hint !== false && hint !== ''
 
   return (
-    <Box
+    <Card
       className="stat-tile"
       data-accent={accent}
       role="group"
       aria-labelledby={labelId}
+      p="md"
+      miw={0}
     >
-      <Group className="stat-head" justify="space-between" align="center" wrap="nowrap" gap="xs">
-        <Text id={labelId} className="stat-label" lh={1.35} style={{ minWidth: 0 }}>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs" mb={10}>
+        <Text id={labelId} size="xs" fw={600} c="dimmed" lh={1.35} style={{ minWidth: 0 }}>
           {label}
         </Text>
         {icon && (
-          <span aria-hidden="true" className="stat-icon">
+          <span aria-hidden="true" className="stat-tile-icon">
             {icon}
           </span>
         )}
@@ -39,20 +42,21 @@ export default function StatTile({ label, value, hint, icon, accent = 'gray' }: 
       <Box style={{ display: 'flex', alignItems: 'flex-start', minWidth: 0 }}>
         <Text
           component="div"
-          className="stat-value"
+          fz={24}
+          fw={700}
           lh={1.1}
-          style={{ overflowWrap: 'anywhere' }}
+          style={{ overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}
         >
           {hasValue ? value : <span role="img" aria-label="No data">—</span>}
         </Text>
       </Box>
       {hasHint && (
-        <Box className="stat-hint" style={{ minWidth: 0 }}>
+        <Box style={{ minWidth: 0 }} mt={4}>
           <Text size="xs" c="dimmed" lh={1.35} style={{ overflowWrap: 'anywhere' }}>
             {hint}
           </Text>
         </Box>
       )}
-    </Box>
+    </Card>
   )
 }

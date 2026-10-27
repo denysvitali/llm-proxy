@@ -53,9 +53,6 @@ export default function ModelTraffic({
     <ScrollArea>
       <Table
         miw={750}
-        verticalSpacing="sm"
-        horizontalSpacing="md"
-        highlightOnHover
         className="models-table"
         aria-label="Model traffic and latency"
       >
@@ -89,13 +86,12 @@ export default function ModelTraffic({
             <Table.Tr
               key={`${model.backend}/${model.model}`}
               onClick={() => onInspect(model)}
-              className="catalog-traffic-row"
             >
-              <Table.Td className="catalog-identity-cell">
-                <Text size="sm" fw={600} className="catalog-model-name">
+              <Table.Td>
+                <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>
                   {model.model}
                 </Text>
-                <Group gap={8} mt={5}>
+                <Group gap={8} mt={5} wrap="nowrap">
                   <Text size="xs" c="dimmed">
                     {model.backend}
                   </Text>
@@ -109,7 +105,7 @@ export default function ModelTraffic({
                 ta="right"
                 className={
                   model.requests > 0 && model.successes / model.requests < 0.9
-                    ? 'catalog-warning-value'
+                    ? 'warning-value'
                     : undefined
                 }
               >
@@ -142,20 +138,20 @@ export default function ModelTraffic({
 
 function ModelCard({ model, onInspect }: { model: ModelStat; onInspect: () => void }) {
   return (
-    <Card withBorder radius="md" p="md" className="catalog-traffic-card" data-model-card>
+    <Card p="md" radius="lg" data-model-card miw={0}>
       <Group justify="space-between" wrap="nowrap" align="flex-start" mb="sm">
         <Box miw={0}>
           <Text size="xs" c="dimmed" mb={4}>
             {model.backend}
           </Text>
-          <Text fw={650} className="catalog-model-name">
+          <Text fw={650} style={{ overflowWrap: 'anywhere' }}>
             {model.model}
           </Text>
         </Box>
         <ActionIcon
           size={44}
           variant="light"
-          color="brand"
+          color="indigo"
           aria-label={`Open details for ${model.backend} ${model.model}`}
           onClick={onInspect}
         >
@@ -168,7 +164,7 @@ function ModelCard({ model, onInspect }: { model: ModelStat; onInspect: () => vo
           {observedRate(model.successes / model.requests, model.requests)} success
         </Text>
       </Group>
-      <SimpleGrid cols={3} spacing="sm" className="catalog-mobile-metrics">
+      <SimpleGrid cols={3} spacing="sm">
         <Metric label="Requests" value={fmtInt(model.requests)} />
         <Metric label="First token" value={fmtSec(model.ttft_seconds.p50)} />
         <Metric label="Tokens / sec" value={fmtTps(model.throughput_tps.p50)} />

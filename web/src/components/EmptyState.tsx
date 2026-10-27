@@ -14,19 +14,15 @@ export function EmptyState({
   return (
     <Stack
       role="status"
-      className="empty-state"
       aria-atomic="true"
       align="center"
       py="lg"
       px="sm"
-      gap={6}
+      gap={8}
       miw={0}
       style={{ overflowWrap: 'anywhere' }}
     >
-      <span
-        aria-hidden="true"
-        className="empty-state-icon"
-      >
+      <span aria-hidden="true" className="empty-state-icon">
         {icon}
       </span>
       <Title order={5} fz={14} ta="center" maw="100%">

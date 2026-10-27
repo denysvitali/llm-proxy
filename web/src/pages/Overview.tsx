@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Skeleton, Stack, Text, Title } from '@mantine/core'
+import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
 import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, IconShieldCheck, IconWallet } from '@tabler/icons-react'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
@@ -19,7 +19,6 @@ import ErrorRetryCard from '../components/ErrorRetryCard'
 import OverviewHistory from '../components/overview/OverviewHistory'
 import OverviewTraffic from '../components/overview/OverviewTraffic'
 import { RecentRequestsCard, UpstreamErrorsCard } from '../components/overview/OverviewActivity'
-import './overview.css'
 
 const NO_MODELS: ModelStat[] = []
 
@@ -57,7 +56,7 @@ export default function OverviewPage() {
   const coreFailed = statsQ.isError && ovQ.isError && seriesQ.isError && errorsQ.isError && requestsQ.isError
   return (
     <Fade pending={statsQ.isPending || ovQ.isPending}>
-      <Stack gap="md" className="overview-page">
+      <Stack gap="lg" className="overview-page">
         <PageHeader title="Overview" subtitle="Traffic, performance, and the health of your gateway."
           extra={<Button component={Link} to="/models" variant="default" size="sm" rightSection={<IconArrowUpRight size={16} />}>Explore models</Button>} />
 
@@ -79,22 +78,20 @@ export default function OverviewPage() {
 
         <section aria-label="Traffic summary">
           {statsQ.data ? <>
-            <Card className="stat-band" p={0}>
-              <SimpleGrid cols={{ base: 2, md: 4 }} spacing={1} className="stat-band-grid">
-                <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={15} />} />
-                <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
-                  hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={15} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
-                <StatTile label="Tokens served" value={fmtInt(totals.input + totals.output)} hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`} icon={<IconCoins size={15} />} />
-                <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={15} />} />
-              </SimpleGrid>
-            </Card>
-            <Group className="overview-summary-footer" justify="space-between" gap="xs">
+            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md" className="overview-stat-grid">
+              <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={16} />} />
+              <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
+                hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={16} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
+              <StatTile label="Tokens served" value={fmtInt(totals.input + totals.output)} hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`} icon={<IconCoins size={16} />} />
+              <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={16} />} />
+            </SimpleGrid>
+            <Group className="overview-summary-footer" justify="space-between" gap="xs" mt="sm" wrap="wrap">
               <Text size="xs" c="dimmed">{models.filter((model) => model.requests > 0).length} {models.filter((model) => model.requests > 0).length === 1 ? 'model' : 'models'} with traffic</Text>
-              <Group gap="md"><Text size="xs" c="dimmed"><Text span inherit fw={600}>{fmtInt(totals.toolCalls)}</Text> tool calls</Text><Text size="xs" style={{ color: totals.toolErrors ? 'var(--data-critical)' : undefined }} c={totals.toolErrors ? undefined : 'dimmed'}><Text span inherit fw={600}>{fmtInt(totals.toolErrors)}</Text> tool errors{totals.toolCalls > 0 ? ` · ${(100 * clampRate(totals.toolErrors / totals.toolCalls)).toFixed(1)}%` : ''}</Text></Group>
+              <Group gap="md"><Text size="xs" c="dimmed"><Text span inherit fw={600}>{fmtInt(totals.toolCalls)}</Text> tool calls</Text><Text size="xs" c={totals.toolErrors ? 'red' : 'dimmed'}><Text span inherit fw={600}>{fmtInt(totals.toolErrors)}</Text> tool errors{totals.toolCalls > 0 ? ` · ${(100 * clampRate(totals.toolErrors / totals.toolCalls)).toFixed(1)}%` : ''}</Text></Group>
             </Group>
           </> : statsQ.isPending ? (
-            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm" className="overview-stat-grid">
-              {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={108} radius="md" />)}
+            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md" className="overview-stat-grid">
+              {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={118} radius="lg" />)}
             </SimpleGrid>
           ) : null}
           {!coreFailed && statsQ.isError ? (
@@ -107,10 +104,10 @@ export default function OverviewPage() {
 
         {!coreFailed && <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />}
 
-        {!coreFailed && usageNames.length > 0 && <Accordion variant="separated" radius="md" className="overview-subscriptions" value="subscriptions" onChange={() => {}}>
+        {!coreFailed && usageNames.length > 0 && <Accordion variant="separated" radius="lg" className="overview-subscriptions" value="subscriptions" onChange={() => {}}>
           <Accordion.Item value="subscriptions">
             <Accordion.Control icon={<IconWallet size={18} stroke={1.6} />}>
-              <Group justify="space-between" gap="xs" pr="sm">
+              <Group justify="space-between" gap="xs" pr="sm" miw={0}>
                 <Box><Text size="sm" fw={600}>Subscription usage</Text><Text size="xs" c="dimmed">{usageNames.join(' · ')} account quotas</Text></Box>
                 <Badge variant="light" color="gray" tt="none">{usageNames.length} accounts</Badge>
               </Group>
@@ -125,18 +122,18 @@ export default function OverviewPage() {
 
         {!coreFailed && (
           <PageSection title="Recent activity" description="Retained upstream attempts and failures · updates live and every 30 seconds · independent of chart range">
-            <div className="overview-activity-grid">
-              <Stack gap="sm">
+            <SimpleGrid cols={{ base: 1, '80em': 2 }} spacing="md" miw={0}>
+              <Stack gap="sm" miw={0}>
                 {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
                   onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />}
                 {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} isMobile={isMobile} />}
               </Stack>
-              <Stack gap="sm" className="overview-errors">
+              <Stack gap="sm" miw={0} className="overview-errors">
                 {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
                   onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
-                {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={240} radius="md" /> : null}
+                {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={240} radius="lg" /> : null}
               </Stack>
-            </div>
+            </SimpleGrid>
           </PageSection>
         )}
 
@@ -148,33 +145,30 @@ export default function OverviewPage() {
 }
 
 function GatewaySnapshot({ overview }: { overview: Overview }) {
-  const enabled = overview.backends.filter((backend) => backend.enabled)
+  const enabled = overview.backends.filter((backend) => backend?.enabled)
   const needsAttention = (backend: Overview['backends'][number]) => (!backend.hasKey && !backend.authConfigured) || !backend.catalogOK
   const attention = enabled.filter(needsAttention)
   const ordered = [...attention, ...enabled.filter((backend) => !needsAttention(backend))]
   return (
-    <aside className="overview-gateway" aria-label="Gateway configuration summary">
-      <div className="overview-gateway-heading">
-        <Title order={2}>Gateway readiness</Title>
-        <Group gap="xs">
+    <PageSection title="Gateway readiness" description="Configuration state of every enabled provider">
+      <Card p="lg" miw={0}>
+        <Group justify="space-between" gap="xs" mb="sm" wrap="wrap">
           <Badge color={attention.length ? 'yellow' : 'gray'} variant="light" tt="none">{attention.length ? `${attention.length} need attention` : enabled.length ? 'Catalogs ready' : 'No enabled providers'}</Badge>
           <Text size="xs" c="dimmed">{enabled.length} / {overview.backends.length} enabled · client auth {overview.authEnabled ? 'on' : 'off'}</Text>
         </Group>
-      </div>
-      <Card className="overview-gateway-card" withBorder p="md">
         {ordered.length === 0 ? <Text size="sm" c="dimmed">No enabled providers.</Text> : (
-          <div className="overview-readiness-list">
-            {ordered.slice(0, 8).map((backend) => <div key={backend.name} className="overview-readiness-row">
-              <Text size="sm" fw={550} className="overview-identifier">{backend.name}</Text>
-              <Text size="xs" className="overview-readiness-status" data-attention={needsAttention(backend)}>{!backend.hasKey && !backend.authConfigured ? 'Auth needed' : !backend.catalogOK ? 'Catalog unavailable' : 'Catalog ready'}</Text>
-            </div>)}
-          </div>
+          <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing={6} verticalSpacing={6}>
+            {ordered.slice(0, 8).map((backend) => <Group key={backend.name} justify="space-between" gap="xs" wrap="nowrap" px="xs" py={4} style={{ borderRadius: 8, background: 'var(--sunken)' }}>
+              <Text size="sm" fw={550} style={{ overflowWrap: 'anywhere' }}>{backend.name}</Text>
+              <Text size="xs" c={needsAttention(backend) ? 'orange' : 'dimmed'} style={{ flexShrink: 0 }}>{!backend.hasKey && !backend.authConfigured ? 'Auth needed' : !backend.catalogOK ? 'Catalog unavailable' : 'Catalog ready'}</Text>
+            </Group>)}
+          </SimpleGrid>
         )}
-        <Group gap="sm" mt="sm">
+        <Group gap="sm" mt="md">
           <Button component={Link} to="/providers" variant="default" size="compact-sm" rightSection={<IconArrowUpRight size={14} />}>Manage providers{ordered.length > 8 ? ` (${enabled.length})` : ''}</Button>
           <Button component={Link} to="/setup" variant="subtle" size="compact-sm">Connect a client</Button>
         </Group>
       </Card>
-    </aside>
+    </PageSection>
   )
 }

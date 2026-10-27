@@ -1,4 +1,4 @@
-import { Accordion, Badge, Box, Button, Card, Group, Stack, Text, Title, Tooltip } from '@mantine/core'
+import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
 import { IconArrowUpRight, IconChartBar, IconShieldCheck } from '@tabler/icons-react'
 import { Link } from 'react-router-dom'
 import type { ModelStat } from '../../api'
@@ -20,71 +20,68 @@ export default function OverviewTraffic({ models }: { models: ModelStat[] }) {
 
   return (
     <PageSection title="Traffic breakdown" description="All recorded traffic, grouped by model and provider">
-      <div className="overview-breakdown-grid">
-        <Card withBorder radius="lg" p="lg">
-          <div className="overview-card-header">
-            <div>
-              <Title order={3} size="sm" className="overview-card-title">Requests by model</Title>
-              <Text size="xs" c="dimmed" className="overview-card-subtitle">Ranked by recorded request volume</Text>
-            </div>
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md" miw={0}>
+        <Card p="lg" miw={0}>
+          <Group justify="space-between" align="flex-start" gap="xs" mb="md">
+            <Box>
+              <Text fw={650} fz={14}>Requests by model</Text>
+              <Text size="xs" c="dimmed">Ranked by recorded request volume</Text>
+            </Box>
             <Button component={Link} to="/models" variant="subtle" size="compact-xs" rightSection={<IconArrowUpRight size={14} />}>All models</Button>
-          </div>
+          </Group>
           {!ranked.length ? <EmptyState icon={<IconChartBar size={20} />} title="No model traffic yet" hint="Models are ranked here after the first request." /> : (
-            <ol className="overview-model-ranking">
-              {ranked.map((model, index) => {
+            <Stack gap={12} component="ol" m={0} p={0} style={{ listStyle: 'none' }}>
+              {ranked.map((model) => {
                 const share = totalRequests ? model.requests / totalRequests * 100 : 0
                 return (
-                  <li key={`${model.backend}/${model.model}`}>
-                    <Text size="xs" c="dimmed" className="overview-rank-number" aria-hidden="true">
-                      {String(index + 1).padStart(2, '0')}
-                    </Text>
-                    <Box miw={0}>
-                      <Group justify="space-between" align="flex-start" gap="xs" wrap="nowrap">
-                        <Box miw={0}>
-                          <Text size="sm" fw={600} className="overview-identifier">{model.model}</Text>
-                          <Text size="xs" c="dimmed" className="overview-identifier">{model.backend}</Text>
-                        </Box>
-                        <Box ta="right" style={{ flexShrink: 0 }}>
-                          <Text size="sm" fw={600} className="tabular" title={`${model.requests.toLocaleString('en-US')} requests`}>{fmtInt(model.requests)}</Text>
-                          <Text size="xs" c="dimmed">{share.toFixed(1)}%</Text>
-                        </Box>
-                      </Group>
-                      <Tooltip label={`${model.backend}/${model.model}: ${model.requests.toLocaleString('en-US')} requests · ${share.toFixed(1)}% of all traffic`}>
-                        <div className="overview-rank-track" aria-hidden="true">
-                          <div style={{ width: `${share}%`, background: palette.magnitude }} />
-                        </div>
-                      </Tooltip>
-                    </Box>
-                  </li>
+                  <Stack key={`${model.backend}/${model.model}`} component="li" gap={6} miw={0} m={0} p={0}>
+                    <Group justify="space-between" align="flex-start" gap="xs" wrap="nowrap">
+                      <Box miw={0}>
+                        <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>{model.model}</Text>
+                        <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{model.backend}</Text>
+                      </Box>
+                      <Box ta="right" style={{ flexShrink: 0 }}>
+                        <Text size="sm" fw={600} className="tabular" title={`${model.requests.toLocaleString('en-US')} requests`}>{fmtInt(model.requests)}</Text>
+                        <Text size="xs" c="dimmed">{share.toFixed(1)}%</Text>
+                      </Box>
+                    </Group>
+                    <Tooltip label={`${model.backend}/${model.model}: ${model.requests.toLocaleString('en-US')} requests · ${share.toFixed(1)}% of all traffic`}>
+                      <div className="overview-rank-track" aria-hidden="true">
+                        <div style={{ width: `${share}%`, background: palette.magnitude }} />
+                      </div>
+                    </Tooltip>
+                  </Stack>
                 )
               })}
-            </ol>
+            </Stack>
           )}
           {ranked.length > 0 && <Text size="xs" c="dimmed" mt="md">{ranked.length === 1 ? 'Top model' : `Top ${ranked.length} models`} · share of all requests</Text>}
         </Card>
-        <Card withBorder radius="lg" p="lg">
-          <div className="overview-card-header">
-            <div>
-              <Title order={3} size="sm" className="overview-card-title">Provider health</Title>
-              <Text size="xs" c="dimmed" className="overview-card-subtitle">Request success over recorded traffic</Text>
-            </div>
+        <Card p="lg" miw={0}>
+          <Group justify="space-between" align="flex-start" gap="xs" mb="md">
+            <Box>
+              <Text fw={650} fz={14}>Provider health</Text>
+              <Text size="xs" c="dimmed">Request success over recorded traffic</Text>
+            </Box>
             <Button component={Link} to="/providers" variant="subtle" size="compact-xs" rightSection={<IconArrowUpRight size={14} />}>All providers</Button>
-          </div>
+          </Group>
           {!providers.length ? <EmptyState icon={<IconShieldCheck size={20} />} title="No providers with traffic yet" hint="Backend health appears here after the first request is routed." /> : (
-            <Accordion variant="default" className="overview-provider-list">
+            <Accordion variant="default" miw={0}>
               {providers.map((provider) => {
                 const segments = mix.get(provider.backend) ?? []
                 return (
                   <Accordion.Item key={provider.backend} value={provider.backend}>
                     <Accordion.Control>
-                      <div className="overview-provider-row">
+                      <Group justify="space-between" gap="xs" wrap="nowrap" miw={0}>
                         <Box miw={0}>
-                          <Text size="sm" fw={600} className="overview-identifier">{provider.backend}</Text>
+                          <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>{provider.backend}</Text>
                           <Text size="xs" c="dimmed">{fmtInt(provider.requests)} requests</Text>
                         </Box>
-                        <UptimeBadge uptime={provider.uptime} requests={provider.requests} />
-                        <Text size="sm" fw={600} className="tabular">{provider.requests ? `${(provider.uptime * 100).toFixed(1)}%` : '—'}</Text>
-                      </div>
+                        <Group gap="sm" wrap="nowrap" style={{ flexShrink: 0 }}>
+                          <UptimeBadge uptime={provider.uptime} requests={provider.requests} />
+                          <Text size="sm" fw={600} className="tabular">{provider.requests ? `${(provider.uptime * 100).toFixed(1)}%` : '—'}</Text>
+                        </Group>
+                      </Group>
                     </Accordion.Control>
                     <Accordion.Panel>
                       <Stack gap="sm">
@@ -106,7 +103,7 @@ export default function OverviewTraffic({ models }: { models: ModelStat[] }) {
             </Accordion>
           )}
         </Card>
-      </div>
+      </SimpleGrid>
     </PageSection>
   )
 }

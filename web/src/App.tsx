@@ -1,10 +1,13 @@
 import {
   ActionIcon, Anchor, AppShell, Badge, Box, Group, Kbd, Modal,
-  type MantineColorScheme, SegmentedControl, type SegmentedControlItem,
+  type MantineColorScheme, NavLink as MantineNavLink, SegmentedControl, type SegmentedControlItem,
   Skeleton, Stack, Text, Tooltip, UnstyledButton, useMantineColorScheme,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { IconDeviceDesktop, IconKeyboard, IconMoonStars, IconSun, IconTerminal2 } from '@tabler/icons-react'
+import {
+  IconActivity, IconBook, IconChartBar, IconDeviceDesktop, IconKeyboard,
+  IconMoonStars, IconPlugConnected, IconSun, IconTerminal2,
+} from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -22,9 +25,9 @@ const ProvidersPage = lazy(() => import('./pages/Providers'))
 const SetupPage = lazy(() => import('./pages/Setup'))
 
 const colorSchemeData: SegmentedControlItem<MantineColorScheme>[] = [
-  { value: 'light', label: <IconSun size={16} aria-label="Light" /> },
-  { value: 'auto', label: <IconDeviceDesktop size={16} aria-label="Auto" /> },
-  { value: 'dark', label: <IconMoonStars size={16} aria-label="Dark" /> },
+  { value: 'light', label: <IconSun size={15} aria-label="Light" /> },
+  { value: 'auto', label: <IconDeviceDesktop size={15} aria-label="Auto" /> },
+  { value: 'dark', label: <IconMoonStars size={15} aria-label="Dark" /> },
 ]
 
 const SHORTCUTS = [
@@ -91,32 +94,17 @@ export default function App() {
   return (
     <AppShell
       layout="alt"
-      header={{ height: 60 }}
-      footer={isMobile ? { height: 'calc(64px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
+      header={{ height: isMobile ? 50 : 58 }}
+      navbar={isMobile ? undefined : { width: 248, breakpoint: 'sm' }}
+      footer={isMobile ? { height: 'calc(62px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
       padding={0}
     >
       <Anchor href="#main" className="app-skip-link">Skip to content</Anchor>
-      <AppShell.Header className="app-topbar">
+      <AppShell.Header className="app-topbar" withBorder={false}>
         <div className="topbar-inner">
           <HeaderBrand subtitle={isMobile ? pageName : undefined} />
-          {!isMobile && (
-            <nav aria-label="Main navigation" className="topbar-navigation topbar-nav-group">
-              {NAV.map(({ path, label, description, icon: Icon }) => (
-                <UnstyledButton key={path} component={NavLink} to={path}
-                  className="topbar-link"
-                  data-active={isActiveNavPath(pathname, path) || undefined}
-                  aria-label={label}
-                  title={description}
-                  aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
-                  <span className="nav-icon"><Icon size={17} stroke={1.75} aria-hidden /></span>
-                  <span className="nav-label">{label}</span>
-                </UnstyledButton>
-              ))}
-            </nav>
-          )}
           <div className="topbar-actions">
             <LiveStatusBadge />
-            {!isMobile && <Anchor component={NavLink} to="/setup" className="header-connect" underline="never"><IconTerminal2 size={16} aria-hidden /> Connect client</Anchor>}
             <Tooltip label="Keyboard shortcuts">
               <ActionIcon variant="default" size={34} aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
                 <IconKeyboard size={17} aria-hidden />
@@ -126,6 +114,13 @@ export default function App() {
           </div>
         </div>
       </AppShell.Header>
+
+      {!isMobile && (
+        <AppShell.Navbar withBorder={false}>
+          <SidebarNavigation />
+        </AppShell.Navbar>
+      )}
+
       <AppShell.Main id="main" tabIndex={-1}>
         <div className="page-container">
           <Suspense fallback={<PageLoading name={pageName} />}>
@@ -139,8 +134,8 @@ export default function App() {
               </Routes>
             </PageErrorBoundary>
           </Suspense>
-          <Group className="app-footer" justify="space-between" gap="sm" mt="lg">
-            <Text size="xs" c="dimmed">llm-proxy <span className="footer-divider" aria-hidden>/</span> Model gateway</Text>
+          <Group className="app-footer" justify="space-between" gap="sm" mt="xl">
+            <Text size="xs" c="dimmed">llm-proxy · model gateway</Text>
             <Group gap="md">
               <Anchor href="/stats" size="xs" c="dimmed">Statistics JSON</Anchor>
               <Anchor href="/metrics" size="xs" c="dimmed">Prometheus metrics</Anchor>
@@ -148,7 +143,13 @@ export default function App() {
           </Group>
         </div>
       </AppShell.Main>
-      {isMobile && <AppShell.Footer><Navigation mobile /></AppShell.Footer>}
+
+      {isMobile && (
+        <AppShell.Footer withBorder={false}>
+          <Navigation mobile />
+        </AppShell.Footer>
+      )}
+
       <Modal opened={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" centered>
         <Text size="sm" c="dimmed" mb="lg">Move around your workspace without leaving the keyboard.</Text>
         <Stack gap="sm">
@@ -178,10 +179,12 @@ function HeaderBrand({ subtitle }: { subtitle?: string }) {
   const { data } = useQuery(dashboardQueries.overview())
   return (
     <UnstyledButton component={NavLink} to="/" className="brand-link" aria-label="llm-proxy home">
-      <span className="brand-mark" aria-hidden />
+      <span className="brand-mark" aria-hidden>
+        <IconActivity size={16} stroke={2.2} />
+      </span>
       <span className="brand-text">
         <strong>llm-proxy</strong>
-        <small>{subtitle ?? (data?.version ? `Model gateway · v${data.version}` : 'Model gateway')}</small>
+        <small>{subtitle ?? (data?.version ? `v${data.version} · model gateway` : 'model gateway')}</small>
       </span>
     </UnstyledButton>
   )
@@ -191,7 +194,7 @@ function LiveStatusBadge() {
   const { connected, live } = useLiveStatsUpdates()
   return (
     <Tooltip label={connected ? 'Receiving live traffic updates; every request blips this indicator' : 'Live updates disconnected; periodic refresh remains available'}>
-      <Badge variant="outline" color={connected ? 'teal' : 'gray'} tt="none" className="live-status" data-connected={connected} aria-live="polite">
+      <Badge variant="light" color={connected ? 'teal' : 'gray'} tt="none" className="live-status" data-connected={connected} aria-live="polite">
         {/* Remount on each live request to restart the blip animation. */}
         <span key={live?.count ?? 'idle'} className="live-led" data-pulse={live ? 'on' : 'off'} aria-hidden="true" />
         <span className="live-status-text">{connected ? 'Live' : 'Offline'}</span>
@@ -204,18 +207,53 @@ function LiveStatusBadge() {
 function Navigation({ mobile = false }: { mobile?: boolean }) {
   const { pathname } = useLocation()
   return (
-    <Box component="nav" aria-label="Main navigation" className={mobile ? 'bottom-navigation' : 'topbar-navigation'}>
-      {NAV.map(({ path, label, description, icon: Icon }) => (
+    <Box component="nav" aria-label="Main navigation" className={mobile ? 'bottom-navigation' : 'sidebar-nav'}>
+      {NAV.map(({ path, label, icon: Icon }) => (
         <UnstyledButton key={path} component={NavLink} to={path}
-          className={mobile ? 'bottom-nav-link' : 'topbar-link'}
+          className={mobile ? 'bottom-nav-link' : 'sidebar-nav-link'}
           data-active={isActiveNavPath(pathname, path) || undefined}
           aria-label={label}
-          title={description}
           aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
-          <span className="nav-icon"><Icon size={18} stroke={1.75} aria-hidden /></span>
+          <Icon size={mobile ? 20 : 18} stroke={1.75} aria-hidden />
           <span className="nav-label">{label}</span>
         </UnstyledButton>
       ))}
+    </Box>
+  )
+}
+
+function SidebarNavigation() {
+  const { pathname } = useLocation()
+  const { data } = useQuery(dashboardQueries.overview())
+  return (
+    <Box component="nav" aria-label="Main navigation" className="sidebar-nav">
+      <Box className="sidebar-caption" aria-hidden="true">Gateway</Box>
+      {NAV.map(({ path, label, description, icon: Icon }) => (
+        <MantineNavLink
+          key={path}
+          component={NavLink}
+          to={path}
+          label={label}
+          description={description}
+          leftSection={<Icon size={18} stroke={1.75} aria-hidden />}
+          active={isActiveNavPath(pathname, path)}
+          aria-label={label}
+          aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}
+        />
+      ))}
+      <Box className="sidebar-caption" aria-hidden="true">Resources</Box>
+      <MantineNavLink component="a" href="/stats" label="Statistics JSON" leftSection={<IconChartBar size={17} stroke={1.75} aria-hidden />} />
+      <MantineNavLink component="a" href="/metrics" label="Prometheus metrics" leftSection={<IconBook size={17} stroke={1.75} aria-hidden />} />
+      <MantineNavLink component={NavLink} to="/setup" label="Connect a client" leftSection={<IconPlugConnected size={17} stroke={1.75} aria-hidden />} />
+      <Box className="sidebar-footer">
+        <Group gap={7} wrap="nowrap">
+          <IconTerminal2 size={13} aria-hidden style={{ color: 'var(--muted)', flex: 'none' }} />
+          <Text size="xs" c="dimmed" truncate>
+            {data?.version ? `llm-proxy v${data.version}` : 'llm-proxy'}
+            {data?.authEnabled ? ' · auth on' : ' · auth off'}
+          </Text>
+        </Group>
+      </Box>
     </Box>
   )
 }

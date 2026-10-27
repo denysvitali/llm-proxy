@@ -12,43 +12,31 @@ import {
   rem,
 } from '@mantine/core'
 
-// Waypoint — warm-paper light, harbor-dark, teal navigation accent.
-// Chart series colors live in palette.ts; status tokens live in index.css.
+// "Console" — a Mantine-native dashboard theme. Cool graphite dark mode,
+// indigo interaction accent, 8px control radii, 12px cards. Card surfaces
+// stay #ffffff (light) and #171a21 (dark): palette.ts charts were validated
+// against exactly those two surfaces. Tokens live in index.css.
 
+// Cool graphite ramp replaces Mantine's neutral dark so panels, popovers,
+// and modals share one blue-slate family with the canvas.
 const dark: [string, string, string, string, string, string, string, string, string, string] = [
-  '#ecf1ec', // 0 — ink
-  '#cfd8d0', // 1
-  '#9aa79c', // 2 — muted
-  '#6f7d73', // 3
-  '#3a453c', // 4 — border
-  '#1f2822', // 5
-  '#151c17', // 6 — card
-  '#1b241d', // 7 — header / rails
-  '#101613', // 8 — canvas
-  '#0b100d', // 9
-]
-
-// Waypoint accent (teal) is interaction only — links, focus, active nav,
-// primary buttons. Chart series stay in palette.ts.
-const brand: [string, string, string, string, string, string, string, string, string, string] = [
-  '#eef8f5',
-  '#d8efe9',
-  '#b0e0d6',
-  '#83cdc0',
-  '#4ecdb9', // 4 — dark accent
-  '#26a896',
-  '#0f766e', // 6 — light accent
-  '#0c5f59',
-  '#094c47',
-  '#073b37',
+  '#e9ecef', // 0 — ink
+  '#d5dae2',
+  '#a9b1bf',
+  '#7e8797',
+  '#4c5464',
+  '#343b48',
+  '#262c38',
+  '#1c212b',
+  '#14181f',
+  '#0d1016',
 ]
 
 export const theme = createTheme({
-  primaryColor: 'brand',
-  primaryShade: { light: 6, dark: 4 },
+  primaryColor: 'indigo',
   autoContrast: true,
   respectReducedMotion: true,
-  colors: { brand, dark },
+  colors: { dark },
   defaultRadius: 'md',
   cursorType: 'pointer',
   fontFamily:
@@ -59,7 +47,7 @@ export const theme = createTheme({
     fontWeight: '650',
     sizes: {
       h1: { fontSize: rem(24), lineHeight: '1.15', fontWeight: '700' },
-      h2: { fontSize: rem(15), lineHeight: '1.3', fontWeight: '650' },
+      h2: { fontSize: rem(16), lineHeight: '1.3', fontWeight: '650' },
       h3: { fontSize: rem(14), lineHeight: '1.35', fontWeight: '650' },
       h4: { fontSize: rem(13), lineHeight: '1.4', fontWeight: '650' },
       h5: { fontSize: rem(12), lineHeight: '1.45', fontWeight: '650' },
@@ -69,11 +57,11 @@ export const theme = createTheme({
   fontSizes: { xs: rem(12), sm: rem(13), md: rem(14), lg: rem(16) },
   spacing: { xs: rem(6), sm: rem(10), md: rem(16), lg: rem(24), xl: rem(32) },
   radius: {
-    xs: rem(2),
-    sm: rem(4),
-    md: rem(6),
-    lg: rem(10),
-    xl: rem(14),
+    xs: rem(3),
+    sm: rem(5),
+    md: rem(8),
+    lg: rem(12),
+    xl: rem(16),
   },
   components: {
     Card: Card.extend({
@@ -83,7 +71,7 @@ export const theme = createTheme({
       defaultProps: { radius: 'lg' },
     }),
     Table: Table.extend({
-      defaultProps: { highlightOnHoverColor: 'var(--mantine-color-default-hover)' },
+      defaultProps: { verticalSpacing: 'sm', highlightOnHoverColor: 'var(--mantine-color-default-hover)' },
     }),
     Tooltip: Tooltip.extend({
       defaultProps: { withArrow: true, openDelay: 250, radius: 'sm' },

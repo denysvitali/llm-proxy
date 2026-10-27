@@ -5,7 +5,7 @@ import type { OverviewBackend } from '../../api'
 import { ACCOUNT_AUTH } from '../../lib/accounts'
 
 // A native indicator plus explicit text keeps configuration state readable
-// without color; theme roles match the rest of the health chrome.
+// without color; status tokens match the rest of the health chrome.
 export function StatusDot({ ok, okLabel, badLabel }: { ok: boolean; okLabel: string; badLabel: string }) {
   return (
     <Group gap="xs" wrap="nowrap" miw={0}>
@@ -34,10 +34,10 @@ export function AuthStatus({ backend }: { backend: OverviewBackend }) {
           href={account.login}
           size="xs"
           mih={44}
-          color="brand"
+          color="indigo"
           variant={backend.authConfigured ? 'subtle' : 'light'}
           onClick={(event) => event.stopPropagation()}
-          leftSection={<IconLogin size={12} stroke={1.8} aria-hidden="true" />}
+          leftSection={<IconLogin size={13} stroke={1.8} aria-hidden="true" />}
         >
           {backend.authConfigured ? 'Sign in again' : 'Sign in'}
         </Button>

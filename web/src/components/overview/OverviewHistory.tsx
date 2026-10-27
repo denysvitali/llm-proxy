@@ -1,4 +1,4 @@
-import { Card, Code, Skeleton, Text, Title } from '@mantine/core'
+import { Card, Code, SimpleGrid, Skeleton, Text } from '@mantine/core'
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { SeriesPoint, StatsSeriesResponse } from '../../api'
 import { PageSection } from '../PageSection'
@@ -27,10 +27,13 @@ function lastValue(points: SeriesPoint[] | undefined): number | undefined {
 
 function ChartCard({ title, headline, caption, children }: { title: string; headline: string; caption: string; children: React.ReactNode }) {
   return (
-    <Card withBorder radius="lg" p="md" className="overview-chart-card">
-      <Title order={3} fz={13} fw={650}>{title}</Title>
-      <div className="overview-chart-headline" aria-label={title}><span className="tabular">{headline}</span><Text size="xs" c="dimmed">{caption}</Text></div>
-      <div className="overview-chart-body">{children}</div>
+    <Card p="md" miw={0} className="overview-chart-card">
+      <Text fz={13} fw={650}>{title}</Text>
+      <div aria-label={title} style={{ marginTop: 2, marginBottom: 10, minWidth: 0 }}>
+        <Text component="div" fz={20} fw={700} lh={1.2} style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{headline}</Text>
+        <Text size="xs" c="dimmed">{caption}</Text>
+      </div>
+      {children}
     </Card>
   )
 }
@@ -63,18 +66,22 @@ export default function OverviewHistory({ query, range, onRangeChange }: {
     <PageSection title="Performance over time"
       description={query.isError ? 'History unavailable' : requestCount === undefined ? 'Volume, reliability, latency and tokens' : `${requestCount.toLocaleString('en-US')} requests in range`}
       extra={<TimeRangeControl value={range} onChange={onRangeChange} />}>
-      {query.isPending ? <div className="overview-history-grid">{Array.from({ length: 4 }, (_, i) => (
-        <Card key={i} withBorder radius="lg" p="md" className="overview-chart-card" aria-hidden>
-          <Skeleton height={13} width={88} radius="sm" />
-          <Skeleton height={22} width={132} radius="sm" mt={12} mb={14} />
-          <Skeleton height={150} radius="sm" />
-        </Card>
-      ))}</div> : query.isError ? (
+      {query.isPending ? (
+        <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="md" miw={0}>
+          {Array.from({ length: 4 }, (_, i) => (
+            <Card key={i} p="md" aria-hidden>
+              <Skeleton height={13} width={88} radius="sm" />
+              <Skeleton height={20} width={132} radius="sm" mt={12} mb={14} />
+              <Skeleton height={150} radius="sm" />
+            </Card>
+          ))}
+        </SimpleGrid>
+      ) : query.isError ? (
         <ErrorRetryCard title="Couldn't load time history"
           message={<>History is unavailable. Check connectivity and whether <Code>stats.persist_file</Code> or Redis history is configured.</>}
           onRetry={() => query.refetch({ cancelRefetch: false })} retrying={query.isFetching} />
       ) : (
-        <div className="overview-history-grid">
+        <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="md" miw={0}>
           <ChartCard title="Requests" headline={requestCount === undefined ? '—' : historyFormatters.count(requestCount)} caption="upstream attempts in range">
             <HistoryBarChart title="Request volume" description="Upstream attempts per interval" points={requests ?? []} height={150} compact />
           </ChartCard>
@@ -90,7 +97,7 @@ export default function OverviewHistory({ query, range, onRangeChange }: {
             <HistoryLineChart title="Token volume" description="Input and output tokens per interval" data={tokens}
               series={[{ name: 'series0', label: 'Input', formatter: historyFormatters.count }, { name: 'series1', label: 'Output', formatter: historyFormatters.count }]} height={150} compact />
           </ChartCard>
-        </div>
+        </SimpleGrid>
       )}
     </PageSection>
   )
