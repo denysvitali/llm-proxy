@@ -71,6 +71,11 @@ type ModelRoute struct {
 type ServerConfig struct {
 	Listen       string `mapstructure:"listen"`
 	MaxBodyBytes int64  `mapstructure:"max_body_bytes"`
+	// TLSCertFile and TLSKeyFile are a PEM certificate and its matching private
+	// key. Both empty keeps the listener plaintext; setting one without the
+	// other is rejected. There is no option to skip certificate verification.
+	TLSCertFile string `mapstructure:"tls_cert_file"`
+	TLSKeyFile  string `mapstructure:"tls_key_file"`
 }
 
 // AuthConfig controls the user API-key store.
@@ -192,6 +197,9 @@ func (c *Config) Defaults() {
 func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Server.Listen) == "" {
 		return fmt.Errorf("server.listen must not be empty")
+	}
+	if (c.Server.TLSCertFile == "") != (c.Server.TLSKeyFile == "") {
+		return fmt.Errorf("server.tls_cert_file and server.tls_key_file must both be set or both be empty")
 	}
 	seen := map[string]bool{}
 	// Keep pre-account-session Grok configs loadable during migration. The

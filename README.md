@@ -1134,7 +1134,9 @@ non-loopback listener; intentional loopback-only operation remains supported.
 | Field                        | Environment variable                 | Default                  | Description                                                                 |
 | ---------------------------- | ------------------------------------ | ------------------------ | --------------------------------------------------------------------------- |
 | `base_url`                   | `LLM_PROXY_BASE_URL`                 | —                        | Public base URL of this proxy; used by the dashboard for client snippets.   |
-| `server.listen`              | `LLM_PROXY_SERVER_LISTEN`            | `127.0.0.1:8090`         | HTTP listen address.                                                        |
+| `server.listen`              | `LLM_PROXY_SERVER_LISTEN`            | `127.0.0.1:8090`         | Listen address. Plain HTTP unless both TLS files below are set.             |
+| `server.tls_cert_file`       | `LLM_PROXY_SERVER_TLS_CERT_FILE`     | *(empty)*                | PEM certificate for the listener. Set together with `server.tls_key_file`; setting only one is rejected. Clients must trust this certificate or its issuer. |
+| `server.tls_key_file`        | `LLM_PROXY_SERVER_TLS_KEY_FILE`      | *(empty)*                | PEM private key matching `server.tls_cert_file`.                            |
 | `server.max_body_bytes`      | `LLM_PROXY_SERVER_MAX_BODY_BYTES`    | `16777216`               | Maximum request body size (16 MiB).                                         |
 | `auth.file`                  | `LLM_PROXY_AUTH_FILE`                | *(empty)*                | Path to the JSON key store. Empty disables client authentication — keep the listener on loopback if you do. |
 | `stats.persist_file`         | `LLM_PROXY_STATS_PERSIST_FILE`       | `~/.local/state/llm-proxy/stats.json` | JSON snapshot backing dashboard history. Empty disables persistence and time-range charts. |

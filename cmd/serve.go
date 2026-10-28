@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -164,6 +165,7 @@ func runServe(cfg *config.Config) error {
 		// No WriteTimeout: streaming responses must stay open as long as the
 		// upstream sends events.
 	}
+	httpServer.TLSConfig = listenerTLSConfig(cfg.Server)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -193,10 +195,12 @@ func runServe(cfg *config.Config) error {
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		log.WithField("listen", cfg.Server.Listen).
-			WithField("backends", backendNames(backends)).
-			Info("llm-proxy listening")
-		errCh <- httpServer.ListenAndServe()
+		log.WithFields(logrus.Fields{
+			"listen":   cfg.Server.Listen,
+			"backends": backendNames(backends),
+			"tls":      cfg.Server.TLSCertFile != "",
+		}).Info("llm-proxy listening")
+		errCh <- serveListener(httpServer, nil, cfg.Server)
 	}()
 
 	select {
@@ -211,6 +215,32 @@ func runServe(cfg *config.Config) error {
 		}
 		return err
 	}
+}
+
+// listenerTLSConfig requires TLS 1.2 or newer when a certificate is configured.
+// An empty certificate leaves the listener plaintext.
+func listenerTLSConfig(server config.ServerConfig) *tls.Config {
+	if server.TLSCertFile == "" {
+		return nil
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12}
+}
+
+// serveListener serves the configured transport. A nil listener binds
+// httpServer.Addr, which is what process startup uses. The certificate and key
+// are loaded while accepting the listener, so a missing or mismatched pair
+// fails startup instead of being reported as a client handshake error.
+func serveListener(httpServer *http.Server, listener net.Listener, server config.ServerConfig) error {
+	if server.TLSCertFile == "" {
+		if listener == nil {
+			return httpServer.ListenAndServe()
+		}
+		return httpServer.Serve(listener)
+	}
+	if listener == nil {
+		return httpServer.ListenAndServeTLS(server.TLSCertFile, server.TLSKeyFile)
+	}
+	return httpServer.ServeTLS(listener, server.TLSCertFile, server.TLSKeyFile)
 }
 
 // loopbackListener does not resolve hostnames: an arbitrary DNS name does not

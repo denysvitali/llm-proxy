@@ -24,6 +24,7 @@ func Load() (*Config, error) {
 	// fallback behavior so they cannot silently disable configured auth.
 	for _, key := range []string{
 		"base_url", "auth.file", "server.listen", "server.max_body_bytes",
+		"server.tls_cert_file", "server.tls_key_file",
 		"stats.persist_file", "stats.persist_interval", "stats.retention_days",
 		"stats.redis_url", "stats.redis_key_prefix",
 		"grok_auth_file", "workbuddy_auth_file", "codex_auth_file",

@@ -60,6 +60,8 @@ base_url: https://proxy.example.com
 server:
   listen: 10.0.0.1:7000
   max_body_bytes: 4096
+  tls_cert_file: /tls/cert.pem
+  tls_key_file: /tls/key.pem
 auth:
   file: /var/lib/llm-proxy/keys.json
 log_level: debug
@@ -99,6 +101,9 @@ default_route:
 	}
 	if cfg.Server.MaxBodyBytes != 4096 {
 		t.Errorf("Server.MaxBodyBytes = %d", cfg.Server.MaxBodyBytes)
+	}
+	if cfg.Server.TLSCertFile != "/tls/cert.pem" || cfg.Server.TLSKeyFile != "/tls/key.pem" {
+		t.Errorf("Server TLS files = %q %q", cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile)
 	}
 	if cfg.Auth.File != "/var/lib/llm-proxy/keys.json" {
 		t.Errorf("Auth.File = %q", cfg.Auth.File)
@@ -279,6 +284,16 @@ func TestValidateRejections(t *testing.T) {
 			name:    "unknown backend type",
 			cfg:     &Config{Server: listen, Backends: []BackendConfig{{Type: "anthropic"}}},
 			wantErr: `unknown type "anthropic"`,
+		},
+		{
+			name:    "certificate without key",
+			cfg:     &Config{Server: ServerConfig{Listen: "127.0.0.1:8090", TLSCertFile: "/tls/cert.pem"}},
+			wantErr: "server.tls_cert_file and server.tls_key_file must both be set",
+		},
+		{
+			name:    "key without certificate",
+			cfg:     &Config{Server: ServerConfig{Listen: "127.0.0.1:8090", TLSKeyFile: "/tls/key.pem"}},
+			wantErr: "server.tls_cert_file and server.tls_key_file must both be set",
 		},
 		{
 			name:    "duplicate backend type",
