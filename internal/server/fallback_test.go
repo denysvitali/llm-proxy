@@ -182,7 +182,7 @@ func TestQualifiedIDMissingFromCatalogIsForwarded(t *testing.T) {
 			config.BackendConfig{
 				Type:          "fake",
 				APIKey:        "k",
-				RetryAttempts: 1,
+				RetryAttempts: intPtr(1),
 				Fallbacks:     []config.FallbackRoute{{Backend: "second", Model: "rewrite-m1"}},
 			}, nil)
 
@@ -209,7 +209,7 @@ func TestRetryAttemptsConfigured(t *testing.T) {
 		primary := newNamedScripted("fake", backend.KindOpenAIChat,
 			step{resp: unavailableResponse(http.StatusServiceUnavailable, `{"error":{"message":"down"}}`)})
 		s := newFallbackServer(t, primary, newNamedScripted("second", backend.KindOpenAIChat),
-			config.BackendConfig{Type: "fake", APIKey: "k", RetryAttempts: 2}, nil)
+			config.BackendConfig{Type: "fake", APIKey: "k", RetryAttempts: intPtr(2)}, nil)
 
 		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
 		if rec.Code != http.StatusServiceUnavailable {
@@ -220,6 +220,27 @@ func TestRetryAttemptsConfigured(t *testing.T) {
 		}
 	})
 }
+
+// TestRetryAttemptsExplicitZero keeps one client request to one upstream call.
+// An omitted setting still uses the default retry budget.
+func TestRetryAttemptsExplicitZero(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		primary := newNamedScripted("fake", backend.KindOpenAIChat,
+			step{resp: unavailableResponse(http.StatusServiceUnavailable, `{"error":{"message":"down"}}`)})
+		s := newFallbackServer(t, primary, newNamedScripted("second", backend.KindOpenAIChat),
+			config.BackendConfig{Type: "fake", APIKey: "k", RetryAttempts: intPtr(0)}, nil)
+
+		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503 relayed", rec.Code)
+		}
+		if primary.callCount() != 1 {
+			t.Fatalf("primary attempts = %d, want 1", primary.callCount())
+		}
+	})
+}
+
+func intPtr(v int) *int { return &v }
 
 // TestResolveChainDedupsAndCaps: fallbacks naming the primary, disabled
 // backends, or entries already in the chain are skipped, and the chain is

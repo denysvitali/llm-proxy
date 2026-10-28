@@ -12,8 +12,8 @@ type retryBudget struct {
 func (s *Server) retryBudgetFor(backendName string) retryBudget {
 	b := retryBudget{attempts: defaultRetryAttempts, maxBackoff: defaultRetryMaxBackoff}
 	if bc, ok := s.cfg.BackendByType(backendName); ok {
-		if bc.RetryAttempts > 0 {
-			b.attempts = bc.RetryAttempts
+		if bc.RetryAttempts != nil {
+			b.attempts = *bc.RetryAttempts
 		}
 		if bc.RetryMaxBackoff > 0 {
 			b.maxBackoff = bc.RetryMaxBackoff

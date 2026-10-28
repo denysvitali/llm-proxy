@@ -41,9 +41,10 @@ type BackendConfig struct {
 	// the client. Tried in order after the primary route's own fallbacks.
 	Fallbacks []FallbackRoute `mapstructure:"fallbacks"`
 	// RetryAttempts caps the extra connection-phase attempts made after a
-	// transient upstream failure while nothing has been forwarded. Zero means
-	// the built-in default (3).
-	RetryAttempts int `mapstructure:"retry_attempts"`
+	// transient upstream failure while nothing has been forwarded. Nil means
+	// the built-in default (3). An explicit zero makes one request one
+	// upstream call.
+	RetryAttempts *int `mapstructure:"retry_attempts"`
 	// RetryMaxBackoff caps a single retry pause (exponential backoff from
 	// 750ms, and provider Retry-After values). Zero means 30s.
 	RetryMaxBackoff time.Duration `mapstructure:"retry_max_backoff"`
@@ -235,8 +236,8 @@ func (c *Config) Validate() error {
 		if err := validateFallbacks(fmt.Sprintf("backends[%s]", b.Type), b.Fallbacks, seen); err != nil {
 			return err
 		}
-		if b.RetryAttempts < 0 {
-			return fmt.Errorf("backends[%s]: retry_attempts must not be negative, got %d", b.Type, b.RetryAttempts)
+		if b.RetryAttempts != nil && *b.RetryAttempts < 0 {
+			return fmt.Errorf("backends[%s]: retry_attempts must not be negative, got %d", b.Type, *b.RetryAttempts)
 		}
 		if b.RetryMaxBackoff != 0 && b.RetryMaxBackoff < time.Second {
 			return fmt.Errorf("backends[%s]: retry_max_backoff must be at least 1s, got %v", b.Type, b.RetryMaxBackoff)
