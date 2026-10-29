@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 func testJWT(t *testing.T, claims map[string]any) string {
@@ -118,4 +120,67 @@ func TestCredentialsRefreshesExpiredToken(t *testing.T) {
 func writeTestJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// ChatGPT can reject an access token before its JWT expiry (401
+// token_expired). Send refreshes once and retries; a refresh that fails is an
+// error naming the dashboard sign-in, and upstream is called only once.
+func TestSendRefreshesTokenRevokedBeforeExpiry(t *testing.T) {
+	accountID := "workspace-revoked"
+	fresh := testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix(), "n": "fresh"})
+	idToken := testJWT(t, map[string]any{"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": accountID}})
+	for _, refreshOK := range []bool{true, false} {
+		var refreshes, calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/oauth/token":
+				refreshes.Add(1)
+				if !refreshOK {
+					w.WriteHeader(http.StatusUnauthorized)
+					writeTestJSON(w, map[string]string{"error": "invalid_grant"})
+					return
+				}
+				writeTestJSON(w, map[string]string{"access_token": fresh, "refresh_token": "next-refresh", "id_token": idToken})
+			case "/responses":
+				calls.Add(1)
+				if r.Header.Get("Authorization") != "Bearer "+fresh {
+					w.WriteHeader(http.StatusUnauthorized)
+					writeTestJSON(w, map[string]any{"error": map[string]string{"code": "token_expired"}})
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"output\":[]}}\n\n"))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"))
+		manager.Issuer = server.URL
+		manager.HTTPClient = server.Client()
+		// The stored token is unexpired by its own claims but revoked upstream.
+		revoked := testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix(), "n": "revoked"})
+		if err := manager.Store.Save(&Credentials{AccessToken: revoked, RefreshToken: "old-refresh", AccountID: accountID}); err != nil {
+			t.Fatal(err)
+		}
+		client := New(server.URL, manager)
+		client.HTTP = server.Client()
+		resp, err := client.Send(context.Background(), &backend.Request{RawBody: []byte(`{"model":"gpt","input":"hi"}`), Header: http.Header{}})
+		if refreshOK {
+			if err != nil || resp.Status != http.StatusOK || refreshes.Load() != 1 || calls.Load() != 2 {
+				t.Fatalf("Send = %#v, %v; refreshes=%d calls=%d", resp, err, refreshes.Load(), calls.Load())
+			}
+			saved, _ := manager.Store.Load()
+			if saved.AccessToken != fresh || saved.RefreshToken != "next-refresh" {
+				t.Fatalf("refreshed session not saved: %#v", saved)
+			}
+			// A request still holding the revoked token reuses the saved
+			// session instead of refreshing again.
+			if again, err := manager.ForceRefresh(context.Background(), revoked); err != nil || again.AccessToken != fresh || refreshes.Load() != 1 {
+				t.Fatalf("ForceRefresh(stale) = %#v, %v; refreshes=%d", again, err, refreshes.Load())
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "sign in again") || calls.Load() != 1 {
+			t.Fatalf("failed refresh: resp=%#v err=%v calls=%d", resp, err, calls.Load())
+		}
+		server.Close()
+	}
 }

@@ -98,6 +98,19 @@ func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch Codex model catalog: %w", err)
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		if fresh, ok, err := c.refreshRejected(ctx, credentials); ok || err != nil {
+			_ = resp.Body.Close()
+			if err != nil {
+				return nil, fmt.Errorf("fetch Codex model catalog: %w", err)
+			}
+			req = req.Clone(ctx)
+			setHeaders(req.Header, fresh, false)
+			if resp, err = c.HTTP.Do(req); err != nil {
+				return nil, fmt.Errorf("fetch Codex model catalog: %w", err)
+			}
+		}
+	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("fetch Codex model catalog: HTTP %d", resp.StatusCode)
@@ -139,15 +152,35 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/responses", bytes.NewReader(body))
+	send := func(credentials Credentials) (*http.Response, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/responses", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		setHeaders(httpReq.Header, credentials, true)
+		copyCodexHeaders(httpReq.Header, req.Header)
+		resp, err := backend.DoInference(c.HTTP, httpReq, c.BaseURL, req.TracePropagation)
+		if err != nil {
+			return nil, fmt.Errorf("request to Codex failed: %w", err)
+		}
+		return resp, nil
+	}
+	resp, err := send(credentials)
 	if err != nil {
 		return nil, err
 	}
-	setHeaders(httpReq.Header, credentials, true)
-	copyCodexHeaders(httpReq.Header, req.Header)
-	resp, err := backend.DoInference(c.HTTP, httpReq, c.BaseURL, req.TracePropagation)
-	if err != nil {
-		return nil, fmt.Errorf("request to Codex failed: %w", err)
+	// A 401 was rejected before any inference ran, so one retry with a
+	// refreshed session cannot duplicate model work.
+	if resp.StatusCode == http.StatusUnauthorized {
+		if fresh, ok, err := c.refreshRejected(ctx, credentials); ok || err != nil {
+			_ = resp.Body.Close()
+			if err != nil {
+				return nil, err
+			}
+			if resp, err = send(fresh); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if req.Streaming || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
@@ -251,6 +284,19 @@ func (c *Client) credentials(ctx context.Context) (Credentials, error) {
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	return Credentials{AccessToken: token}, err
+}
+
+// refreshRejected forces one session refresh after upstream rejected
+// rejected's access token. ok is false when the token source cannot refresh.
+func (c *Client) refreshRejected(ctx context.Context, rejected Credentials) (Credentials, bool, error) {
+	source, ok := c.Tokens.(interface {
+		ForceRefresh(context.Context, string) (Credentials, error)
+	})
+	if !ok {
+		return Credentials{}, false, nil
+	}
+	fresh, err := source.ForceRefresh(ctx, rejected.AccessToken)
+	return fresh, err == nil, err
 }
 
 func setHeaders(header http.Header, credentials Credentials, streaming bool) {

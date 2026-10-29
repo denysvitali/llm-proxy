@@ -147,6 +147,41 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 	return *credentials, nil
 }
 
+// ForceRefresh exchanges the refresh token although the access token has not
+// reached its JWT expiry: ChatGPT can revoke an access token early and then
+// answers 401 token_expired. stale is the token upstream rejected; when another
+// request has already replaced it, the saved session is returned unchanged so
+// concurrent 401s cause one refresh, not one per request.
+func (m *Manager) ForceRefresh(ctx context.Context, stale string) (Credentials, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	credentials, err := m.Store.Load()
+	if err != nil {
+		return Credentials{}, err
+	}
+	if credentials == nil || credentials.AccessToken == "" {
+		return Credentials{}, errors.New("not signed in to codex; use the dashboard to sign in with ChatGPT")
+	}
+	if credentials.AccessToken == stale {
+		if credentials.RefreshToken == "" {
+			return Credentials{}, errors.New("codex session expired; sign in again from the dashboard")
+		}
+		if err := m.refresh(ctx, credentials); err != nil {
+			return Credentials{}, fmt.Errorf("%w; sign in again from the dashboard if this persists", err)
+		}
+		if err := m.Store.Save(credentials); err != nil {
+			return Credentials{}, err
+		}
+	}
+	if credentials.AccountID == "" {
+		credentials.AccountID, _ = jwtAccountID(credentials.IDToken)
+	}
+	if credentials.AccountID == "" {
+		return Credentials{}, errors.New("codex session has no ChatGPT account ID; sign in again")
+	}
+	return *credentials, nil
+}
+
 type deviceCodeResponse struct {
 	DeviceAuthID string         `json:"device_auth_id"`
 	UserCode     string         `json:"user_code"`
