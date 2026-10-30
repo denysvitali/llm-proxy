@@ -14,6 +14,7 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/config"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -96,6 +97,9 @@ func TestExchangeFailureDeliveryAndTrace(t *testing.T) {
 					}
 					if got := attrs["llm_proxy.outcome"].AsString(); got != "failed" {
 						t.Fatalf("span outcome = %q, want failed", got)
+					}
+					if spans[0].Status.Code != codes.Error || spans[0].Status.Description == "" {
+						t.Fatalf("span status = %+v, want error with description", spans[0].Status)
 					}
 					if attrs["llm_proxy.response_committed"].AsBool() != final || attrs["llm_proxy.fallback_eligible"].AsBool() == final {
 						t.Fatalf("span delivery attributes = %v", attrs)

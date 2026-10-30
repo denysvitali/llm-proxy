@@ -11,6 +11,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -182,6 +183,20 @@ func (s *Server) exchange(
 			attribute.Bool("llm_proxy.response_committed", result.committed),
 			attribute.Bool("llm_proxy.fallback_eligible", result.fallbackEligible),
 		)
+		// Mark failed attempts so span metrics count per-backend errors even
+		// when a fallback later served the request; client cancellation is not
+		// a backend failure.
+		switch result.outcome {
+		case exchangeFailed, exchangeSurfaced, exchangeRejected:
+			description := result.message
+			if description == "" && result.rejection != nil {
+				description = result.rejection.Message
+			}
+			if description == "" {
+				description = exchangeOutcomeName(result.outcome)
+			}
+			span.SetStatus(codes.Error, description)
+		}
 		span.End()
 	}()
 	r = r.WithContext(spanCtx)
@@ -255,6 +270,7 @@ func (s *Server) exchange(
 		return finish(failedExchange("backend request failed"))
 	}
 	tr.setUpstreamStatus(resp.Status)
+	span.SetAttributes(attribute.Int("http.response.status_code", resp.Status))
 
 	if resp.Status < 200 || resp.Status >= 300 {
 		// Capture the error body once for the stats feed, then hand the relay
@@ -271,7 +287,7 @@ func (s *Server) exchange(
 			return finish(failedExchange("upstream server error"))
 		}
 		dialect.relayError(w, resp)
-		return exchangeResult{outcome: exchangeRejected, committed: true}
+		return exchangeResult{outcome: exchangeRejected, committed: true, message: fmt.Sprintf("upstream returned HTTP %d", resp.Status)}
 	}
 
 	switch {

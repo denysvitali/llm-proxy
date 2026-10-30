@@ -32,9 +32,10 @@ func newMetrics() *Metrics {
 			Help: "Requests handled, by method, registered route template (unmatched for no route), and status.",
 		}, []string{"method", "path", "status"}),
 		requestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "llm_proxy_request_duration_seconds",
-			Help:    "Request latency in seconds, by method and registered route template (unmatched for no route).",
-			Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
+			Name: "llm_proxy_request_duration_seconds",
+			Help: "Request latency in seconds, by method and registered route template (unmatched for no route).",
+			// 10ms .. ~5.5min: streamed completions routinely run past a minute.
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 16),
 		}, []string{"method", "path"}),
 		authSuccesses: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "llm_proxy_auth_success_total",
