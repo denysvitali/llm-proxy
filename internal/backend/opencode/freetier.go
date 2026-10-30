@@ -10,17 +10,40 @@ import (
 	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
-// freeTierQuartet is the minimum OpenCode tool signature Zen's free tier
-// requires in the request body. Names are matched exactly (lowercase); the
-// model is never asked to call the injected copies when the caller supplied
-// no tools of its own.
-var freeTierQuartet = []string{"bash", "glob", "grep", "read"}
+// freeTierTools is the OpenCode tool signature Zen's free tier requires in the
+// request body. Names are matched exactly (lowercase); the model is never
+// asked to call the injected copies when the caller supplied tools of its
+// own. The list mirrors OpenCode's built-in agent tool set; Zen rejects
+// requests whose tool set does not contain all of them (extras are fine).
+var freeTierTools = []string{"edit", "execute", "glob", "grep", "question", "read", "shell", "skill", "subagent", "webfetch", "websearch", "write"}
+
+// freeTierQuartet is retained as an alias for older tests/callers.
+var freeTierQuartet = freeTierTools
+
+// freeTierEnvBlock is the minimal <env> block Zen's free tier requires in the
+// system prompt. It mirrors the block OpenCode injects into its agent system
+// prompt; the exact working-directory value is not significant, only the
+// block's presence and shape.
+const freeTierEnvBlock = "<env>\n  Working directory: /tmp\n  Platform: linux\n</env>"
+
+// isOpenCodeTool reports whether name (already lowercased) is one of the
+// OpenCode tool names the free tier requires.
+func isOpenCodeTool(name string) bool {
+	for _, t := range freeTierTools {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
 
 // prepareFreeTierBody rewrites a request body for Zen's free-tier gates:
-// stream is forced true, and any missing {bash,glob,grep,read} tools are
-// injected so the tool-signature check passes. A body that is not a JSON
-// object is returned unchanged. Errors only when the body claims to be JSON
-// but cannot be decoded into an object shape we can safely rewrite.
+// stream is forced true, the OpenCode <env> block is injected into the system
+// prompt, caller tools are renamed to their OpenCode (lowercase) equivalents,
+// and any missing OpenCode tools are injected so the tool-signature check
+// passes. A body that is not a JSON object is returned unchanged. Errors only
+// when the body claims to be JSON but cannot be decoded into an object shape
+// we can safely rewrite.
 func prepareFreeTierBody(kind backend.Kind, raw []byte) ([]byte, error) {
 	if len(raw) == 0 {
 		return raw, nil
@@ -32,6 +55,8 @@ func prepareFreeTierBody(kind backend.Kind, raw []byte) ([]byte, error) {
 	}
 	body["stream"] = json.RawMessage("true")
 
+	injectFreeTierEnvBlock(body)
+
 	var tools []json.RawMessage
 	hadTools := false
 	if encoded, ok := body["tools"]; ok && string(encoded) != "null" {
@@ -39,6 +64,39 @@ func prepareFreeTierBody(kind backend.Kind, raw []byte) ([]byte, error) {
 			return nil, fmt.Errorf("decode tools for free-tier rewrite: %w", err)
 		}
 		hadTools = true
+		// Spoof: rename caller tools whose (lowercased) name matches an
+		// OpenCode tool to the OpenCode (lowercase) name, so the model sees
+		// only OpenCode tool names and the gate passes. The reverse mapping
+		// is applied to tool calls in the response.
+		for i, enc := range tools {
+			var tool map[string]any
+			if err := json.Unmarshal(enc, &tool); err != nil {
+				continue
+			}
+			fn, _ := tool["function"].(map[string]any)
+			if fn == nil {
+				// Anthropic-style tool
+				if name, _ := tool["name"].(string); name != "" {
+					lower := strings.ToLower(name)
+					if isOpenCodeTool(lower) && lower != name {
+						tool["name"] = lower
+						if b, err := json.Marshal(tool); err == nil {
+							tools[i] = b
+						}
+					}
+				}
+				continue
+			}
+			name, _ := fn["name"].(string)
+			lower := strings.ToLower(name)
+			if isOpenCodeTool(lower) && lower != name {
+				fn["name"] = lower
+				tool["function"] = fn
+				if b, err := json.Marshal(tool); err == nil {
+					tools[i] = b
+				}
+			}
+		}
 	}
 
 	present := make(map[string]bool, len(tools))
@@ -48,7 +106,7 @@ func prepareFreeTierBody(kind backend.Kind, raw []byte) ([]byte, error) {
 		}
 	}
 	var missing []string
-	for _, name := range freeTierQuartet {
+	for _, name := range freeTierTools {
 		if !present[name] {
 			missing = append(missing, name)
 		}
@@ -100,16 +158,24 @@ func toolName(kind backend.Kind, encoded json.RawMessage) string {
 	}
 	var tool struct {
 		Function struct {
+			Name string `json:"function"`
+		} `json:"function"`
+		Name string `json:"name"`
+	}
+	// fix: Function.Name is nested under "function"
+	var t2 struct {
+		Function struct {
 			Name string `json:"name"`
 		} `json:"function"`
 		Name string `json:"name"`
 	}
-	if json.Unmarshal(encoded, &tool) == nil {
-		if tool.Function.Name != "" {
-			return tool.Function.Name
+	if json.Unmarshal(encoded, &t2) == nil {
+		if t2.Function.Name != "" {
+			return t2.Function.Name
 		}
-		return tool.Name
+		return t2.Name
 	}
+	_ = tool
 	return ""
 }
 
@@ -120,9 +186,15 @@ func freeTierToolChoiceNone(kind backend.Kind) any {
 	return "none"
 }
 
-// freeTierTool returns a minimal but schema-valid definition for one of the
-// quartet tools, shaped for the wire the caller is speaking.
+// freeTierTool returns a full OpenCode tool definition when available (so
+// Zen's free tier accepts fresh sessions), falling back to a minimal but
+// schema-valid definition.
 func freeTierTool(kind backend.Kind, name string) json.RawMessage {
+	if kind == backend.KindOpenAIChat {
+		if def, ok := freeTierToolDefs[name]; ok {
+			return def
+		}
+	}
 	desc, params := freeTierToolSpec(name)
 	if kind == backend.KindAnthropic {
 		encoded, err := json.Marshal(map[string]any{
@@ -151,7 +223,7 @@ func freeTierTool(kind backend.Kind, name string) json.RawMessage {
 
 func freeTierToolSpec(name string) (description string, parameters map[string]any) {
 	switch name {
-	case "bash":
+	case "bash", "shell":
 		return "Executes a given bash command in a persistent shell session with optional timeout.", map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -160,6 +232,16 @@ func freeTierToolSpec(name string) (description string, parameters map[string]an
 				"timeout": map[string]any{"type": "number", "description": "Optional timeout in milliseconds."},
 			},
 			"required": []string{"command"},
+		}
+	case "edit":
+		return "Performs exact string replacements in files.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"file_path": map[string]any{"type": "string", "description": "The absolute path to the file to modify."},
+				"old_string": map[string]any{"type": "string", "description": "The text to replace."},
+				"new_string": map[string]any{"type": "string", "description": "The text to replace it with."},
+			},
+			"required": []string{"file_path", "old_string", "new_string"},
 		}
 	case "glob":
 		return "Fast file pattern matching tool that retrieves files matching a glob pattern.", map[string]any{
@@ -180,6 +262,14 @@ func freeTierToolSpec(name string) (description string, parameters map[string]an
 			},
 			"required": []string{"pattern"},
 		}
+	case "question":
+		return "Ask the user a question.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"question": map[string]any{"type": "string", "description": "The question to ask."},
+			},
+			"required": []string{"question"},
+		}
 	case "read":
 		return "Reads a file from the filesystem and returns its content.", map[string]any{
 			"type": "object",
@@ -190,9 +280,219 @@ func freeTierToolSpec(name string) (description string, parameters map[string]an
 			},
 			"required": []string{"file_path"},
 		}
+	case "execute":
+		return "Executes a given command.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command": map[string]any{"type": "string", "description": "The command to execute."},
+			},
+			"required": []string{"command"},
+		}
+	case "write":
+		return "Writes a file to the filesystem.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"file_path": map[string]any{"type": "string", "description": "Path to the file to write."},
+				"content":   map[string]any{"type": "string", "description": "Content to write."},
+			},
+			"required": []string{"file_path", "content"},
+		}
 	default:
 		return "OpenCode tool.", map[string]any{"type": "object", "properties": map[string]any{}}
 	}
+}
+
+// injectFreeTierEnvBlock ensures the request body's system prompt contains the
+// OpenCode <env> block Zen's free tier requires. It mutates body in place and
+// never removes caller content. Bodies without a recognised system-prompt
+// shape are left untouched (or get a new system field when possible).
+func injectFreeTierEnvBlock(body map[string]json.RawMessage) {
+	if hasEnvBlock(body) {
+		return
+	}
+	// OpenAI chat / Anthropic-style messages array.
+	if raw, ok := body["messages"]; ok {
+		var msgs []map[string]any
+		if err := json.Unmarshal(raw, &msgs); err == nil {
+			injected := false
+			for i := range msgs {
+				role, _ := msgs[i]["role"].(string)
+				if role != "system" {
+					continue
+				}
+				switch v := msgs[i]["content"].(type) {
+				case string:
+					msgs[i]["content"] = v + "\n\n" + freeTierEnvBlock
+				case []any:
+					msgs[i]["content"] = append(v, map[string]any{"type": "text", "text": freeTierEnvBlock})
+				default:
+					msgs[i]["content"] = freeTierEnvBlock
+				}
+				injected = true
+				break
+			}
+			if !injected {
+				msgs = append([]map[string]any{{"role": "system", "content": freeTierEnvBlock}}, msgs...)
+			}
+			if encoded, err := json.Marshal(msgs); err == nil {
+				body["messages"] = encoded
+			}
+			// If there is no top-level system field but this is an Anthropic
+			// body, also set it.
+			if _, hasSys := body["system"]; !hasSys {
+				// Heuristic: Anthropic bodies carry max_tokens (not max_completion_tokens).
+				if _, ok := body["max_tokens"]; ok {
+					if encoded, err := json.Marshal(freeTierEnvBlock); err == nil {
+						body["system"] = encoded
+					}
+				}
+			}
+			return
+		}
+	}
+	// Anthropic top-level system field.
+	if raw, ok := body["system"]; ok {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			s = s + "\n\n" + freeTierEnvBlock
+			if encoded, err := json.Marshal(s); err == nil {
+				body["system"] = encoded
+			}
+			return
+		}
+		var arr []map[string]any
+		if err := json.Unmarshal(raw, &arr); err == nil {
+			arr = append(arr, map[string]any{"type": "text", "text": freeTierEnvBlock})
+			if encoded, err := json.Marshal(arr); err == nil {
+				body["system"] = encoded
+			}
+			return
+		}
+	}
+	// Fallback: create a system field / instructions.
+	if _, hasSys := body["system"]; !hasSys {
+		if _, hasInstr := body["instructions"]; !hasInstr {
+			if _, ok := body["max_tokens"]; ok {
+				if encoded, err := json.Marshal(freeTierEnvBlock); err == nil {
+					body["system"] = encoded
+					return
+				}
+			}
+			if _, ok := body["input"]; ok {
+				if encoded, err := json.Marshal(freeTierEnvBlock); err == nil {
+					body["instructions"] = encoded
+					return
+				}
+			}
+		}
+	}
+	// OpenAI Responses: instructions field.
+	if raw, ok := body["instructions"]; ok {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			s = s + "\n\n" + freeTierEnvBlock
+			if encoded, err := json.Marshal(s); err == nil {
+				body["instructions"] = encoded
+			}
+			return
+		}
+	}
+}
+
+func hasEnvBlock(body map[string]json.RawMessage) bool {
+	check := func(s string) bool { return strings.Contains(s, "<env>") }
+	if raw, ok := body["messages"]; ok {
+		var msgs []map[string]any
+		if err := json.Unmarshal(raw, &msgs); err == nil {
+			for _, m := range msgs {
+				if role, _ := m["role"].(string); role != "system" {
+					continue
+				}
+				switch v := m["content"].(type) {
+				case string:
+					if check(v) {
+						return true
+					}
+				case []any:
+					for _, p := range v {
+						if pm, ok := p.(map[string]any); ok {
+							if t, _ := pm["text"].(string); check(t) {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if raw, ok := body["system"]; ok {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil && check(s) {
+			return true
+		}
+		var arr []map[string]any
+		if err := json.Unmarshal(raw, &arr); err == nil {
+			for _, m := range arr {
+				if t, _ := m["text"].(string); check(t) {
+					return true
+				}
+			}
+		}
+	}
+	if raw, ok := body["instructions"]; ok {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil && check(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// userToolNames extracts tool names from a (possibly Anthropic- or OpenAI-
+// shaped) request body.
+func userToolNames(raw []byte) []string {
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil
+	}
+	var out []string
+	if enc, ok := body["tools"]; ok {
+		var tools []map[string]any
+		if json.Unmarshal(mustMarshal(enc), &tools) == nil {
+			for _, t := range tools {
+				if fn, ok := t["function"].(map[string]any); ok {
+					if n, _ := fn["name"].(string); n != "" {
+						out = append(out, n)
+					}
+				}
+				if n, _ := t["name"].(string); n != "" {
+					out = append(out, n)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func mustMarshal(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// computeToolNameMap returns the reverse mapping (OpenCode lowercased name ->
+// caller's original name) for the user's tools.
+func computeToolNameMap(raw []byte) map[string]string {
+	m := map[string]string{}
+	for _, name := range userToolNames(raw) {
+		lower := strings.ToLower(name)
+		if isOpenCodeTool(lower) {
+			m[lower] = name
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
 // aggregateFreeTierStream collapses an upstream SSE body into the non-stream
@@ -204,6 +504,9 @@ func aggregateFreeTierStream(kind backend.Kind, body io.Reader) ([]byte, error) 
 	}
 	return aggregateChatSSE(body)
 }
+
+// sseData extracts the payload from one SSE line. ok is false for blank,
+// comment, and non-data lines.
 
 func aggregateChatSSE(body io.Reader) ([]byte, error) {
 	var id, model string
@@ -552,6 +855,9 @@ func hasToolUse(blocks []map[string]any) bool {
 
 // sseData extracts the payload from one SSE line. ok is false for blank,
 // comment, and non-data lines.
+
+// sseData extracts the payload from one SSE line. ok is false for blank,
+// comment, and non-data lines.
 func sseData(line string) (string, bool) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "data:") {
@@ -562,4 +868,49 @@ func sseData(line string) (string, bool) {
 		return "", false
 	}
 	return payload, true
+}
+
+// renameToolCallsInChatJSON renames OpenCode tool-call names back to the
+// caller's original names using the provided reverse map. Bodies that are not
+// JSON or contain no tool calls are returned unchanged.
+func renameToolCallsInChatJSON(body []byte, m map[string]string) []byte {
+	if len(m) == 0 {
+		return body
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return body
+	}
+	choices, _ := obj["choices"].([]any)
+	for _, c := range choices {
+		cm, _ := c.(map[string]any)
+		if cm == nil {
+			continue
+		}
+		msg, _ := cm["message"].(map[string]any)
+		if msg == nil {
+			continue
+		}
+		tcs, _ := msg["tool_calls"].([]any)
+		for _, tc := range tcs {
+			tcm, _ := tc.(map[string]any)
+			if tcm == nil {
+				continue
+			}
+			fn, _ := tcm["function"].(map[string]any)
+			if fn == nil {
+				continue
+			}
+			if name, _ := fn["name"].(string); name != "" {
+				if orig, ok := m[name]; ok {
+					fn["name"] = orig
+				}
+			}
+		}
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return out
 }

@@ -34,8 +34,8 @@ func TestPrepareFreeTierBodyForcesStreamAndInjectsQuartet(t *testing.T) {
 				t.Errorf("stream = %v, want true", body["stream"])
 			}
 			tools, _ := body["tools"].([]any)
-			if len(tools) != 4 {
-				t.Fatalf("tools = %d, want 4 (%v)", len(tools), tools)
+			if len(tools) != len(freeTierTools) {
+				t.Fatalf("tools = %d, want %d (%v)", len(tools), len(freeTierTools), tools)
 			}
 			names := map[string]bool{}
 			for _, raw := range tools {
@@ -46,7 +46,7 @@ func TestPrepareFreeTierBodyForcesStreamAndInjectsQuartet(t *testing.T) {
 				}
 				names[name] = true
 			}
-			for _, want := range freeTierQuartet {
+			for _, want := range freeTierTools {
 				if !names[want] {
 					t.Errorf("missing tool %q", want)
 				}
@@ -76,8 +76,8 @@ func TestPrepareFreeTierBodyPreservesExistingTools(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	tools, _ := body["tools"].([]any)
-	if len(tools) != 5 {
-		t.Fatalf("tools = %d, want 5 (client Bash + quartet)", len(tools))
+	if len(tools) != 1+len(freeTierTools) {
+		t.Fatalf("tools = %d, want %d (client tool + free-tier set)", len(tools), 1+len(freeTierTools))
 	}
 	// Client already had tools: tool_choice must be left alone (absent here).
 	if _, ok := body["tool_choice"]; ok {
@@ -135,8 +135,8 @@ func TestSendFreeTierRewritesBodyAndUsesPublicBearer(t *testing.T) {
 		t.Errorf("forwarded stream = %v, want true", body["stream"])
 	}
 	tools, _ := body["tools"].([]any)
-	if len(tools) != 4 {
-		t.Errorf("forwarded tools = %d, want 4", len(tools))
+	if len(tools) != len(freeTierTools) {
+		t.Errorf("forwarded tools = %d, want %d", len(tools), len(freeTierTools))
 	}
 }
 

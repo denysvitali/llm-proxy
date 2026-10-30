@@ -53,6 +53,9 @@ type Client struct {
 
 	quotaMu sync.Mutex
 	quotas  map[string]freeQuota
+
+	toolMapMu sync.Mutex
+	toolMaps  map[string]map[string]string // session -> opencode name -> caller name
 }
 
 func New(baseURL, key string) *Client {
@@ -60,8 +63,9 @@ func New(baseURL, key string) *Client {
 		baseURL = defaultBaseURL
 	}
 	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		Key:     key,
+		BaseURL:  strings.TrimRight(baseURL, "/"),
+		Key:      key,
+		toolMaps: make(map[string]map[string]string),
 		HTTP: &http.Client{
 			Timeout: 0,
 			Transport: &http.Transport{
@@ -218,6 +222,13 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	// Responses protocol; Responses requests retain the caller's stream mode.
 	freeTier := c.Key == "" && req.Kind != backend.KindOpenAIResponses
 	body := req.RawBody
+
+	// Generate the session id up front so the free-tier rewrite and the
+	// tool-name spoofing map can be keyed on it.
+	session, err := sessionForRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	if req.Kind == backend.KindOpenAIResponses && len(body) > 0 {
 		normalized, err := translate.NormalizeResponsesRequest(body)
 		if err != nil {
@@ -231,14 +242,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			return nil, err
 		}
 		body = prepared
+		c.setToolMap(session, computeToolNameMap(req.RawBody))
 	}
 	accept := "application/json"
 	if freeTier || req.Streaming {
 		accept = "text/event-stream"
-	}
-	session, err := sessionForRequest(req)
-	if err != nil {
-		return nil, err
 	}
 	resp, err := c.do(ctx, http.MethodPost, path, body, accept, session, req.TracePropagation)
 	if err != nil {
@@ -247,9 +255,16 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if err := c.rememberFreeQuota(req.Model, resp); err != nil {
 		return nil, err
 	}
+	// Spoof: rename OpenCode tool calls back to the caller's original names
+	// on the streamed (SSE) response for free-tier requests.
+	if freeTier && req.Streaming && resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Body != nil {
+		if m := c.toolMap(session); len(m) > 0 {
+			resp.Body = newToolNameRenamingReader(resp.Body, m)
+		}
+	}
 	if freeTier && !req.Streaming {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return aggregateFreeTierResponse(req.Kind, resp)
+			return c.aggregateFreeTierResponse(req.Kind, session, resp)
 		}
 		// Error statuses (including a residual 403) are relayed verbatim.
 		return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
@@ -260,7 +275,7 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 // aggregateFreeTierResponse consumes a free-tier SSE body and returns a
 // non-stream JSON response the server's buffered relays can decode. Non-SSE
 // success bodies are forwarded unchanged with their original headers.
-func aggregateFreeTierResponse(kind backend.Kind, resp *http.Response) (*backend.Response, error) {
+func (c *Client) aggregateFreeTierResponse(kind backend.Kind, session string, resp *http.Response) (*backend.Response, error) {
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/event-stream") && !strings.Contains(ct, "stream") {
 		return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
@@ -274,6 +289,8 @@ func aggregateFreeTierResponse(kind backend.Kind, resp *http.Response) (*backend
 	if err != nil {
 		return nil, err
 	}
+	// Spoof: rename OpenCode tool calls back to the caller's original names.
+	aggregated = renameToolCallsInChatJSON(aggregated, c.toolMap(session))
 	header := resp.Header.Clone()
 	header.Set("Content-Type", "application/json")
 	header.Del("Content-Length")
@@ -400,4 +417,22 @@ func ReadError(resp *http.Response) *HTTPError {
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return &HTTPError{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: b}
+}
+
+// setToolMap stores the reverse tool-name mapping (OpenCode name -> caller
+// name) for a free-tier session.
+func (c *Client) setToolMap(session string, m map[string]string) {
+	if session == "" || len(m) == 0 {
+		return
+	}
+	c.toolMapMu.Lock()
+	defer c.toolMapMu.Unlock()
+	c.toolMaps[session] = m
+}
+
+// toolMap returns the reverse mapping for a session, or nil.
+func (c *Client) toolMap(session string) map[string]string {
+	c.toolMapMu.Lock()
+	defer c.toolMapMu.Unlock()
+	return c.toolMaps[session]
 }
