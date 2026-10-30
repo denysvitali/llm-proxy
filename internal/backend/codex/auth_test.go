@@ -249,4 +249,24 @@ func TestRefreshErrorNamesOAuthCode(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "HTTP 401 refresh_token_reused") || strings.Contains(err.Error(), "description") {
 		t.Fatalf("Credentials error = %v", err)
 	}
+	if !backend.IsTerminal(err) {
+		t.Fatalf("rejected refresh is retryable: %v", err)
+	}
+}
+
+// A token endpoint that is down (5xx) is transient: the request stays
+// retryable, unlike a rejected refresh token.
+func TestRefreshServerErrorStaysRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"))
+	manager.Issuer, manager.HTTPClient = server.URL, server.Client()
+	if err := manager.Store.Save(&Credentials{AccessToken: "old", RefreshToken: "r", AccountID: "a", ExpiresAt: time.Now().Add(-time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Credentials(context.Background()); err == nil || backend.IsTerminal(err) {
+		t.Fatalf("Credentials error = %v, want retryable", err)
+	}
 }

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 const (
@@ -120,11 +122,11 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if credentials == nil || credentials.AccessToken == "" {
-		return "", errors.New("MiniMax Code account is not signed in; use the dashboard to sign in")
+		return "", backend.Terminal(errors.New("MiniMax Code account is not signed in; use the dashboard to sign in"))
 	}
 	if credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(5*time.Minute).Unix() {
 		if credentials.RefreshToken == "" {
-			return "", errors.New("MiniMax Code session expired; sign in again")
+			return "", backend.Terminal(errors.New("MiniMax Code session expired; sign in again"))
 		}
 		response, err := m.postForm(ctx, "/oauth2/token", url.Values{
 			"grant_type":    {"refresh_token"},
@@ -134,7 +136,14 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 			"audience":      {audience},
 		})
 		if err != nil {
-			return "", fmt.Errorf("refresh MiniMax Code session: %w", err)
+			err = fmt.Errorf("refresh MiniMax Code session: %w", err)
+			var rejected oauthError
+			if errors.As(err, &rejected) {
+				// The token endpoint answered (invalid_grant, ...): only a new
+				// sign-in fixes that, so retrying the request cannot help.
+				return "", backend.Terminal(fmt.Errorf("%w; sign in again from the dashboard", err))
+			}
+			return "", err
 		}
 		updated, err := credentialsFromToken(response, credentials.RefreshToken)
 		if err != nil {

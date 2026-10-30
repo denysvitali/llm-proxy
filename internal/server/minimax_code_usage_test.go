@@ -139,3 +139,28 @@ func TestMiniMaxAccountUnavailable(t *testing.T) {
 		}
 	}
 }
+
+// A dead session (refresh rejected with invalid_grant) is not a gateway fault:
+// the dashboard gets 409 and a sign-in instruction instead of a generic 502.
+func TestMiniMaxUsageDeadSessionAsksForSignIn(t *testing.T) {
+	isolatePrometheus(t)
+	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+	}))
+	defer oauth.Close()
+	manager := minimaxcodebackend.NewManager(filepath.Join(t.TempDir(), "account.json"))
+	manager.OAuthBaseURL = oauth.URL
+	manager.AccountBaseURL = oauth.URL
+	manager.PlatformBaseURL = oauth.URL
+	if err := manager.Store.Save(&minimaxcodebackend.Credentials{AccessToken: "old", RefreshToken: "dead", ExpiresAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Backends: []config.BackendConfig{{Type: "minimax-code"}}}
+	s := NewWithDependencies(Dependencies{Config: cfg, Logger: quietLogger(), Backends: []backend.Backend{minimaxcodebackend.New("", "")}, Accounts: AccountProviders{MiniMaxCode: manager}})
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/minimax-code/usage", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "sign in again") {
+		t.Fatalf("dead session: %d %s", rec.Code, rec.Body.String())
+	}
+}

@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 const accountOrigin = "https://agent.minimax.io"
@@ -332,7 +334,13 @@ func parseCheckinPanel(value any) (*CheckinPanel, error) {
 func (m *Manager) accountIdentity(ctx context.Context) (string, string, error) {
 	token, err := m.AccessToken(ctx)
 	if err != nil {
-		return "", "", schedulerError("authentication_failed", errors.New("MiniMax Code sign-in is unavailable; sign in again"))
+		failure := schedulerError("authentication_failed", errors.New("MiniMax Code sign-in is unavailable; sign in again"))
+		if backend.IsTerminal(err) {
+			// Keep the verdict visible to callers: the session is dead, not
+			// the account service.
+			failure = backend.Terminal(failure)
+		}
+		return "", "", failure
 	}
 	body, err := m.accountRequest(ctx, "/v1/api/user/info", http.MethodGet, "", token, "0", false)
 	if err != nil {

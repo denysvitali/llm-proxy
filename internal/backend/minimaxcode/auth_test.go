@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 func TestDeviceLoginAndRefresh(t *testing.T) {
@@ -79,6 +81,25 @@ func TestDeviceLoginAndRefresh(t *testing.T) {
 	token, err := manager.AccessToken(context.Background())
 	if err != nil || token != "second" || calls != 1 {
 		t.Errorf("refreshed token = %q, calls = %d, err = %v", token, calls, err)
+	}
+}
+
+// invalid_grant means the refresh token is dead: the error must be terminal so
+// the server neither retries it with backoff nor hides the sign-in hint.
+func TestRefreshRejectionIsTerminal(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+	}))
+	defer upstream.Close()
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"))
+	manager.OAuthBaseURL = upstream.URL
+	if err := manager.Store.Save(&Credentials{AccessToken: "old", RefreshToken: "dead", ExpiresAt: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := manager.AccessToken(context.Background())
+	if err == nil || !backend.IsTerminal(err) || !strings.Contains(err.Error(), "invalid_grant") || !strings.Contains(err.Error(), "sign in again") {
+		t.Fatalf("AccessToken error = %v, want terminal invalid_grant with sign-in hint", err)
 	}
 }
 

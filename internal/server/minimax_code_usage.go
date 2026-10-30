@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/denysvitali/llm-proxy/internal/backend"
 	minimaxcodebackend "github.com/denysvitali/llm-proxy/internal/backend/minimaxcode"
 )
 
@@ -44,12 +45,14 @@ func (s *Server) handleMiniMaxCodeUsage(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	var view minimaxUsageView
+	var accountErr, checkinErr error
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		account, err := s.accounts.MiniMaxCode.Account(ctx)
 		if err != nil {
+			accountErr = err
 			view.AccountError = "MiniMax credits and Token Plan information are temporarily unavailable."
 			return
 		}
@@ -59,6 +62,7 @@ func (s *Server) handleMiniMaxCodeUsage(w http.ResponseWriter, r *http.Request) 
 		defer wg.Done()
 		panel, err := s.accounts.MiniMaxCode.CheckinStatus(ctx)
 		if err != nil {
+			checkinErr = err
 			view.CheckinError = "MiniMax check-in status is temporarily unavailable."
 			return
 		}
@@ -70,6 +74,13 @@ func (s *Server) handleMiniMaxCodeUsage(w http.ResponseWriter, r *http.Request) 
 	status := http.StatusOK
 	if view.Account == nil && view.Checkin == nil {
 		status = http.StatusBadGateway
+		if backend.IsTerminal(accountErr) && backend.IsTerminal(checkinErr) {
+			// The session itself is dead (refresh rejected or signed out): the
+			// operator must sign in again, retrying the gateway will not help.
+			status = http.StatusConflict
+			view.AccountError = "MiniMax Code session expired; sign in again from the dashboard."
+			view.CheckinError = ""
+		}
 	}
 	writeJSON(w, status, view)
 }

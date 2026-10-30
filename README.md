@@ -181,7 +181,9 @@ quota resets come from MiniMax. Displayed reward totals already include bonuses.
 Unknown balances or unavailable quota are shown separately from zero.
 
 `GET /api/minimax-code/usage` returns account and check-in status independently,
-so one can remain visible when the other service is unavailable.
+so one can remain visible when the other service is unavailable. When both fail
+because the stored session is dead (refresh rejected), it answers `409` asking
+for a new sign-in instead of a gateway `502`.
 `POST /api/minimax-code/checkin` checks eligibility and submits one claim without
 automatically retrying it. Both endpoints use the configured proxy authentication
 and stored MiniMax session. Account services use MiniMax's global account and

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 const (
@@ -313,7 +315,14 @@ func (m *Manager) refresh(ctx context.Context, credentials *Credentials) error {
 		"refresh_token": credentials.RefreshToken,
 	}, &tokens)
 	if err != nil {
-		return fmt.Errorf("refresh Codex session (HTTP %d): %w", status, err)
+		err = fmt.Errorf("refresh Codex session (HTTP %d): %w", status, err)
+		if status >= 400 && status < 500 && status != http.StatusTooManyRequests {
+			// The token endpoint rejected the refresh token (expired, revoked or
+			// already redeemed): only a new sign-in fixes it, so request
+			// retries would just repeat the rejection.
+			return backend.Terminal(err)
+		}
+		return err
 	}
 	fresh, err := credentialsFromTokens(tokens, credentials.AccountID)
 	if err != nil {
