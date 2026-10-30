@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -182,5 +183,70 @@ func TestSendRefreshesTokenRevokedBeforeExpiry(t *testing.T) {
 			t.Fatalf("failed refresh: resp=%#v err=%v calls=%d", resp, err, calls.Load())
 		}
 		server.Close()
+	}
+}
+
+// Two proxy replicas share one session file. ChatGPT refresh tokens are
+// single-use, so concurrent expiry must redeem the refresh token exactly once
+// across processes, not once per replica.
+func TestReplicasRedeemRefreshTokenOnce(t *testing.T) {
+	accountID := "workspace-replicas"
+	accessToken := testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix()})
+	var refreshes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["refresh_token"] != "old-refresh" || refreshes.Add(1) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeTestJSON(w, map[string]any{"error": map[string]string{"code": "refresh_token_reused"}})
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		writeTestJSON(w, map[string]string{"access_token": accessToken, "refresh_token": "new-refresh"})
+	}))
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "auth.json")
+	replicas := []*Manager{NewManager(path), NewManager(path), NewManager(path)}
+	for _, m := range replicas {
+		m.Issuer, m.HTTPClient = server.URL, server.Client()
+	}
+	if err := replicas[0].Store.Save(&Credentials{AccessToken: "old", RefreshToken: "old-refresh", AccountID: accountID, ExpiresAt: time.Now().Add(-time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, len(replicas))
+	for _, m := range replicas {
+		go func() {
+			credentials, err := m.Credentials(context.Background())
+			if err == nil && credentials.AccessToken != accessToken {
+				err = errors.New("stale access token " + credentials.AccessToken)
+			}
+			errs <- err
+		}()
+	}
+	for range replicas {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
+	}
+	if got := refreshes.Load(); got != 1 {
+		t.Fatalf("refreshes = %d, want 1", got)
+	}
+}
+
+func TestRefreshErrorNamesOAuthCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		writeTestJSON(w, map[string]any{"error": map[string]string{"code": "refresh_token_reused", "message": "secret-ish description"}})
+	}))
+	defer server.Close()
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"))
+	manager.Issuer, manager.HTTPClient = server.URL, server.Client()
+	if err := manager.Store.Save(&Credentials{AccessToken: "old", RefreshToken: "r", AccountID: "a", ExpiresAt: time.Now().Add(-time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := manager.Credentials(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401 refresh_token_reused") || strings.Contains(err.Error(), "description") {
+		t.Fatalf("Credentials error = %v", err)
 	}
 }

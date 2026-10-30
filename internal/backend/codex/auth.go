@@ -124,18 +124,30 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 	if credentials == nil || credentials.AccessToken == "" {
 		return Credentials{}, errors.New("not signed in to codex; use the dashboard to sign in with ChatGPT")
 	}
-	if credentials.ExpiresAt == 0 {
-		credentials.ExpiresAt, _ = jwtExpiration(credentials.AccessToken)
-	}
-	if credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(5*time.Minute).Unix() {
-		if credentials.RefreshToken == "" {
-			return Credentials{}, errors.New("codex session expired; sign in again from the dashboard")
+	if expiring(credentials) {
+		// Another replica may refresh concurrently: re-read under the shared
+		// file lock and redeem the refresh token only if it is still current.
+		unlock, err := lockFile(ctx, m.Store.Path+".lock")
+		if err != nil {
+			return Credentials{}, fmt.Errorf("lock Codex session: %w", err)
 		}
-		if err := m.refresh(ctx, credentials); err != nil {
+		defer unlock()
+		if credentials, err = m.Store.Load(); err != nil {
 			return Credentials{}, err
 		}
-		if err := m.Store.Save(credentials); err != nil {
-			return Credentials{}, err
+		if credentials == nil || credentials.AccessToken == "" {
+			return Credentials{}, errors.New("not signed in to codex; use the dashboard to sign in with ChatGPT")
+		}
+		if expiring(credentials) {
+			if credentials.RefreshToken == "" {
+				return Credentials{}, errors.New("codex session expired; sign in again from the dashboard")
+			}
+			if err := m.refresh(ctx, credentials); err != nil {
+				return Credentials{}, err
+			}
+			if err := m.Store.Save(credentials); err != nil {
+				return Credentials{}, err
+			}
 		}
 	}
 	if credentials.AccountID == "" {
@@ -155,6 +167,11 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 func (m *Manager) ForceRefresh(ctx context.Context, stale string) (Credentials, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	unlock, err := lockFile(ctx, m.Store.Path+".lock")
+	if err != nil {
+		return Credentials{}, fmt.Errorf("lock Codex session: %w", err)
+	}
+	defer unlock()
 	credentials, err := m.Store.Load()
 	if err != nil {
 		return Credentials{}, err
@@ -180,6 +197,15 @@ func (m *Manager) ForceRefresh(ctx context.Context, stale string) (Credentials, 
 		return Credentials{}, errors.New("codex session has no ChatGPT account ID; sign in again")
 	}
 	return *credentials, nil
+}
+
+// expiring reports whether the access token is within five minutes of its JWT
+// expiry and must be refreshed before use.
+func expiring(credentials *Credentials) bool {
+	if credentials.ExpiresAt == 0 {
+		credentials.ExpiresAt, _ = jwtExpiration(credentials.AccessToken)
+	}
+	return credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(5*time.Minute).Unix()
 }
 
 type deviceCodeResponse struct {
@@ -398,6 +424,9 @@ func (m *Manager) execute(req *http.Request, out any) (int, error) {
 		return resp.StatusCode, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if code := oauthErrorCode(raw); code != "" {
+			return resp.StatusCode, fmt.Errorf("HTTP %d %s", resp.StatusCode, code)
+		}
 		return resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	if out != nil {
@@ -406,4 +435,36 @@ func (m *Manager) execute(req *http.Request, out any) (int, error) {
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+// oauthErrorCode extracts the machine-readable error code from an OpenAI auth
+// error body, such as refresh_token_reused or refresh_token_expired. Only a
+// short identifier is kept; descriptions and tokens are never echoed.
+func oauthErrorCode(raw []byte) string {
+	var body struct {
+		Error json.RawMessage `json:"error"`
+		Code  string          `json:"code"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return ""
+	}
+	code := body.Code
+	var text string
+	var object struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body.Error, &text) == nil {
+		code = text
+	} else if json.Unmarshal(body.Error, &object) == nil && object.Code != "" {
+		code = object.Code
+	}
+	if len(code) == 0 || len(code) > 64 {
+		return ""
+	}
+	for _, c := range code {
+		if !(c == '_' || c == '-' || c == '.' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return ""
+		}
+	}
+	return code
 }
