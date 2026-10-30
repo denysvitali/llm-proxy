@@ -179,10 +179,11 @@ func (e *responsesErrorBody) asUpstreamError() error {
 // API request: system prompts become leading system messages, conversation
 // history becomes the input item array, and tools use the function-tool shape.
 func ToResponses(request *Request, model string) ([]byte, error) {
-	if err := validateAnthropicTranslation(request, true); err != nil {
+	messages, err := validateAnthropicTranslation(request, true)
+	if err != nil {
 		return nil, err
 	}
-	if err := validateAnthropicHistory(request.Messages); err != nil {
+	if err := validateAnthropicHistory(messages); err != nil {
 		return nil, err
 	}
 	converted := responsesRequest{
@@ -204,7 +205,7 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 	if system != nil {
 		inputItems = append(inputItems, *system)
 	}
-	for _, message := range request.Messages {
+	for _, message := range messages {
 		items, err := responsesItems(message)
 		if err != nil {
 			return nil, err

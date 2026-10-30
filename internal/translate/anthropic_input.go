@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // anthropicInputBlocks validates content before cross-wire conversion.
@@ -36,7 +37,7 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 				Text *string `json:"text"`
 			}
 			if err := decodeContentPart(part, &value); err != nil || value.Text == nil {
-				return nil, fmt.Errorf("text block requires string text and no unsupported fields")
+				return nil, fmt.Errorf("text block requires string text and no unsupported fields%s", unknownFieldDetail(err))
 			}
 			block = anthropicBlock{Type: "text", Text: *value.Text}
 		case "image":
@@ -52,6 +53,9 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 			}
 			block = anthropicBlock{Type: "image", Source: value.Source}
 		case "tool_use":
+			// caller records who issued the call (the model directly, or
+			// server-side code execution); the OpenAI call is the same either way.
+			part = stripAnthropicAnnotations(part, "caller")
 			var value struct {
 				Type  string          `json:"type"`
 				ID    string          `json:"id"`
@@ -59,7 +63,7 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 				Input json.RawMessage `json:"input"`
 			}
 			if err := decodeContentPart(part, &value); err != nil || value.ID == "" || value.Name == "" {
-				return nil, fmt.Errorf("tool_use requires id, name and no unsupported fields")
+				return nil, fmt.Errorf("tool_use requires id, name and no unsupported fields%s", unknownFieldDetail(err))
 			}
 			block = anthropicBlock{Type: "tool_use", ID: value.ID, Name: value.Name, Input: value.Input}
 		case "tool_result":
@@ -70,9 +74,26 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 				IsError   bool            `json:"is_error"`
 			}
 			if err := decodeContentPart(part, &value); err != nil || value.ToolUseID == "" {
-				return nil, fmt.Errorf("tool_result requires tool_use_id and no unsupported fields")
+				return nil, fmt.Errorf("tool_result requires tool_use_id and no unsupported fields%s", unknownFieldDetail(err))
 			}
 			block = anthropicBlock{Type: "tool_result", ToolUseID: value.ToolUseID, Content: value.Content, IsError: value.IsError}
+		case "tool_reference":
+			// Claude Code's tool search answers with references to deferred
+			// tools. Every deferred tool is already declared on the OpenAI side
+			// (defer_loading is stripped), so the reference only tells the
+			// model the tool is ready to call.
+			var value struct {
+				Type     string `json:"type"`
+				ToolName string `json:"tool_name"`
+			}
+			if err := decodeContentPart(part, &value); err != nil || value.ToolName == "" {
+				return nil, fmt.Errorf("tool_reference requires tool_name and no unsupported fields%s", unknownFieldDetail(err))
+			}
+			block = anthropicBlock{Type: "text", Text: "Tool " + value.ToolName + " is now available."}
+		case "tool_addition", "tool_removal":
+			// Mid-conversation tool changes; applyAnthropicToolChanges folds
+			// them into the declared tools before translation.
+			block = anthropicBlock{Type: header.Type, Tool: part}
 		default:
 			return nil, fmt.Errorf("messages content type %q cannot be represented on this OpenAI route", header.Type)
 		}
@@ -139,12 +160,32 @@ func anthropicSystemContent(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	parts := make([]map[string]string, 0, len(blocks))
 	for _, block := range blocks {
+		if block.Type == "tool_addition" || block.Type == "tool_removal" {
+			continue
+		}
 		if block.Type != "text" {
 			return nil, fmt.Errorf("system content requires text blocks")
 		}
 		parts = append(parts, map[string]string{"type": "text", "text": block.Text})
 	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
 	return json.Marshal(parts)
+}
+
+// unknownFieldDetail names the offending field when strict block decoding
+// failed on an unknown key, so logs say which client extension broke the
+// translation. Only the key is reported, never the block's content.
+func unknownFieldDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	_, field, ok := strings.Cut(err.Error(), "json: unknown field ")
+	if !ok {
+		return ""
+	}
+	return " (unknown field " + field + ")"
 }
 
 const anthropicToolErrorPrefix = "[Tool execution failed]\n"

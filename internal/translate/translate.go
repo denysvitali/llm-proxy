@@ -56,6 +56,7 @@ type anthropicBlock struct {
 	Content   json.RawMessage  `json:"content"`
 	IsError   bool             `json:"is_error"`
 	Source    *anthropicSource `json:"source"`
+	Tool      json.RawMessage  `json:"-"`
 }
 
 type anthropicSource struct {
@@ -145,10 +146,11 @@ func (r *Request) WantsThinking() bool {
 
 // ToOpenAI renders an Anthropic request as an OpenAI chat-completions request.
 func ToOpenAI(request *Request, model string) ([]byte, error) {
-	if err := validateAnthropicTranslation(request, false); err != nil {
+	messages, err := validateAnthropicTranslation(request, false)
+	if err != nil {
 		return nil, err
 	}
-	if err := validateAnthropicHistory(request.Messages); err != nil {
+	if err := validateAnthropicHistory(messages); err != nil {
 		return nil, err
 	}
 	converted := openAIRequest{
@@ -171,7 +173,7 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 	if system != nil {
 		converted.Messages = append(converted.Messages, openAIMessage{Role: "system", Content: system})
 	}
-	for _, message := range request.Messages {
+	for _, message := range messages {
 		translated, err := translateMessage(message)
 		if err != nil {
 			return nil, err

@@ -845,7 +845,12 @@ instead: `cache_control` hints and empty `citations` are stripped, replayed
 thinking/redacted-thinking blocks are dropped (their signed state is useless to
 an OpenAI backend), Anthropic server tools such as `web_search_*` are skipped,
 and mid-conversation `role: "system"` messages become system messages on the
-target wire. Chat cannot preserve text
+target wire. Claude Code's deferred-tool flow is translated too: the `caller`
+annotation on `tool_use` is dropped, tool-search `tool_reference` results become
+a short "Tool X is now available." text (deferred tools are always declared on
+the OpenAI side), and `tool_addition`/`tool_removal` blocks in system messages
+are folded into the request's tool list, which OpenAI declares once up front.
+Chat cannot preserve text
 following a tool call inside one assistant message and rejects that ordering;
 Responses retains it as ordered input items. Images require a URL source or
 base64 data with an explicit media type.

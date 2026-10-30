@@ -25,7 +25,7 @@ func TestSystemMessageValidationErrors(t *testing.T) {
 			{"null text", `{"type":"text","text":null}`, "text block requires string text and no unsupported fields"},
 			{"document", `{"type":"document","source":{"type":"text","data":"` + privateContent + `"}}`, `messages content type "document" cannot be represented on this OpenAI route`},
 			{"image", `{"type":"image","source":{"type":"url","url":"https://example.invalid/` + privateContent + `"}}`, "system content requires text blocks"},
-			{"unknown field", `{"type":"text","text":"` + privateContent + `","extension":"` + privateContent + `"}`, "text block requires string text and no unsupported fields"},
+			{"unknown field", `{"type":"text","text":"` + privateContent + `","extension":"` + privateContent + `"}`, `text block requires string text and no unsupported fields (unknown field "extension")`},
 		} {
 			t.Run(route.name+"/"+tc.name, func(t *testing.T) {
 				body := []byte(`{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi"},{"role":"system","content":[{"type":"text","text":"` + privateContent + `"},` + tc.invalid + `]}]}`)
