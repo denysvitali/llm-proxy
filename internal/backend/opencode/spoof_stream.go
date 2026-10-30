@@ -53,9 +53,6 @@ func (r *toolNameRenamingReader) Read(p []byte) (int, error) {
 			}
 		}
 		r.buf = append(r.buf, []byte(line)...)
-		if err != nil && err != io.EOF {
-			// propagate
-		}
 	}
 	if len(r.buf) == 0 {
 		if r.eof {
@@ -65,9 +62,7 @@ func (r *toolNameRenamingReader) Read(p []byte) (int, error) {
 	}
 	n := copy(p, r.buf)
 	r.buf = r.buf[n:]
-	if len(r.buf) == 0 && r.eof {
-		// signal EOF on next read
-	}
+	// With the buffer drained at EOF, the next Read reports io.EOF.
 	return n, nil
 }
 

@@ -17,9 +17,6 @@ import (
 // requests whose tool set does not contain all of them (extras are fine).
 var freeTierTools = []string{"edit", "execute", "glob", "grep", "question", "read", "shell", "skill", "subagent", "webfetch", "websearch", "write"}
 
-// freeTierQuartet is retained as an alias for older tests/callers.
-var freeTierQuartet = freeTierTools
-
 // freeTierEnvBlock is the minimal <env> block Zen's free tier requires in the
 // system prompt. It mirrors the block OpenCode injects into its agent system
 // prompt; the exact working-directory value is not significant, only the
@@ -237,7 +234,7 @@ func freeTierToolSpec(name string) (description string, parameters map[string]an
 		return "Performs exact string replacements in files.", map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"file_path": map[string]any{"type": "string", "description": "The absolute path to the file to modify."},
+				"file_path":  map[string]any{"type": "string", "description": "The absolute path to the file to modify."},
 				"old_string": map[string]any{"type": "string", "description": "The text to replace."},
 				"new_string": map[string]any{"type": "string", "description": "The text to replace it with."},
 			},

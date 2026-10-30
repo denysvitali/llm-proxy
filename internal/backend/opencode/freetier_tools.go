@@ -1,8 +1,8 @@
 package opencode
 
 import (
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 )
 
 //go:embed freetier_tools.json
