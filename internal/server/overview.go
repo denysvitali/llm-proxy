@@ -171,7 +171,7 @@ func (s *Server) backendCatalogForOverview(r *http.Request, name string) ([]stri
 	}
 	models, err := s.backendCatalog(r.Context(), b)
 	if err != nil {
-		s.log.WithError(err).WithField("backend", name).Warn("catalog fetch failed")
+		s.logCatalogFailure(r.Context(), name, err)
 		return nil, err
 	}
 	out := append([]string(nil), models...)

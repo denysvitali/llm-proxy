@@ -250,7 +250,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		models, err := s.backendCatalog(r.Context(), b)
 		if err != nil {
 			failures++
-			s.log.WithError(err).WithField("backend", b.Name()).Warn("catalog fetch failed")
+			s.logCatalogFailure(r.Context(), b.Name(), err)
 			continue
 		}
 		lists = append(lists, catalog{name: b.Name(), models: models})
@@ -292,7 +292,7 @@ func (s *Server) handleBackendModels(w http.ResponseWriter, r *http.Request, nam
 	}
 	models, err := s.backendCatalog(r.Context(), b)
 	if err != nil {
-		s.log.WithError(err).WithField("backend", name).Warn("catalog fetch failed")
+		s.logCatalogFailure(r.Context(), name, err)
 		writeOpenAIError(w, http.StatusBadGateway, "api_error",
 			fmt.Sprintf("backend %q catalog is unavailable", name))
 		return

@@ -81,7 +81,7 @@ func (s *Server) resolveWithFallbacks(ctx context.Context, model string) (route,
 		}
 		models, err := s.catalog(ctx, b)
 		if err != nil {
-			s.log.WithError(err).WithField("backend", b.Name()).Warn("catalog fetch failed")
+			s.logCatalogFailure(ctx, b.Name(), err)
 			continue
 		}
 		if hasModel(models, model) {

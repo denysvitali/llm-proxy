@@ -1,8 +1,15 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/config"
@@ -39,4 +46,50 @@ func TestRoutingAndModelsShareCatalogCache(t *testing.T) {
 	if b.calls != 1 {
 		t.Errorf("routing and model listing fetched catalog %d times, want 1", b.calls)
 	}
+}
+
+// A backend whose catalog keeps failing (an expired API key) is queried once
+// per catalogFailureTTL, not once per routing scan, and logs one warning per
+// interval; a caller that went away logs no warning at all.
+func TestCatalogFailureIsHeldAndWarnedOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeBackend{name: "expired", err: errors.New("HTTP 401: api_key_expired")}
+		b := &countingBackend{Backend: fake}
+		log, hook := logtest.NewNullLogger()
+		log.SetLevel(logrus.DebugLevel)
+		s := &Server{log: log, catalogs: newCatalogCache()}
+		for range 3 {
+			if _, err := s.catalog(t.Context(), b); err == nil {
+				t.Fatal("failing catalog returned no error")
+			} else {
+				s.logCatalogFailure(t.Context(), b.Name(), err)
+			}
+		}
+		if b.calls != 1 {
+			t.Fatalf("failing catalog fetched %d times within the hold, want 1", b.calls)
+		}
+		time.Sleep(catalogFailureTTL + time.Second)
+		fake.err = nil
+		fake.models = []string{"m"}
+		if models, err := s.catalog(t.Context(), b); err != nil || len(models) != 1 {
+			t.Fatalf("recovered catalog = %v, %v", models, err)
+		}
+		warnings := 0
+		for _, entry := range hook.AllEntries() {
+			if entry.Level == logrus.WarnLevel {
+				warnings++
+			}
+		}
+		if warnings != 1 {
+			t.Fatalf("warnings = %d, want 1", warnings)
+		}
+
+		hook.Reset()
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		s.logCatalogFailure(canceled, "other", context.Canceled)
+		if entry := hook.LastEntry(); entry == nil || entry.Level != logrus.DebugLevel {
+			t.Fatalf("canceled caller logged %v, want debug", entry)
+		}
+	})
 }

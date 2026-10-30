@@ -39,7 +39,19 @@ const (
 	// to one line per backend per interval; without it every request past the
 	// TTL logs while the endpoint is failing.
 	catalogStaleWarnInterval = 5 * time.Minute
+	// catalogFailureTTL holds a failed fetch with no usable cache, so a
+	// backend with a dead credential is not re-queried by every request
+	// that scans catalogs for routing.
+	catalogFailureTTL = 30 * time.Second
+	// catalogFailureWarnInterval throttles "catalog fetch failed" warnings to
+	// one line per backend per interval.
+	catalogFailureWarnInterval = 5 * time.Minute
 )
+
+type catalogFailure struct {
+	err   error
+	until time.Time
+}
 
 // catalogCache owns model discovery state shared by routing and HTTP catalogs.
 // Its zero value is ready for use. Entries remain fresh for catalogTTL; an
@@ -49,6 +61,9 @@ type catalogCache struct {
 	entries map[string]cachedCatalog
 	refresh map[string]*catalogRefresh
 	ttl     time.Duration
+	// failures caches recent fetch errors; failureWarned throttles warnings.
+	failures      map[string]catalogFailure
+	failureWarned map[string]time.Time
 }
 
 func newCatalogCache() catalogCache {
@@ -85,6 +100,10 @@ func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.Fi
 			c.mu.Unlock()
 			return cached.models, nil
 		}
+		if failed, held := c.failures[name]; held && !ok && time.Now().Before(failed.until) {
+			c.mu.Unlock()
+			return nil, failed.err
+		}
 		if running := c.refresh[name]; running != nil {
 			c.mu.Unlock()
 			select {
@@ -116,6 +135,14 @@ func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.Fi
 		// never detaches provider work from the request that started it.
 		running.models, running.err = c.fetch(ctx, b, log, cached, ok)
 		running.retry = ctx.Err() != nil
+		if running.err != nil && !running.retry && !ok {
+			c.mu.Lock()
+			if c.failures == nil {
+				c.failures = make(map[string]catalogFailure)
+			}
+			c.failures[name] = catalogFailure{err: running.err, until: time.Now().Add(catalogFailureTTL)}
+			c.mu.Unlock()
+		}
 		return running.models, running.err
 	}
 }
@@ -152,6 +179,7 @@ func (c *catalogCache) fetch(ctx context.Context, b backend.Backend, log logrus.
 	}
 
 	c.mu.Lock()
+	delete(c.failures, b.Name())
 	c.entries[b.Name()] = cachedCatalog{
 		models:    models,
 		expires:   now.Add(catalogJitter(c.ttl)),
@@ -169,4 +197,35 @@ func catalogJitter(ttl time.Duration) time.Duration {
 		return ttl
 	}
 	return ttl + time.Duration(rand.Int64N(int64(2*spread)+1)) - spread
+}
+
+// shouldWarnFailure reports whether a catalog failure for name should be
+// logged at warning level now, claiming the slot for this interval.
+func (c *catalogCache) shouldWarnFailure(name string, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failureWarned == nil {
+		c.failureWarned = make(map[string]time.Time)
+	}
+	if last, ok := c.failureWarned[name]; ok && now.Sub(last) < catalogFailureWarnInterval {
+		return false
+	}
+	c.failureWarned[name] = now
+	return true
+}
+
+// logCatalogFailure reports a failed catalog lookup. A caller that went away
+// is not a backend failure, and repeated failures of one backend log at
+// warning level once per catalogFailureWarnInterval.
+func (s *Server) logCatalogFailure(ctx context.Context, name string, err error) {
+	entry := s.log.WithError(err).WithField("backend", name)
+	if ctx.Err() != nil {
+		entry.Debug("catalog fetch abandoned; caller canceled")
+		return
+	}
+	if !s.catalogs.shouldWarnFailure(name, time.Now()) {
+		entry.Debug("catalog fetch failed")
+		return
+	}
+	entry.Warn("catalog fetch failed")
 }
