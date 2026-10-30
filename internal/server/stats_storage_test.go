@@ -256,3 +256,21 @@ func TestStatsTrackerDoneOnce(t *testing.T) {
 		t.Fatalf("completion activity differs: requests=%+v errors=%+v", requests, errors)
 	}
 }
+
+// An upstream error body has a first byte, but it is not generation latency:
+// a fast 429 must not record a near-zero TTFT for the failing backend.
+func TestStatsErrorStatusRecordsNoLatency(t *testing.T) {
+	st := newStats(prometheus.NewRegistry(), config.StatsConfig{})
+	t.Cleanup(func() { _ = st.Close() })
+	tr := st.track("a", "m")
+	tr.setUpstreamStatus(429)
+	tr.noteFirstByte()
+	tr.done()
+	rows := st.snapshotFromPrometheus()
+	if len(rows) != 1 || rows[0].StatusCodes["429"] != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].TTFT != (Percentiles{}) || rows[0].E2E != (Percentiles{}) {
+		t.Fatalf("error status recorded latency: %+v", rows[0])
+	}
+}

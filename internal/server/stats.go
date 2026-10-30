@@ -192,7 +192,10 @@ func (t *tracker) done() {
 		status: t.status, success: !t.bodyFail && strings.HasPrefix(t.status, "2"),
 		message: t.errMsg, usage: t.rep, request: t.request,
 	}
-	if first := t.firstAt.Load(); first != 0 && t.status != statusError && !t.bodyFail {
+	// Latency describes generation: an error body (a 429 answered in a
+	// millisecond) has a first byte too, but recording it would drag TTFT and
+	// e2e toward zero for exactly the backends that are failing.
+	if first := t.firstAt.Load(); first != 0 && a.success {
 		a.ttft = time.Unix(0, first).Sub(t.start).Seconds()
 		a.e2e = a.at.Sub(t.start).Seconds()
 		// Exclude prompt processing and queueing from the generation window.
