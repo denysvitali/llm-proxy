@@ -40,9 +40,10 @@ func (c *Client) freeQuotaResponse(model string) *backend.Response {
 	header := quota.header.Clone()
 	header.Set("Retry-After", strconv.FormatInt(int64(math.Ceil(quota.until.Sub(now).Seconds())), 10))
 	return &backend.Response{
-		Status: http.StatusTooManyRequests,
-		Header: header,
-		Body:   io.NopCloser(bytes.NewReader(quota.body)),
+		Status:    http.StatusTooManyRequests,
+		Header:    header,
+		Body:      io.NopCloser(bytes.NewReader(quota.body)),
+		Exhausted: true,
 	}
 }
 

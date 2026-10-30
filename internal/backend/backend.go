@@ -44,6 +44,13 @@ type Response struct {
 		Read([]byte) (int, error)
 		Close() error
 	}
+	// Exhausted marks a rejection that says this backend cannot serve the
+	// model until a provider-side window resets — a daily free quota, not a
+	// per-request rate limit. The status is still a 4xx and the body is the
+	// provider's own verdict, so the last backend of a chain relays it
+	// unchanged; an earlier one may hand the request to its fallback instead
+	// of failing the client for the rest of the window.
+	Exhausted bool
 }
 
 // Backend is one upstream provider. Implementations must be safe for
