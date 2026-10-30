@@ -61,7 +61,7 @@ func (v *versionDiscovery) latest(ctx context.Context) string {
 	if err != nil {
 		return v.version
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return v.version
 	}
