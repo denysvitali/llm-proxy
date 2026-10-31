@@ -291,7 +291,7 @@ func TestSendEmptyToken(t *testing.T) {
 	}
 }
 
-func TestModelsIncludesGrok46(t *testing.T) {
+func TestModelsIncludesGrok47(t *testing.T) {
 	c := New("", staticToken("tok"))
 	models, err := c.Models(context.Background())
 	if err != nil {
@@ -300,6 +300,7 @@ func TestModelsIncludesGrok46(t *testing.T) {
 	want := map[string]bool{
 		"grok-4.5":               false,
 		"grok-4.6":               false,
+		"grok-4.7":               false,
 		"grok-composer-2.5-fast": false,
 	}
 	for _, model := range models {

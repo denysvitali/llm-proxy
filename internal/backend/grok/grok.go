@@ -374,7 +374,7 @@ func restoreNamespaceValue(value any, tools map[string]namespaceTool) bool {
 // Models: the subscription endpoint has no public model catalog, so a static
 // list is returned instead.
 func (c *Client) Models(ctx context.Context) ([]string, error) {
-	return []string{"grok-4.5", "grok-4.6", "grok-composer-2.5-fast"}, nil
+	return []string{"grok-4.5", "grok-4.6", "grok-4.7", "grok-composer-2.5-fast"}, nil
 }
 
 type HTTPError struct {
