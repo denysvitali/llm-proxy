@@ -165,7 +165,7 @@ func (s *StreamWriter) consumeToolCall(call openAIToolCall) error {
 		if err != nil {
 			return err
 		}
-		tool = &chatAnthropicTool{index: s.blockIndex, id: id, name: call.Function.Name}
+		tool = &chatAnthropicTool{index: s.blockIndex, id: id, name: canonicalToolName(call.Function.Name)}
 		s.blockIndex++
 		s.tools[call.Index] = tool
 		s.emit("content_block_start", map[string]any{"type": "content_block_start", "index": tool.index,

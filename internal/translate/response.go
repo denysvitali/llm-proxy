@@ -133,9 +133,23 @@ func toolUseBlock(call openAIToolCall) (map[string]any, error) {
 	return map[string]any{
 		"type":  "tool_use",
 		"id":    toolUseID(call.ID),
-		"name":  call.Function.Name,
+		"name":  canonicalToolName(call.Function.Name),
 		"input": input,
 	}, nil
+}
+
+// canonicalToolName fixes the lowercase names non-Claude models emit for
+// Claude Code's built-in tools. The proxy only aliases names that collide with
+// a real tool, so a genuinely lowercase custom tool still passes through.
+func canonicalToolName(name string) string {
+	switch strings.ToLower(name) {
+	case "bash":
+		return "Bash"
+	case "grep":
+		return "Grep"
+	default:
+		return name
+	}
 }
 
 // stopReason maps an OpenAI finish_reason to its Anthropic equivalent.

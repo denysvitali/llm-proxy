@@ -124,7 +124,7 @@ func ChatToAnthropic(body []byte, model string) ([]byte, error) {
 				blocks = append(blocks, anthropicBlock{
 					Type:  "tool_use",
 					ID:    call.ID,
-					Name:  call.Function.Name,
+					Name:  canonicalToolName(call.Function.Name),
 					Input: input,
 				})
 			}
