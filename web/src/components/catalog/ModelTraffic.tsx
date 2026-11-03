@@ -151,7 +151,7 @@ function ModelCard({ model, onInspect }: { model: ModelStat; onInspect: () => vo
         <ActionIcon
           size={44}
           variant="light"
-          color="indigo"
+          color="zinc"
           aria-label={`Open details for ${model.backend} ${model.model}`}
           onClick={onInspect}
         >

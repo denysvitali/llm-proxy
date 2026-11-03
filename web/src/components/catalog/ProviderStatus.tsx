@@ -34,7 +34,7 @@ export function AuthStatus({ backend }: { backend: OverviewBackend }) {
           href={account.login}
           size="xs"
           mih={44}
-          color="indigo"
+          color="zinc"
           variant={backend.authConfigured ? 'subtle' : 'light'}
           onClick={(event) => event.stopPropagation()}
           leftSection={<IconLogin size={13} stroke={1.8} aria-hidden="true" />}

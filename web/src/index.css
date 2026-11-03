@@ -5,21 +5,22 @@
    has no primitive for (the live LED pulse). */
 
 :root[data-mantine-color-scheme='light'] {
-  --canvas: #f2f3f5;
+  /* EasyUI light palette (easyui.site tokens.css :root) */
+  --canvas: #fafafa;
   --card: #ffffff;
-  --header: rgba(255, 255, 255, 0.86);
-  --sunken: #f6f7f9;
-  --hairline: #e4e6ea;
-  --ink: #1a1d21;
-  --muted: #5f6673;
+  --header: rgba(255, 255, 255, 0.85);
+  --sunken: #f4f4f5;
+  --hairline: #e4e4e7;
+  --ink: #0a0a0a;
+  --muted: #71717a;
 
   --data-good: #157748;
   --data-warning: #946200;
   --data-serious: #ab5712;
   --data-critical: #c33030;
 
-  --chart-grid-color: rgba(26, 29, 33, 0.08);
-  --chart-cursor-fill: rgba(76, 110, 245, 0.06);
+  --chart-grid-color: rgba(10, 10, 10, 0.08);
+  --chart-cursor-fill: rgba(10, 10, 10, 0.05);
 
   --mantine-color-body: var(--card);
   --mantine-color-text: var(--ink);
@@ -30,28 +31,74 @@
 }
 
 :root[data-mantine-color-scheme='dark'] {
-  --canvas: #0b0d12;
+  /* EasyUI dark palette. --card stays #171a21: palette.ts charts were
+     validated against exactly that surface. */
+  --canvas: #111113;
   --card: #171a21;
-  --header: rgba(13, 16, 22, 0.82);
-  --sunken: #10131a;
-  --hairline: #272c38;
-  --ink: #e9ecef;
-  --muted: #8f97a8;
+  --header: rgba(17, 17, 19, 0.85);
+  --sunken: #18181a;
+  --hairline: #29292c;
+  --ink: #f2f2f3;
+  --muted: #a1a1a6;
 
   --data-good: #59d99a;
   --data-warning: #e7bc58;
   --data-serious: #f0913f;
   --data-critical: #ff8780;
 
-  --chart-grid-color: rgba(233, 236, 239, 0.07);
-  --chart-cursor-fill: rgba(116, 143, 252, 0.08);
+  --chart-grid-color: rgba(242, 242, 243, 0.07);
+  --chart-cursor-fill: rgba(242, 242, 243, 0.06);
 
   --mantine-color-body: var(--card);
   --mantine-color-text: var(--ink);
   --mantine-color-dimmed: var(--muted);
   --mantine-color-default-border: var(--hairline);
-  --mantine-color-default-hover: #1d222c;
+  --mantine-color-default-hover: #202023;
   --mantine-color-default-color: var(--ink);
+}
+
+/* Vendored from vercel/geist-font (OFL-1.1) and JetBrainsMono (OFL-1.1). */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
 }
 
 html { scroll-behavior: smooth; }
@@ -134,10 +181,10 @@ body {
   height: 30px;
   flex: none;
   border-radius: 9px;
-  background: linear-gradient(135deg, var(--mantine-color-indigo-5), var(--mantine-color-indigo-7));
+  background: var(--ink);
+  color: var(--card);
   display: grid;
   place-items: center;
-  color: #fff;
 }
 .brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .brand-text strong { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
@@ -183,7 +230,7 @@ body {
 /* Fresh rows in the activity feed: a recently landed attempt fades out */
 [data-fresh] { animation: fresh-land 1.8s ease-out; }
 @keyframes fresh-land {
-  0% { background-color: color-mix(in srgb, var(--mantine-color-indigo-6) 14%, var(--card)); }
+  0% { background-color: color-mix(in srgb, var(--ink) 10%, var(--card)); }
   100% { background-color: transparent; }
 }
 
@@ -223,8 +270,7 @@ body {
   text-decoration: none;
   padding: 8px 4px;
 }
-.bottom-nav-link[data-active] { color: var(--mantine-color-indigo-6); }
-:root[data-mantine-color-scheme='dark'] .bottom-nav-link[data-active] { color: var(--mantine-color-indigo-4); }
+.bottom-nav-link[data-active] { color: var(--ink); font-weight: 650; }
 
 /* ---------- page pieces ---------- */
 
@@ -257,12 +303,9 @@ body {
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--mantine-color-indigo-6) 11%, var(--card));
-  color: var(--mantine-color-indigo-6);
-}
-:root[data-mantine-color-scheme='dark'] .stat-tile-icon {
-  color: var(--mantine-color-indigo-3);
-  background: color-mix(in srgb, var(--mantine-color-indigo-6) 16%, var(--card));
+  background: var(--sunken);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
 }
 .stat-tile[data-accent='orange'] .stat-tile-icon {
   background: color-mix(in srgb, var(--data-warning) 13%, var(--card));
@@ -281,7 +324,7 @@ body {
   background: var(--card);
   min-width: 0;
 }
-.catalog-model-entry:hover { border-color: color-mix(in srgb, var(--mantine-color-indigo-6) 45%, var(--hairline)); }
+.catalog-model-entry:hover { border-color: var(--ink); }
 .catalog-model-id {
   font-family: var(--mantine-font-family-monospace);
   font-size: 12.5px;
@@ -340,12 +383,8 @@ body {
   border-radius: 50%;
   font-size: 11px;
   font-weight: 700;
-  color: var(--mantine-color-indigo-6);
-  background: color-mix(in srgb, var(--mantine-color-indigo-6) 11%, var(--card));
-}
-:root[data-mantine-color-scheme='dark'] .setup-sequence a > span {
-  color: var(--mantine-color-indigo-3);
-  background: color-mix(in srgb, var(--mantine-color-indigo-6) 16%, var(--card));
+  color: var(--card);
+  background: var(--ink);
 }
 .setup-sequence strong { display: block; font-size: 13px; font-weight: 600; line-height: 1.3; }
 .setup-sequence small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
@@ -377,12 +416,8 @@ body {
   border-radius: 50%;
   font-size: 13px;
   font-weight: 700;
-  color: var(--mantine-color-indigo-6);
-  background: color-mix(in srgb, var(--mantine-color-indigo-6) 11%, var(--card));
-}
-:root[data-mantine-color-scheme='dark'] .setup-step-number {
-  color: var(--mantine-color-indigo-3);
-  background: color-mix(in srgb, var(--mantine-color-indigo-6) 16%, var(--card));
+  color: var(--card);
+  background: var(--ink);
 }
 
 /* Overview: keep the key numbers prominent without crowding narrow screens. */

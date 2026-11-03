@@ -136,7 +136,7 @@ export function RecentRequestsCard({
     <Card p="md" miw={0} className="activity-card">
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs" mb="sm">
         <Group gap={8} wrap="nowrap" miw={0}>
-          <ThemeIcon variant="light" color="indigo" size="sm" radius="md" aria-hidden="true">
+          <ThemeIcon variant="light" color="zinc" size="sm" radius="md" aria-hidden="true">
             <IconClock size={13} />
           </ThemeIcon>
           <Title order={5} fz={13} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Recent requests</Title>

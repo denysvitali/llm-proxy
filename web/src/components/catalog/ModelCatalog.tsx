@@ -62,7 +62,7 @@ export default function ModelCatalog() {
             </Text>
           </Box>
         </Group>
-        <Badge variant="light" color="indigo" style={{ flexShrink: 0 }}>
+        <Badge variant="light" color="zinc" style={{ flexShrink: 0 }}>
           {query.data ? plural(catalog.length, 'model') : '— models'}
         </Badge>
       </Group>

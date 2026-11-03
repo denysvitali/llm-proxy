@@ -12,37 +12,52 @@ import {
   rem,
 } from '@mantine/core'
 
-// "Console" — a Mantine-native dashboard theme. Cool graphite dark mode,
-// indigo interaction accent, 8px control radii, 12px cards. Card surfaces
-// stay #ffffff (light) and #171a21 (dark): palette.ts charts were validated
-// against exactly those two surfaces. Tokens live in index.css.
+// EasyUI — the easyui.site monochrome system, mapped onto Mantine. Near-black
+// ink on near-white in light, near-white ink on near-black in dark, with the
+// single blue (#3B82F6) reserved for the live indicator. Card surfaces stay
+// #ffffff (light) and #171a21 (dark): palette.ts charts were validated against
+// exactly those two surfaces. Tokens live in index.css.
 
-// Cool graphite ramp replaces Mantine's neutral dark so panels, popovers,
-// and modals share one blue-slate family with the canvas.
+// Zinc ramp (EasyUI's dark palette) replaces Mantine's neutral dark so panels,
+// popovers, and modals share one family with the canvas.
 const dark: [string, string, string, string, string, string, string, string, string, string] = [
-  '#e9ecef', // 0 — ink
-  '#d5dae2',
-  '#a9b1bf',
-  '#7e8797',
-  '#4c5464',
-  '#343b48',
-  '#262c38',
-  '#1c212b',
-  '#14181f',
-  '#0d1016',
+  '#F2F2F3', // 0 — ink
+  '#A1A1A6',
+  '#6F6F75',
+  '#4D4D52',
+  '#343438',
+  '#29292C',
+  '#202023',
+  '#1C1C1F',
+  '#18181A',
+  '#111113',
+]
+
+// Interaction accent: EasyUI's accent is the ink itself, inverted per scheme.
+const zinc: [string, string, string, string, string, string, string, string, string, string] = [
+  '#FAFAFA',
+  '#F4F4F5',
+  '#E4E4E7',
+  '#A1A1AA',
+  '#71717A',
+  '#3F3F46',
+  '#27272A',
+  '#18181B',
+  '#0A0A0A',
+  '#050505',
 ]
 
 export const theme = createTheme({
-  primaryColor: 'indigo',
+  primaryColor: 'zinc',
   autoContrast: true,
   respectReducedMotion: true,
-  colors: { dark },
+  colors: { dark, zinc },
+  primaryShade: { light: 8, dark: 0 },
   defaultRadius: 'md',
   cursorType: 'pointer',
   fontFamily:
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif',
-  fontFamilyMonospace:
-    'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+    '"Geist", "Geist Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  fontFamilyMonospace: '"JetBrains Mono", "Fira Code", ui-monospace, monospace',
   headings: {
     fontWeight: '650',
     sizes: {
