@@ -136,8 +136,11 @@ at the top level to change where that session is stored. Use qualified model
 names such as `workbuddy/hy3` or `workbuddy/glm-5.3`. The catalog is fetched
 from CodeBuddy International's authenticated `/v3/config` endpoint and cached
 for five minutes; the last successful response is retained during a temporary
-catalog outage. `hy4` (Tencent Hy4) is served by the chat endpoint but not yet
-listed by `/v3/config`, so the proxy appends it to the live catalog.
+catalog outage. Every model the endpoint serves is billed at the credit rate
+`/v3/config` reports; only `x0.00` models such as `hy3` are free. The free
+Hy4 offered in the WorkBuddy web app (`hy4-free`) is only routed for hosted
+cloud-agent sessions and is not reachable through this backend; `hy4` and
+`hy4-preview` consume credits.
 
 WorkBuddy exposes a streaming-only Chat Completions service internally. The
 proxy aggregates it for non-streaming clients and uses the existing translation
