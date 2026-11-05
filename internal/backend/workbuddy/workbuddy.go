@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -139,8 +140,17 @@ func (c *Client) fetchModels(ctx context.Context) ([]string, map[string]string, 
 	if len(models) == 0 {
 		return nil, nil, errors.New("CodeBuddy model catalog is empty")
 	}
+	for _, id := range unlistedModels {
+		if !slices.Contains(models, id) {
+			models = append(models, id)
+		}
+	}
 	return models, credits, nil
 }
+
+// unlistedModels are served by the chat endpoint but missing from /v3/config.
+// Hy4 launched 2026-11-04; the catalog still advertises only hy4-preview.
+var unlistedModels = []string{"hy4"}
 
 func mediaModel(tags []string) bool {
 	for _, tag := range tags {

@@ -38,7 +38,7 @@ func TestModelsFetchesLiveCatalogAndFiltersMediaModels(t *testing.T) {
 	c := New(server.URL, staticToken("account-token"))
 	for range 2 {
 		models, err := c.Models(context.Background())
-		if err != nil || len(models) != 1 || models[0] != "hy3" {
+		if err != nil || len(models) != 2 || models[0] != "hy3" || models[1] != "hy4" {
 			t.Fatalf("Models() = %v, %v", models, err)
 		}
 	}

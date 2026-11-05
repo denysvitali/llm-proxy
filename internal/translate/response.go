@@ -94,7 +94,7 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 		if choice.Message.ContentPresent {
 			out.Content = append(out.Content, map[string]any{"type": "text", "text": choice.Message.Content})
 		}
-		if choice.Message.Refusal != nil {
+		if choice.Message.Refusal != nil && *choice.Message.Refusal != "" {
 			out.Content = append(out.Content, map[string]any{"type": "text", "text": *choice.Message.Refusal})
 		}
 		ids := responseCallIDs{}
@@ -113,7 +113,7 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 		if reason := stopReason(choice.FinishReason); reason != "" {
 			out.StopReason = &reason
 		}
-		if choice.Message.Refusal != nil {
+		if choice.Message.Refusal != nil && *choice.Message.Refusal != "" {
 			reason := "refusal"
 			out.StopReason = &reason
 		}

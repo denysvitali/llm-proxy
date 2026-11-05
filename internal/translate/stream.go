@@ -130,11 +130,14 @@ func (s *StreamWriter) consumeChunk(chunk openAIChunk) error {
 	}
 	choice := chunk.Choices[0]
 	text := choice.Delta.Content
-	if choice.Delta.Refusal != nil {
+	// An empty refusal string is not a refusal: WorkBuddy sends one on
+	// every delta.
+	refusal := choice.Delta.Refusal != nil && *choice.Delta.Refusal != ""
+	if refusal {
 		text += *choice.Delta.Refusal
 		s.stopReason = "refusal"
 	}
-	if text != "" || choice.Delta.ContentPresent || choice.Delta.Refusal != nil {
+	if text != "" || choice.Delta.ContentPresent || refusal {
 		if !s.blockOpen {
 			s.textIndex = s.blockIndex
 			s.blockIndex++

@@ -270,6 +270,9 @@ type ResponsesStreamFromChatWriter struct {
 	namespaces map[string]responseNamespaceTool
 	tools      map[int]*streamedResponseItem
 	callIDs    responseCallIDs
+	// emptyContent records a present-but-empty content field; Finish emits an
+	// empty message for it when no text arrived, matching the buffered path.
+	emptyContent, sawContent bool
 }
 
 func NewResponsesStreamFromChat(writer io.Writer, flush func(), model string) *ResponsesStreamFromChatWriter {
@@ -366,10 +369,17 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 		if delta.ReasoningContent != "" && s.stream.openItem("reasoning") {
 			s.stream.appendReasoning(delta.ReasoningContent)
 		}
-		if delta.Content != nil && s.stream.openItem("message") {
+		// Some upstreams (WorkBuddy) attach empty content/refusal strings to
+		// every reasoning delta; opening items for them would interleave empty
+		// messages between reasoning fragments.
+		if delta.Content != nil && *delta.Content == "" {
+			s.emptyContent = true
+			s.stream.ensureCreated()
+		} else if delta.Content != nil && s.stream.openItem("message") {
+			s.sawContent = true
 			s.stream.appendText(*delta.Content)
 		}
-		if delta.Refusal != nil && s.stream.openItem("refusal") {
+		if delta.Refusal != nil && *delta.Refusal != "" && s.stream.openItem("refusal") {
 			s.stream.appendText(*delta.Refusal)
 		}
 		for _, call := range delta.ToolCalls {
@@ -417,5 +427,10 @@ func chatChunkError(raw json.RawMessage) error {
 	return &upstream
 }
 
-func (s *ResponsesStreamFromChatWriter) Finish()             { s.stream.Finish() }
+func (s *ResponsesStreamFromChatWriter) Finish() {
+	if s.emptyContent && !s.sawContent && s.stream.openItem("message") {
+		s.stream.appendText("")
+	}
+	s.stream.Finish()
+}
 func (s *ResponsesStreamFromChatWriter) Fail(message string) { s.stream.Fail(message) }

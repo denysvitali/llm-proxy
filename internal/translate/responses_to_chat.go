@@ -295,7 +295,7 @@ func responsesFromChat(body []byte, model string, namespaces map[string]response
 				}},
 			})
 		}
-		if choice.Message.Refusal != nil {
+		if choice.Message.Refusal != nil && *choice.Message.Refusal != "" {
 			out.Output = append(out.Output, responsesOutputItem{ID: out.nextItemID(), Type: "message", Role: "assistant", Status: status, Content: []responsesOutputContent{{Type: "refusal", Refusal: *choice.Message.Refusal}}})
 		}
 		for _, call := range choice.Message.ToolCalls {

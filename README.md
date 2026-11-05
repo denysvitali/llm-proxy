@@ -136,7 +136,8 @@ at the top level to change where that session is stored. Use qualified model
 names such as `workbuddy/hy3` or `workbuddy/glm-5.3`. The catalog is fetched
 from CodeBuddy International's authenticated `/v3/config` endpoint and cached
 for five minutes; the last successful response is retained during a temporary
-catalog outage.
+catalog outage. `hy4` (Tencent Hy4) is served by the chat endpoint but not yet
+listed by `/v3/config`, so the proxy appends it to the live catalog.
 
 WorkBuddy exposes a streaming-only Chat Completions service internally. The
 proxy aggregates it for non-streaming clients and uses the existing translation

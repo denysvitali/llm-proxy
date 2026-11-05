@@ -192,6 +192,56 @@ func TestResponsesStreamFromChatMistralChunkTransition(t *testing.T) {
 	}
 }
 
+// WorkBuddy attaches empty content and refusal strings to every reasoning
+// delta; they must not fragment the stream into one item per chunk.
+func TestResponsesStreamFromChatIgnoresEmptyFragments(t *testing.T) {
+	stream := func(lines ...string) string {
+		input := strings.Join(append(lines, `data: [DONE]`, ""), "\n\n")
+		var output bytes.Buffer
+		if err := NewResponsesStreamFromChat(&output, nil, "hy4").Consume(strings.NewReader(input)); err != nil {
+			t.Fatal(err)
+		}
+		return output.String()
+	}
+	got := stream(
+		`data: {"id":"c","choices":[{"delta":{"role":"assistant","content":"","refusal":"","reasoning_content":"think "}}]}`,
+		`data: {"id":"c","choices":[{"delta":{"content":"","refusal":"","reasoning_content":"more"}}]}`,
+		`data: {"id":"c","choices":[{"delta":{"content":"Paris","refusal":""}}]}`,
+		`data: {"id":"c","choices":[{"delta":{"content":"","refusal":""},"finish_reason":"stop"}]}`,
+	)
+	if n := strings.Count(got, "event: response.output_item.added"); n != 2 {
+		t.Fatalf("output items = %d, want reasoning + message:\n%s", n, got)
+	}
+	if strings.Contains(got, `"type":"refusal"`) || !strings.Contains(got, `"text":"Paris"`) {
+		t.Fatalf("unexpected stream:\n%s", got)
+	}
+	// A present-but-empty answer still yields one empty message, as buffered.
+	got = stream(`data: {"id":"c","choices":[{"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}`)
+	if strings.Count(got, "event: response.output_item.added") != 1 || !strings.Contains(got, `"type":"output_text"`) {
+		t.Fatalf("empty answer stream:\n%s", got)
+	}
+}
+
+func TestAnthropicStreamIgnoresEmptyRefusal(t *testing.T) {
+	input := strings.Join([]string{
+		`data: {"id":"c","choices":[{"delta":{"role":"assistant","content":"","refusal":"","reasoning_content":"hmm"}}]}`,
+		`data: {"id":"c","choices":[{"delta":{"content":"OK","refusal":""},"finish_reason":"stop"}]}`,
+		`data: [DONE]`, "",
+	}, "\n\n")
+	var output bytes.Buffer
+	if err := NewStreamWriter(&output, nil, "hy4", false).Consume(strings.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if !strings.Contains(got, `"stop_reason":"end_turn"`) || !strings.Contains(got, `"text":"OK"`) {
+		t.Fatalf("stream:\n%s", got)
+	}
+	body, err := FromOpenAI([]byte(`{"id":"c","model":"hy4","choices":[{"index":0,"message":{"role":"assistant","content":"OK","refusal":""},"finish_reason":"stop"}]}`), "hy4", false)
+	if err != nil || !strings.Contains(string(body), `"stop_reason":"end_turn"`) {
+		t.Fatalf("buffered = %s, %v", body, err)
+	}
+}
+
 func TestChatDeltaContentPresence(t *testing.T) {
 	for _, tc := range []struct {
 		body    string
