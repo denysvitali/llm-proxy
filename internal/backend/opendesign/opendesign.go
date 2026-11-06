@@ -15,6 +15,7 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/backend/upstream"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 const (
@@ -83,7 +84,19 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if !ok {
 		return nil, backend.Terminal(fmt.Errorf("opendesign backend does not support kind %q", req.Kind))
 	}
-	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+path, req.RawBody, req.Streaming)
+	body := req.RawBody
+	if req.Kind == backend.KindAnthropic {
+		// Open Design's origin drops the connection (Cloudflare answers an
+		// HTML 502) on any tool_reference block, which Claude Code sends after
+		// every tool search; that poisons the whole session, since each retry
+		// replays the same history. Inline the references as text.
+		// A body that does not decode is forwarded as-is for the upstream
+		// to judge.
+		if rewritten, _, err := translate.InlineToolReferences(body); err == nil {
+			body = rewritten
+		}
+	}
+	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+path, body, req.Streaming)
 	if err != nil {
 		return nil, err
 	}

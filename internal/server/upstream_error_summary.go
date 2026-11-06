@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"html"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -50,8 +52,35 @@ func upstreamErrorSummary(body []byte) string {
 			return truncateMessage(probe.Message)
 		}
 	}
+	if summary := htmlErrorSummary(body); summary != "" {
+		return truncateMessage(summary)
+	}
 	text := firstLine(string(body))
 	return truncateMessage(text)
+}
+
+var (
+	htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	// Cloudflare error pages print the ray as "Ray ID: <strong ...>id</strong>".
+	cloudflareRayPattern = regexp.MustCompile(`(?is)Ray ID:\s*(?:<[^>]*>\s*)*([0-9a-f]{8,})`)
+)
+
+// htmlErrorSummary names an HTML error page by its <title>, since its first
+// line is only a doctype. A Cloudflare ray ID is appended when present so the
+// incident can be reported to the provider.
+func htmlErrorSummary(body []byte) string {
+	match := htmlTitlePattern.FindSubmatch(body)
+	if match == nil {
+		return ""
+	}
+	title := strings.TrimSpace(html.UnescapeString(string(match[1])))
+	if title == "" {
+		return ""
+	}
+	if ray := cloudflareRayPattern.FindSubmatch(body); ray != nil {
+		title += " (Cloudflare ray " + string(ray[1]) + ")"
+	}
+	return "HTML error page: " + title
 }
 
 // errorCode renders an OpenAI-style code, which may be a string, an integer,

@@ -89,7 +89,7 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 			if err := decodeContentPart(part, &value); err != nil || value.ToolName == "" {
 				return nil, fmt.Errorf("tool_reference requires tool_name and no unsupported fields%s", unknownFieldDetail(err))
 			}
-			block = anthropicBlock{Type: "text", Text: "Tool " + value.ToolName + " is now available."}
+			block = anthropicBlock{Type: "text", Text: ToolReferenceText(value.ToolName)}
 		case "tool_addition", "tool_removal":
 			// Mid-conversation tool changes; applyAnthropicToolChanges folds
 			// them into the declared tools before translation.

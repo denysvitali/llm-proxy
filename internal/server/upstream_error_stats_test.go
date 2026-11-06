@@ -24,6 +24,10 @@ func TestUpstreamErrorSummary(t *testing.T) {
 		{"flat message", `{"message":"Insufficient balance"}`, "Insufficient balance"},
 		{"plain text", "upstream is sad\nsecond line", "upstream is sad"},
 		{"html", "<html><body>oops</body></html>", "<html><body>oops</body></html>"},
+		{"html title", "<!DOCTYPE html>\n<html><head><title>Bad &amp; sad</title></head></html>", "HTML error page: Bad & sad"},
+		{"cloudflare", "<!DOCTYPE html>\n<html><head><title>open-design.ai | 502: Bad gateway</title></head>" +
+			`<body><span>Cloudflare Ray ID: <strong class="font-semibold">a56594db6feefbd6</strong></span></body></html>`,
+			"HTML error page: open-design.ai | 502: Bad gateway (Cloudflare ray a56594db6feefbd6)"},
 		{"bom", "\xef\xbb\xbf{\"error\":{\"message\":\"BOM body\"}}", "BOM body"},
 		{"empty", "", ""},
 	}

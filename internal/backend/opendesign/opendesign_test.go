@@ -281,3 +281,32 @@ func TestModelsAnonymousAndEmpty(t *testing.T) {
 		})
 	}
 }
+
+// Open Design's origin fails any request carrying a tool_reference block
+// (Cloudflare answers an HTML 502), so native Messages requests inline them as
+// text while other wires pass through untouched.
+func TestSendInlinesToolReferences(t *testing.T) {
+	const withReference = `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"tool_reference","tool_name":"Weather"}]}]}]}`
+	var got []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+	c := New(upstream.URL, "k")
+	defer c.HTTP.CloseIdleConnections()
+	for _, kind := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat} {
+		resp, err := c.Send(context.Background(), &backend.Request{Kind: kind, RawBody: []byte(withReference)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		hasReference := bytes.Contains(got, []byte("tool_reference"))
+		if kind == backend.KindAnthropic && (hasReference || !bytes.Contains(got, []byte("Tool Weather is now available."))) {
+			t.Errorf("anthropic body not rewritten: %s", got)
+		}
+		if kind == backend.KindOpenAIChat && string(got) != withReference {
+			t.Errorf("chat body changed: %s", got)
+		}
+	}
+}
