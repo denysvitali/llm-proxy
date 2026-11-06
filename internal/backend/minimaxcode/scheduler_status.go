@@ -43,7 +43,7 @@ func (m *Manager) noteSchedulerResult(outcome, reason string) {
 	status := &m.schedulerStatus
 	status.LastCheckUnix = time.Now().Unix()
 	status.LastOutcome, status.LastReason = outcome, reason
-	if outcome == "success" {
+	if outcome == outcomeSuccess.String() {
 		status.LastSuccessUnix = status.LastCheckUnix
 	}
 	if status.ReasonCounts == nil {

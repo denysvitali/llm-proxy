@@ -123,10 +123,11 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 	if err != nil {
 		return Credentials{}, err
 	}
-	if credentials == nil || credentials.AccessToken == "" {
-		return Credentials{}, errors.New("not signed in to codex; use the dashboard to sign in with ChatGPT")
+	state := classifySession(credentials)
+	if state == sessionSignedOut {
+		return Credentials{}, errNotSignedIn()
 	}
-	if expiring(credentials) {
+	if state == sessionExpiring {
 		// Another replica may refresh concurrently: re-read under the shared
 		// file lock and redeem the refresh token only if it is still current.
 		unlock, err := lockFile(ctx, m.Store.Path+".lock")
@@ -137,12 +138,12 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 		if credentials, err = m.Store.Load(); err != nil {
 			return Credentials{}, err
 		}
-		if credentials == nil || credentials.AccessToken == "" {
-			return Credentials{}, errors.New("not signed in to codex; use the dashboard to sign in with ChatGPT")
-		}
-		if expiring(credentials) {
+		switch classifySession(credentials) {
+		case sessionSignedOut:
+			return Credentials{}, errNotSignedIn()
+		case sessionExpiring:
 			if credentials.RefreshToken == "" {
-				return Credentials{}, errors.New("codex session expired; sign in again from the dashboard")
+				return Credentials{}, errSessionExpired()
 			}
 			if err := m.refresh(ctx, credentials); err != nil {
 				return Credentials{}, err
@@ -152,6 +153,12 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 			}
 		}
 	}
+	return withAccountID(credentials)
+}
+
+// withAccountID completes an active session with the ChatGPT account ID,
+// falling back to the ID token's claim.
+func withAccountID(credentials *Credentials) (Credentials, error) {
 	if credentials.AccountID == "" {
 		credentials.AccountID, _ = jwtAccountID(credentials.IDToken)
 	}
@@ -178,12 +185,12 @@ func (m *Manager) ForceRefresh(ctx context.Context, stale string) (Credentials, 
 	if err != nil {
 		return Credentials{}, err
 	}
-	if credentials == nil || credentials.AccessToken == "" {
-		return Credentials{}, errors.New("not signed in to codex; use the dashboard to sign in with ChatGPT")
-	}
-	if credentials.AccessToken == stale {
+	switch classifyRejectedSession(credentials, stale) {
+	case sessionSignedOut:
+		return Credentials{}, errNotSignedIn()
+	case sessionRejected:
 		if credentials.RefreshToken == "" {
-			return Credentials{}, errors.New("codex session expired; sign in again from the dashboard")
+			return Credentials{}, errSessionExpired()
 		}
 		if err := m.refresh(ctx, credentials); err != nil {
 			return Credentials{}, fmt.Errorf("%w; sign in again from the dashboard if this persists", err)
@@ -192,13 +199,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, stale string) (Credentials, 
 			return Credentials{}, err
 		}
 	}
-	if credentials.AccountID == "" {
-		credentials.AccountID, _ = jwtAccountID(credentials.IDToken)
-	}
-	if credentials.AccountID == "" {
-		return Credentials{}, errors.New("codex session has no ChatGPT account ID; sign in again")
-	}
-	return *credentials, nil
+	return withAccountID(credentials)
 }
 
 // expiring reports whether the access token is within five minutes of its JWT
@@ -207,7 +208,7 @@ func expiring(credentials *Credentials) bool {
 	if credentials.ExpiresAt == 0 {
 		credentials.ExpiresAt, _ = jwtExpiration(credentials.AccessToken)
 	}
-	return credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(5*time.Minute).Unix()
+	return credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(sessionExpiryWindow).Unix()
 }
 
 type deviceCodeResponse struct {
@@ -267,24 +268,27 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 	}
 	deadline := time.Now().Add(15 * time.Minute)
 	var authorization deviceTokenResponse
+poll:
 	for time.Now().Before(deadline) {
 		status, err := m.doJSONStatus(ctx, http.MethodPost, issuer+"/api/accounts/deviceauth/token", map[string]string{
 			"device_auth_id": device.DeviceAuthID,
 			"user_code":      device.UserCode,
 		}, &authorization)
-		if err == nil {
-			break
-		}
-		if status == http.StatusForbidden || status == http.StatusNotFound {
+		switch classifyDevicePoll(status, err) {
+		case deviceAuthorized:
+			break poll
+		case devicePending:
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(interval):
 			}
-			continue
+		default:
+			return fmt.Errorf("poll Codex device authorization: %w", err)
 		}
-		return fmt.Errorf("poll Codex device authorization: %w", err)
 	}
+	// Leaving the loop at the deadline, or with an incomplete authorization,
+	// is the devicePending -> expired transition.
 	if authorization.AuthorizationCode == "" || authorization.CodeVerifier == "" {
 		return errors.New("codex device authorization expired")
 	}
@@ -305,6 +309,45 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 		return err
 	}
 	return m.Store.Save(credentials)
+}
+
+// devicePoll is the result of one Codex device-token poll.
+//
+//	from           poll result                    to
+//	devicePending  HTTP 403 or 404                devicePending (wait interval)
+//	devicePending  success                        deviceAuthorized (exchange code)
+//	devicePending  any other failure              deviceFailed (error)
+//	devicePending  15 minute deadline passes      expired (error)
+type devicePoll int
+
+const (
+	devicePending devicePoll = iota
+	deviceAuthorized
+	deviceFailed
+)
+
+func (p devicePoll) String() string {
+	switch p {
+	case devicePending:
+		return "pending"
+	case deviceAuthorized:
+		return "authorized"
+	case deviceFailed:
+		return "failed"
+	default:
+		return fmt.Sprintf("devicePoll(%d)", int(p))
+	}
+}
+
+func classifyDevicePoll(status int, err error) devicePoll {
+	switch {
+	case err == nil:
+		return deviceAuthorized
+	case status == http.StatusForbidden || status == http.StatusNotFound:
+		return devicePending
+	default:
+		return deviceFailed
+	}
 }
 
 func (m *Manager) refresh(ctx context.Context, credentials *Credentials) error {

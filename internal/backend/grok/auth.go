@@ -149,16 +149,18 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if token == nil {
+	state := classifySession(token, time.Now())
+	if state == sessionUnsaved {
 		token, err = m.importLegacy()
 		if err != nil {
 			return "", err
 		}
+		state = classifySession(token, time.Now())
 	}
-	if token == nil || token.AccessToken == "" {
+	switch state {
+	case sessionUnsaved, sessionSignedOut:
 		return "", errors.New("not signed in; use the dashboard to sign in with xAI")
-	}
-	if token.ExpiresAt > 0 && token.ExpiresAt <= float64(time.Now().Add(5*time.Minute).Unix()) {
+	case sessionExpiring:
 		if token.RefreshToken == "" {
 			return "", errors.New("xAI session expired; use the dashboard to sign in again")
 		}
@@ -341,18 +343,16 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 		}
 		var token Token
 		err := doForm(ctx, m.client(), d.TokenEndpoint, url.Values{"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}, "device_code": {device.DeviceCode}, "client_id": {ClientID}}, &token)
-		if err != nil {
-			if strings.Contains(err.Error(), "authorization_pending") {
-				continue
-			}
-			if strings.Contains(err.Error(), "slow_down") {
-				interval += 5 * time.Second
-				continue
-			}
+		switch classifyDevicePoll(err) {
+		case devicePending:
+		case deviceSlowDown:
+			interval += 5 * time.Second
+		case deviceAuthorized:
+			token.Issuer, token.ClientID = Issuer, ClientID
+			return m.Store.Save(&token)
+		default:
 			return err
 		}
-		token.Issuer, token.ClientID = Issuer, ClientID
-		return m.Store.Save(&token)
 	}
 	return errors.New("xAI device authorization expired")
 }

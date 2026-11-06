@@ -64,12 +64,12 @@ func (c *Client) Supports(kind backend.Kind) bool { return kind == backend.KindO
 func (c *Client) Models(ctx context.Context) ([]string, error) {
 	c.modelMu.Lock()
 	defer c.modelMu.Unlock()
-	if len(c.cachedModels) > 0 && time.Now().Before(c.modelsUntil) {
+	if c.modelCacheState(time.Now()) == cacheFresh {
 		return append([]string(nil), c.cachedModels...), nil
 	}
 	models, err := c.fetchModels(ctx)
 	if err != nil {
-		if len(c.cachedModels) > 0 {
+		if c.modelCacheState(time.Now()) == cacheStale {
 			return append([]string(nil), c.cachedModels...), nil
 		}
 		return nil, err
@@ -77,6 +77,12 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	c.cachedModels = append(c.cachedModels[:0], models...)
 	c.modelsUntil = time.Now().Add(modelCacheTTL)
 	return append([]string(nil), models...), nil
+}
+
+// modelCacheState reports the catalog cache state; see cacheState. c.modelMu
+// must be held.
+func (c *Client) modelCacheState(now time.Time) cacheState {
+	return cacheStateAt(len(c.cachedModels) > 0, c.modelsUntil, now)
 }
 
 func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
@@ -89,27 +95,20 @@ func (c *Client) fetchModels(ctx context.Context) ([]string, error) {
 		versions = stableCodexVersion
 	}
 	endpoint := c.BaseURL + "/models?client_version=" + url.QueryEscape(versions.latest(ctx))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	resp, err := c.sendWithRefresh(ctx, credentials, func(credentials Credentials) (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		setHeaders(req.Header, credentials, false)
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("fetch Codex model catalog: %w", err)
+		}
+		return resp, nil
+	}, func(err error) error { return fmt.Errorf("fetch Codex model catalog: %w", err) })
 	if err != nil {
 		return nil, err
-	}
-	setHeaders(req.Header, credentials, false)
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch Codex model catalog: %w", err)
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		if fresh, ok, err := c.refreshRejected(ctx, credentials); ok || err != nil {
-			_ = resp.Body.Close()
-			if err != nil {
-				return nil, fmt.Errorf("fetch Codex model catalog: %w", err)
-			}
-			req = req.Clone(ctx)
-			setHeaders(req.Header, fresh, false)
-			if resp, err = c.HTTP.Do(req); err != nil {
-				return nil, fmt.Errorf("fetch Codex model catalog: %w", err)
-			}
-		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -165,22 +164,11 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		}
 		return resp, nil
 	}
-	resp, err := send(credentials)
-	if err != nil {
-		return nil, err
-	}
 	// A 401 was rejected before any inference ran, so one retry with a
 	// refreshed session cannot duplicate model work.
-	if resp.StatusCode == http.StatusUnauthorized {
-		if fresh, ok, err := c.refreshRejected(ctx, credentials); ok || err != nil {
-			_ = resp.Body.Close()
-			if err != nil {
-				return nil, err
-			}
-			if resp, err = send(fresh); err != nil {
-				return nil, err
-			}
-		}
+	resp, err := c.sendWithRefresh(ctx, credentials, send, func(err error) error { return err })
+	if err != nil {
+		return nil, err
 	}
 	if req.Streaming || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
@@ -238,6 +226,15 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 	return json.Marshal(body)
 }
 
+// aggregateResponsesSSE reads events until the first terminal one. The only
+// state is the scan position, so the transitions are terminal outcomes:
+//
+//	event                     outcome
+//	response.completed        the event's response object (error if absent)
+//	response.failed, error    translate.ResponsesFailure
+//	EOF before either         "codex stream ended without response.completed"
+//
+// Other events, undecodable data and [DONE] keep scanning.
 func aggregateResponsesSSE(body io.Reader) ([]byte, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
@@ -284,6 +281,32 @@ func (c *Client) credentials(ctx context.Context) (Credentials, error) {
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	return Credentials{AccessToken: token}, err
+}
+
+// sendWithRefresh sends with credentials and applies the unauthorizedRetry
+// policy: at most one forced refresh and resend after a 401. wrapRefresh
+// decorates a ForceRefresh failure.
+func (c *Client) sendWithRefresh(ctx context.Context, credentials Credentials, send func(Credentials) (*http.Response, error), wrapRefresh func(error) error) (*http.Response, error) {
+	for attempt := retryFirstAttempt; ; attempt = retryRefreshed {
+		resp, err := send(credentials)
+		if err != nil {
+			return nil, err
+		}
+		// A retryRefreshed response is final, including another 401.
+		if attempt == retryRefreshed || resp.StatusCode != http.StatusUnauthorized {
+			return resp, nil
+		}
+		fresh, ok, err := c.refreshRejected(ctx, credentials)
+		if !ok && err == nil {
+			// The token source cannot force a refresh: relay the 401.
+			return resp, nil
+		}
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, wrapRefresh(err)
+		}
+		credentials = fresh
+	}
 }
 
 // refreshRejected forces one session refresh after upstream rejected

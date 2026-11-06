@@ -3,6 +3,7 @@ package opencode
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -14,7 +15,36 @@ type toolNameRenamingReader struct {
 	closer io.Closer
 	m      map[string]string
 	buf    []byte
-	eof    bool
+	state  renameSourceState
+}
+
+// renameSourceState tracks whether the wrapped source can produce more lines.
+// Buffered output is drained independently of this state.
+//
+//	from             event                                         to
+//	renameSourceOpen  ReadString returns a line without error       renameSourceOpen
+//	renameSourceOpen  ReadString returns a final line with io.EOF   renameSourceDone
+//	renameSourceOpen  ReadString returns no data and any error      renameSourceDone
+//	renameSourceDone  (terminal; Read reports io.EOF once drained)
+//
+// A partial line with a non-EOF error stays renameSourceOpen; the next read
+// observes the sticky error with no data.
+type renameSourceState int
+
+const (
+	renameSourceOpen renameSourceState = iota
+	renameSourceDone
+)
+
+func (s renameSourceState) String() string {
+	switch s {
+	case renameSourceOpen:
+		return "open"
+	case renameSourceDone:
+		return "done"
+	default:
+		return fmt.Sprintf("renameSourceState(%d)", int(s))
+	}
 }
 
 func newToolNameRenamingReader(r io.Reader, m map[string]string) *toolNameRenamingReader {
@@ -26,17 +56,14 @@ func newToolNameRenamingReader(r io.Reader, m map[string]string) *toolNameRenami
 }
 
 func (r *toolNameRenamingReader) Read(p []byte) (int, error) {
-	if len(r.buf) == 0 && !r.eof {
+	if len(r.buf) == 0 && r.state == renameSourceOpen {
 		line, err := r.src.ReadString('\n')
 		if err != nil && line == "" {
-			r.eof = true
-			if err == io.EOF {
-				err = io.EOF
-			}
+			r.state = renameSourceDone
 			return 0, err
 		}
 		if err == io.EOF {
-			r.eof = true
+			r.state = renameSourceDone
 		}
 		// Process data lines.
 		trimmed := strings.TrimRight(line, "\r\n")
@@ -55,7 +82,7 @@ func (r *toolNameRenamingReader) Read(p []byte) (int, error) {
 		r.buf = append(r.buf, []byte(line)...)
 	}
 	if len(r.buf) == 0 {
-		if r.eof {
+		if r.state == renameSourceDone {
 			return 0, io.EOF
 		}
 		return 0, nil

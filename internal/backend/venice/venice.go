@@ -31,16 +31,45 @@ type Client struct {
 	prices map[string]modelPrice
 }
 
-// modelPrice holds Venice's published per-1M-token USD pricing. ok is false
-// when the /models payload carried no pricing block, which free_only treats
-// as "not proven free".
+// modelPrice holds Venice's published per-1M-token USD pricing. state is
+// priceUnknown when the /models payload carried no pricing block, which
+// free_only treats as "not proven free".
 type modelPrice struct {
 	InputUSD  float64
 	OutputUSD float64
-	ok        bool
+	state     priceState
 }
 
-func (p modelPrice) free() bool { return p.ok && p.InputUSD == 0 && p.OutputUSD == 0 }
+// priceState records whether a cataloged model's price is known. Each catalog
+// fetch replaces the state of every listed model:
+//
+//	catalog entry                              state
+//	no model_spec.pricing.{input,output}       priceUnknown
+//	both input and output pricing present      pricePublished
+//
+// Only pricePublished prices at $0 input and output are free; models missing
+// from the catalog entirely are not in the price cache at all.
+type priceState int
+
+const (
+	priceUnknown priceState = iota
+	pricePublished
+)
+
+func (s priceState) String() string {
+	switch s {
+	case priceUnknown:
+		return "unknown"
+	case pricePublished:
+		return "published"
+	default:
+		return fmt.Sprintf("priceState(%d)", int(s))
+	}
+}
+
+func (p modelPrice) free() bool {
+	return p.state == pricePublished && p.InputUSD == 0 && p.OutputUSD == 0
+}
 
 func New(baseURL, key string) *Client {
 	if baseURL == "" {
@@ -124,7 +153,7 @@ func (c *Client) recordPrices(list *modelList) {
 	for _, m := range list.Data {
 		p := modelPrice{}
 		if m.ModelSpec != nil && m.ModelSpec.Pricing != nil && m.ModelSpec.Pricing.Input != nil && m.ModelSpec.Pricing.Output != nil {
-			p = modelPrice{InputUSD: m.ModelSpec.Pricing.Input.USD, OutputUSD: m.ModelSpec.Pricing.Output.USD, ok: true}
+			p = modelPrice{InputUSD: m.ModelSpec.Pricing.Input.USD, OutputUSD: m.ModelSpec.Pricing.Output.USD, state: pricePublished}
 		}
 		c.prices[m.ID] = p
 	}

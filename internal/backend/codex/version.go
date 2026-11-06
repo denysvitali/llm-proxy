@@ -21,6 +21,17 @@ var stableCodexVersion = &versionDiscovery{
 
 var stableVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
+// versionDiscovery caches the latest stable Codex CLI version. version is
+// never empty once latest has run (it starts at the clientVersion fallback),
+// so the cache is only ever cacheFresh or cacheStale:
+//
+//	from        event                                          to
+//	(unset)     first latest call                              fallback version, cacheStale
+//	cacheStale  lookup starts                                  cacheFresh for versionFailureTTL
+//	            (a failed lookup keeps this provisional deadline and the previous version)
+//	cacheFresh  lookup succeeds                                cacheFresh for versionSuccessTTL, new version
+//	cacheFresh  caller's context ends during the lookup        previous deadline restored
+//	cacheFresh  deadline passes                                cacheStale
 type versionDiscovery struct {
 	mu       sync.Mutex
 	client   *http.Client
@@ -29,13 +40,22 @@ type versionDiscovery struct {
 	until    time.Time
 }
 
+const (
+	versionFailureTTL = 5 * time.Minute
+	versionSuccessTTL = time.Hour
+)
+
+func (v *versionDiscovery) stateAt(now time.Time) cacheState {
+	return cacheStateAt(v.version != "", v.until, now)
+}
+
 func (v *versionDiscovery) latest(ctx context.Context) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.version == "" {
 		v.version = clientVersion
 	}
-	if time.Now().Before(v.until) {
+	if v.stateAt(time.Now()) == cacheFresh {
 		return v.version
 	}
 	// Cache failures as well, while retaining the last successfully discovered
@@ -49,7 +69,7 @@ func (v *versionDiscovery) latest(ctx context.Context) string {
 			v.until = previousUntil
 		}
 	}()
-	v.until = time.Now().Add(5 * time.Minute)
+	v.until = time.Now().Add(versionFailureTTL)
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.endpoint, nil)
@@ -72,6 +92,6 @@ func (v *versionDiscovery) latest(ctx context.Context) string {
 		return v.version
 	}
 	v.version = payload.Version
-	v.until = time.Now().Add(time.Hour)
+	v.until = time.Now().Add(versionSuccessTTL)
 	return v.version
 }

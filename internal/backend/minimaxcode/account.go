@@ -236,7 +236,20 @@ func (m *Manager) ClaimCheckin(ctx context.Context) (*CheckinClaim, error) {
 }
 
 // claimCheckin runs beforeClaim after fresh eligibility and account checks,
-// immediately before the only reward mutation.
+// immediately before the only reward mutation. A claim moves through these
+// phases in order; any failure ends it with the listed error or reason:
+//
+//	phase           guard                                   failure
+//	lock            claimMu.TryLock (one claim per process)  ErrCheckinInProgress
+//	identity        accountIdentity                          identity_failed
+//	eligibility     fresh panel.eligibility()                eligibility_failed,
+//	                                                         ErrCheckinAlreadyClaimed,
+//	                                                         ErrCheckinUnavailable
+//	pre-claim       saved token unchanged                    account_changed
+//	reserve         beforeClaim (scheduler marker)           caller's error
+//	claim           single POST                              claim_request_failed
+//	post-claim      saved token unchanged                    account_changed
+//	validate        claim and panel payload                  claim_response_invalid
 func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID string) error) (*CheckinClaim, error) {
 	if !m.claimMu.TryLock() {
 		return nil, ErrCheckinInProgress
@@ -252,19 +265,14 @@ func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID stri
 	if err != nil {
 		return nil, schedulerError("eligibility_failed", err)
 	}
-	claimable := false
-	for _, day := range panel.Days {
-		if day.IsToday && day.Status == 3 {
-			return nil, ErrCheckinAlreadyClaimed
-		}
-		claimable = claimable || day.Status == 2
-	}
-	if !claimable {
+	switch panel.eligibility() {
+	case checkinAlreadyClaimed:
+		return nil, ErrCheckinAlreadyClaimed
+	case checkinUnavailable:
 		return nil, ErrCheckinUnavailable
 	}
 	// A new login must not redirect a pending claim to another account.
-	current, err := m.Store.Load()
-	if err != nil || current == nil || current.AccessToken != token {
+	if !m.sessionStillUses(token) {
 		return nil, schedulerError("account_changed", errors.New("MiniMax Code account changed; refresh before checking in"))
 	}
 	if beforeClaim != nil {
@@ -279,8 +287,7 @@ func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID stri
 	if err != nil {
 		return nil, schedulerError("claim_request_failed", err)
 	}
-	current, err = m.Store.Load()
-	if err != nil || current == nil || current.AccessToken != token {
+	if !m.sessionStillUses(token) {
 		return nil, schedulerError("account_changed", errors.New("MiniMax Code account changed; refresh to confirm check-in status"))
 	}
 	data := object(body["data"])
@@ -294,6 +301,14 @@ func (m *Manager) claimCheckin(ctx context.Context, beforeClaim func(userID stri
 	}
 	return &CheckinClaim{ClaimResult: int(*result), DayNo: int(*day), Points: *points, ExpireAtMS: *expiry, Panel: *panel}, nil
 }
+
+// sessionStillUses reports whether the saved session still holds token, so a
+// claim is not attributed to an account signed in mid-claim.
+func (m *Manager) sessionStillUses(token string) bool {
+	current, err := m.Store.Load()
+	return err == nil && current != nil && current.AccessToken == token
+}
+
 func parseCheckinPanel(value any) (*CheckinPanel, error) {
 	invalid := errors.New("MiniMax Code returned an invalid check-in panel")
 	body := object(value)
@@ -320,7 +335,7 @@ func parseCheckinPanel(value any) (*CheckinPanel, error) {
 		if today {
 			todayCount++
 		}
-		if *status == 2 {
+		if checkinDayStatus(*status) == dayAvailable {
 			claimableCount++
 		}
 		panel.Days = append(panel.Days, CheckinDay{DayNo: int(*no), Points: *points, BonusPoints: bonus, Status: int(*status), IsToday: today})

@@ -56,12 +56,12 @@ func (c *Client) Supports(kind backend.Kind) bool { return kind == backend.KindO
 func (c *Client) Models(ctx context.Context) ([]string, error) {
 	c.modelMu.Lock()
 	defer c.modelMu.Unlock()
-	if len(c.cachedModels) > 0 && time.Now().Before(c.modelsUntil) {
+	if c.modelCacheState(time.Now()) == cacheFresh {
 		return append([]string(nil), c.cachedModels...), nil
 	}
 	models, credits, err := c.fetchModels(ctx)
 	if err != nil {
-		if len(c.cachedModels) > 0 {
+		if c.modelCacheState(time.Now()) == cacheStale {
 			return append([]string(nil), c.cachedModels...), nil
 		}
 		return nil, err
@@ -363,6 +363,10 @@ func randomUUID() string {
 	return x[:8] + "-" + x[8:12] + "-4" + x[13:16] + "-a" + x[17:20] + "-" + x[20:]
 }
 
+// aggregateSSE folds a Chat Completions stream into one completion. It has no
+// terminal state: every decodable chunk merges into the accumulators, the last
+// non-empty finish_reason wins (default "stop"), and only EOF or a scanner
+// error ends aggregation; [DONE] is skipped like any other non-chunk line.
 func aggregateSSE(r io.Reader) ([]byte, error) {
 	var id, model string
 	var created float64

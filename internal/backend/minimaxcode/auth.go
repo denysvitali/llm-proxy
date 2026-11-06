@@ -121,10 +121,10 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if credentials == nil || credentials.AccessToken == "" {
+	switch classifySession(credentials, time.Now()) {
+	case sessionSignedOut:
 		return "", backend.Terminal(errors.New("MiniMax Code account is not signed in; use the dashboard to sign in"))
-	}
-	if credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(5*time.Minute).Unix() {
+	case sessionExpiring:
 		if credentials.RefreshToken == "" {
 			return "", backend.Terminal(errors.New("MiniMax Code session expired; sign in again"))
 		}
@@ -193,8 +193,8 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 	if device.VerificationURI == "" {
 		device.VerificationURI = device.VerificationURL
 	}
-	legacyDevice := device.DeviceCode == "" && device.UserCode != "" && device.ExpiredIn > time.Now().UnixMilli()
-	if device.DeviceCode == "" && legacyDevice {
+	protocol := detectDeviceProtocol(device, time.Now())
+	if protocol == legacyUserCodeProtocol {
 		device.DeviceCode = device.UserCode
 		device.ExpiresIn = int(time.Until(time.UnixMilli(device.ExpiredIn)).Seconds())
 		device.Interval /= 1000
@@ -219,37 +219,32 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 			"client_id":     {clientID},
 			"code_verifier": {verifier},
 		}
-		if legacyDevice {
+		if protocol == legacyUserCodeProtocol {
 			pollParams.Set("user_code", device.UserCode)
 		} else {
 			pollParams.Set("device_code", device.DeviceCode)
 		}
 		response, err := m.postForm(ctx, "/oauth2/token", pollParams)
+		var status struct {
+			Status string `json:"status"`
+		}
 		if err == nil {
-			var status struct {
-				Status string `json:"status"`
-			}
 			_ = json.Unmarshal(response, &status)
-			switch status.Status {
-			case "pending":
-				err = oauthError("authorization_pending")
-			case "slow_down":
-				err = oauthError("slow_down")
-			case "denied", "access_denied", "expired", "expired_token":
-				return fmt.Errorf("MiniMax Code sign-in: %s", status.Status)
-			default:
-				credentials, decodeErr := credentialsFromToken(response, "")
-				if decodeErr != nil {
-					return decodeErr
-				}
-				return m.Store.Save(credentials)
-			}
 		}
-		if err != oauthError("authorization_pending") && err != oauthError("slow_down") {
-			return err
-		}
-		if err == oauthError("slow_down") {
+		switch classifyDevicePoll(status.Status, err) {
+		case devicePending:
+		case deviceSlowDown:
 			interval += 5 * time.Second
+		case deviceRejected:
+			return fmt.Errorf("MiniMax Code sign-in: %s", status.Status)
+		case deviceAuthorized:
+			credentials, decodeErr := credentialsFromToken(response, "")
+			if decodeErr != nil {
+				return decodeErr
+			}
+			return m.Store.Save(credentials)
+		default:
+			return err
 		}
 		select {
 		case <-ctx.Done():

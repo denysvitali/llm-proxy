@@ -502,8 +502,37 @@ func aggregateFreeTierStream(kind backend.Kind, body io.Reader) ([]byte, error) 
 	return aggregateChatSSE(body)
 }
 
-// sseData extracts the payload from one SSE line. ok is false for blank,
-// comment, and non-data lines.
+// sseProgress is how far an aggregated free-tier stream got. It decides whether
+// a stream that produced no content is an error.
+//
+//	aggregator             from          event                  to
+//	aggregateChatSSE       sseSilent     "data: [DONE]"         sseDone
+//	aggregateAnthropicSSE  sseSilent     any decodable event    sseEvents
+//	both                   any           other lines/chunks     unchanged
+//
+// sseEvents and sseDone are sticky. The chat aggregator fails a stream that
+// is still sseSilent and produced no content, tool calls or finish reason; the
+// Anthropic aggregator fails any stream that is still sseSilent.
+type sseProgress int
+
+const (
+	sseSilent sseProgress = iota
+	sseEvents
+	sseDone
+)
+
+func (p sseProgress) String() string {
+	switch p {
+	case sseSilent:
+		return "silent"
+	case sseEvents:
+		return "events"
+	case sseDone:
+		return "done"
+	default:
+		return fmt.Sprintf("sseProgress(%d)", int(p))
+	}
+}
 
 func aggregateChatSSE(body io.Reader) ([]byte, error) {
 	var id, model string
@@ -512,7 +541,7 @@ func aggregateChatSSE(body io.Reader) ([]byte, error) {
 	var calls []map[string]any
 	finish := ""
 	usage := map[string]any{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-	sawDone := false
+	progress := sseSilent
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
@@ -522,7 +551,7 @@ func aggregateChatSSE(body io.Reader) ([]byte, error) {
 			continue
 		}
 		if data == "[DONE]" {
-			sawDone = true
+			progress = sseDone
 			continue
 		}
 		var chunk struct {
@@ -574,7 +603,7 @@ func aggregateChatSSE(body io.Reader) ([]byte, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if !sawDone && content.Len() == 0 && len(calls) == 0 && finish == "" {
+	if progress != sseDone && content.Len() == 0 && len(calls) == 0 && finish == "" {
 		return nil, fmt.Errorf("upstream chat stream ended without a completion")
 	}
 	if finish == "" {
@@ -658,7 +687,7 @@ func aggregateAnthropicSSE(body io.Reader) ([]byte, error) {
 	}
 	blocks := []map[string]any{}
 	stopReason := ""
-	sawEvent := false
+	progress := sseSilent
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
@@ -705,7 +734,7 @@ func aggregateAnthropicSSE(body io.Reader) ([]byte, error) {
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
 		}
-		sawEvent = true
+		progress = sseEvents
 		switch event.Type {
 		case "message_start":
 			if event.Message.ID != "" {
@@ -810,7 +839,7 @@ func aggregateAnthropicSSE(body io.Reader) ([]byte, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if !sawEvent {
+	if progress == sseSilent {
 		return nil, fmt.Errorf("upstream anthropic stream ended without events")
 	}
 	// Drop unfinished partial markers and normalize tool_use inputs.

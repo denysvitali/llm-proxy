@@ -36,8 +36,8 @@ func (m *Manager) runAutoCheckin(ctx context.Context, log *logrus.Logger, interv
 			return
 		}
 		if !m.HasSession() {
-			m.noteSchedulerResult("skipped", "signed_out")
-			log.WithFields(logrus.Fields{"outcome": "skipped", "reason": "signed_out"}).Info("MiniMax Code automatic check-in skipped")
+			m.noteSchedulerResult(outcomeSkipped.String(), "signed_out")
+			log.WithFields(logrus.Fields{"outcome": outcomeSkipped.String(), "reason": "signed_out"}).Info("MiniMax Code automatic check-in skipped")
 			return
 		}
 		_, err := m.claimCheckin(ctx, func(userID string) error {
@@ -53,29 +53,18 @@ func (m *Manager) runAutoCheckin(ctx context.Context, log *logrus.Logger, interv
 			m.noteSchedulerAttempt()
 			return nil
 		})
-		outcome, reason := "failed", schedulerReason(err)
-		switch {
-		case err == nil:
-			outcome = "success"
-		case errors.Is(err, ErrAutoCheckinAlreadyAttempted):
-			outcome, reason = "already_claimed", "already_attempted"
-		case errors.Is(err, ErrCheckinAlreadyClaimed):
-			outcome, reason = "already_claimed", "already_claimed"
-		case errors.Is(err, ErrCheckinUnavailable):
-			outcome, reason = "unavailable", "no_reward_available"
-		case errors.Is(err, ErrCheckinInProgress):
-			outcome, reason = "skipped", "claim_in_progress"
-		case ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
+		outcome, reason, record := classifyCheckinResult(ctx, err)
+		if !record {
 			// Parent cancellation or deadline is expected during shutdown.
 			return
 		}
-		m.noteSchedulerResult(outcome, reason)
-		fields := logrus.Fields{"outcome": outcome, "reason": reason}
+		m.noteSchedulerResult(outcome.String(), reason)
+		fields := logrus.Fields{"outcome": outcome.String(), "reason": reason}
 		switch outcome {
-		case "failed":
+		case outcomeFailed:
 			// Error strings may contain account or upstream details; use fixed categories.
 			log.WithFields(fields).Warn("MiniMax Code automatic check-in failed")
-		case "success":
+		case outcomeSuccess:
 			log.WithFields(fields).Info("MiniMax Code automatic check-in completed")
 		default:
 			log.WithFields(fields).Info("MiniMax Code automatic check-in skipped")
@@ -91,6 +80,28 @@ func (m *Manager) runAutoCheckin(ctx context.Context, log *logrus.Logger, interv
 		case <-ticker.C:
 			check()
 		}
+	}
+}
+
+// classifyCheckinResult maps a claimCheckin result to its checkinOutcome and
+// reason; see the checkinOutcome table. record is false when the parent
+// context ended, which is not recorded.
+func classifyCheckinResult(ctx context.Context, err error) (outcome checkinOutcome, reason string, record bool) {
+	switch {
+	case err == nil:
+		return outcomeSuccess, schedulerReason(err), true
+	case errors.Is(err, ErrAutoCheckinAlreadyAttempted):
+		return outcomeAlreadyClaimed, "already_attempted", true
+	case errors.Is(err, ErrCheckinAlreadyClaimed):
+		return outcomeAlreadyClaimed, "already_claimed", true
+	case errors.Is(err, ErrCheckinUnavailable):
+		return outcomeUnavailable, "no_reward_available", true
+	case errors.Is(err, ErrCheckinInProgress):
+		return outcomeSkipped, "claim_in_progress", true
+	case ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
+		return outcomeFailed, "", false
+	default:
+		return outcomeFailed, schedulerReason(err), true
 	}
 }
 

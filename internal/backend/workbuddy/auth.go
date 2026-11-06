@@ -74,7 +74,7 @@ func (m *Manager) Credentials(ctx context.Context) (Credentials, error) {
 	if err != nil {
 		return Credentials{}, err
 	}
-	if session.Auth.ExpiresAt > 0 && session.Auth.ExpiresAt <= time.Now().Add(5*time.Minute).Unix() {
+	if classifySession(session.Auth, time.Now()) == sessionExpiring {
 		if session.Auth.RefreshToken == "" {
 			return Credentials{}, errors.New("WorkBuddy session expired; sign in again from the dashboard")
 		}
@@ -161,10 +161,10 @@ func (m *Manager) PollLogin(ctx context.Context, state string) (bool, error) {
 	m.loginMu.Lock()
 	login := m.logins[state]
 	m.loginMu.Unlock()
-	if login == nil {
+	switch login.phaseAt(time.Now()) {
+	case loginUnknown:
 		return false, errors.New("unknown WorkBuddy login; start again")
-	}
-	if time.Now().After(login.expires) {
+	case loginExpired:
 		m.deleteLogin(state)
 		return false, errors.New("WorkBuddy login expired; start again")
 	}
@@ -183,6 +183,7 @@ func (m *Manager) PollLogin(ctx context.Context, state string) (bool, error) {
 	if err := m.save(session); err != nil {
 		return false, err
 	}
+	// loginPending -> loginAuthorized: the entry is no longer needed.
 	m.deleteLogin(state)
 	return true, nil
 }

@@ -25,6 +25,53 @@ type Key struct {
 	Disabled  bool       `json:"disabled,omitempty"`
 }
 
+// keyState is a key's lifecycle state. It is persisted as Key.Disabled so the
+// on-disk format is unchanged.
+//
+//	from          event                   to
+//	(minted)      CreateKey               keyEnabled
+//	keyEnabled    DisableKey(..., true)   keyDisabled
+//	keyDisabled   DisableKey(..., false)  keyEnabled
+//
+// Both transitions are idempotent. Only keyEnabled keys authenticate.
+type keyState int
+
+const (
+	keyEnabled keyState = iota
+	keyDisabled
+)
+
+func (s keyState) String() string {
+	switch s {
+	case keyEnabled:
+		return "enabled"
+	case keyDisabled:
+		return "disabled"
+	default:
+		return fmt.Sprintf("keyState(%d)", int(s))
+	}
+}
+
+func (k Key) state() keyState {
+	if k.Disabled {
+		return keyDisabled
+	}
+	return keyEnabled
+}
+
+// setState moves the key to state; every transition between the two states is
+// legal.
+func (k *Key) setState(state keyState) {
+	k.Disabled = state == keyDisabled
+}
+
+func keyStateFor(disabled bool) keyState {
+	if disabled {
+		return keyDisabled
+	}
+	return keyEnabled
+}
+
 // User holds N keys.
 type User struct {
 	Name string `json:"name"`
@@ -36,12 +83,61 @@ type Store struct {
 	mu    sync.RWMutex
 	path  string
 	users []User
-	// loadedMod/loadedSize describe the file contents currently held in
-	// memory; the auto-reload watcher compares them against os.Stat to
-	// detect out-of-band changes (keys minted by the CLI, another proxy
-	// instance, a hand edit, ...).
-	loadedMod  time.Time
-	loadedSize int64
+	// loaded describes the file contents currently held in memory; the
+	// auto-reload watcher compares it against os.Stat to detect out-of-band
+	// changes (keys minted by the CLI, another proxy instance, a hand edit,
+	// ...).
+	loaded fileGeneration
+}
+
+// fileGeneration identifies one version of the store file by mtime and size.
+// The zero value means no file contents have been loaded.
+type fileGeneration struct {
+	mod  time.Time
+	size int64
+}
+
+func generationOf(fi os.FileInfo) fileGeneration {
+	return fileGeneration{mod: fi.ModTime(), size: fi.Size()}
+}
+
+// matches reports whether fi describes the same file version as g.
+func (g fileGeneration) matches(fi os.FileInfo) bool {
+	return fi.ModTime().Equal(g.mod) && fi.Size() == g.size
+}
+
+// reloadOutcome is the result of one auto-reload check. The in-memory users
+// and their fileGeneration only change on reloadApplied:
+//
+//	loaded generation  file on disk               outcome           next state
+//	g                  stat fails                 reloadUnreadable  g (retry next tick)
+//	g                  matches g (before lock)    reloadUnchanged   g
+//	g                  matches g (after lock)     reloadUnchanged   g (a save won the race)
+//	g                  differs, read fails        reloadUnreadable  g (retry next tick)
+//	g                  differs, malformed JSON    reloadMalformed   g (last good users kept)
+//	g                  differs, valid JSON        reloadApplied     generation of file
+type reloadOutcome int
+
+const (
+	reloadUnchanged reloadOutcome = iota
+	reloadUnreadable
+	reloadMalformed
+	reloadApplied
+)
+
+func (o reloadOutcome) String() string {
+	switch o {
+	case reloadUnchanged:
+		return "unchanged"
+	case reloadUnreadable:
+		return "unreadable"
+	case reloadMalformed:
+		return "malformed"
+	case reloadApplied:
+		return "applied"
+	default:
+		return fmt.Sprintf("reloadOutcome(%d)", int(o))
+	}
 }
 
 // Prefix is prepended to generated keys so leaked values are identifiable.
@@ -61,7 +157,7 @@ func NewStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if fi, err := os.Stat(path); err == nil {
-		s.loadedMod, s.loadedSize = fi.ModTime(), fi.Size()
+		s.loaded = generationOf(fi)
 	}
 	return s, nil
 }
@@ -101,7 +197,7 @@ func (s *Store) save() error {
 	// Track what we just wrote so the auto-reload watcher does not churn on
 	// our own saves.
 	if fi, err := os.Stat(s.path); err == nil {
-		s.loadedMod, s.loadedSize = fi.ModTime(), fi.Size()
+		s.loaded = generationOf(fi)
 	}
 	return nil
 }
@@ -173,7 +269,7 @@ func (s *Store) DisableKey(user, keyID string, disabled bool) error {
 		if s.users[i].Name == user {
 			for j := range s.users[i].Keys {
 				if s.users[i].Keys[j].ID == keyID {
-					s.users[i].Keys[j].Disabled = disabled
+					s.users[i].Keys[j].setState(keyStateFor(disabled))
 					return s.save()
 				}
 			}
@@ -193,7 +289,7 @@ func (s *Store) Verify(presented string) (string, bool) {
 	defer s.mu.RUnlock()
 	for _, u := range s.users {
 		for _, k := range u.Keys {
-			if k.Disabled {
+			if k.state() != keyEnabled {
 				continue
 			}
 			if VerifyHash(k.Hash, presented) {
@@ -233,34 +329,36 @@ func (s *Store) StartAutoReload(interval time.Duration) (stop func()) {
 
 // reloadIfChanged re-reads the store file when its mtime or size differ from
 // what was last loaded. Failures are ignored: the in-memory users stay as-is.
-func (s *Store) reloadIfChanged() {
+// See reloadOutcome for the transition table.
+func (s *Store) reloadIfChanged() reloadOutcome {
 	fi, err := os.Stat(s.path)
 	if err != nil {
-		return
+		return reloadUnreadable
 	}
 	s.mu.RLock()
-	mod, size := s.loadedMod, s.loadedSize
+	loaded := s.loaded
 	s.mu.RUnlock()
-	if fi.ModTime().Equal(mod) && fi.Size() == size {
-		return
+	if loaded.matches(fi) {
+		return reloadUnchanged
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Another goroutine (e.g. our own save) may have refreshed the tracking
 	// state between the unlock above and this lock.
-	if fi.ModTime().Equal(s.loadedMod) && fi.Size() == s.loadedSize {
-		return
+	if s.loaded.matches(fi) {
+		return reloadUnchanged
 	}
 	b, err := os.ReadFile(s.path)
 	if err != nil {
-		return
+		return reloadUnreadable
 	}
 	var users []User
 	if err := json.Unmarshal(b, &users); err != nil {
-		return
+		return reloadMalformed
 	}
 	s.users = users
-	s.loadedMod, s.loadedSize = fi.ModTime(), fi.Size()
+	s.loaded = generationOf(fi)
+	return reloadApplied
 }
 
 // Users lists user names.
