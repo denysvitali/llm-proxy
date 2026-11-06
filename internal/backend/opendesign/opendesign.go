@@ -112,7 +112,15 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 			httpReq.Header.Set("Anthropic-Beta", beta)
 		}
 	}
-	return upstream.SendInference(c.HTTP, httpReq, "Open Design", c.BaseURL, req.TracePropagation)
+	resp, err := upstream.SendInference(c.HTTP, httpReq, "Open Design", c.BaseURL, req.TracePropagation)
+	if err != nil {
+		return nil, err
+	}
+	if req.Kind == backend.KindAnthropic && req.Streaming && resp.Status >= 200 && resp.Status < 300 &&
+		strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		resp.Body = newMaxTokensCompleter(resp.Body, body)
+	}
+	return resp, nil
 }
 
 func (c *Client) Models(ctx context.Context) ([]string, error) {
