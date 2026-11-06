@@ -101,10 +101,10 @@ func (r *redisStats) activity(ctx context.Context, failures bool) ([]redisActivi
 }
 
 func (st *Stats) recentUpstreamErrors(ctx context.Context) ([]UpstreamErrorEvent, error) {
-	if st.redisInitErr != nil {
+	switch st.storageMode() {
+	case storageSharedFailed:
 		return nil, st.redisInitErr
-	}
-	if st.redis == nil {
+	case storageMetricsOnly, storageFile:
 		return st.RecentUpstreamErrors(), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
@@ -121,10 +121,10 @@ func (st *Stats) recentUpstreamErrors(ctx context.Context) ([]UpstreamErrorEvent
 }
 
 func (st *Stats) recentRequests(ctx context.Context) ([]InspectedRequest, error) {
-	if st.redisInitErr != nil {
+	switch st.storageMode() {
+	case storageSharedFailed:
 		return nil, st.redisInitErr
-	}
-	if st.redis == nil {
+	case storageMetricsOnly, storageFile:
 		return st.RecentRequests(), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
@@ -141,10 +141,10 @@ func (st *Stats) recentRequests(ctx context.Context) ([]InspectedRequest, error)
 }
 
 func (st *Stats) request(ctx context.Context, id string) (InspectedRequest, bool, error) {
-	if st.redisInitErr != nil {
+	switch st.storageMode() {
+	case storageSharedFailed:
 		return InspectedRequest{}, false, st.redisInitErr
-	}
-	if st.redis == nil {
+	case storageMetricsOnly, storageFile:
 		req, ok := st.Request(id)
 		return req, ok, nil
 	}

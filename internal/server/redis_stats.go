@@ -17,9 +17,40 @@ import (
 type redisStats struct {
 	client *redis.Client
 	prefix string
-	pubsub *redis.PubSub
 	stop   chan struct{}
-	once   sync.Once
+
+	mu     sync.Mutex // guards state and pubsub
+	state  redisLifecycle
+	pubsub *redis.PubSub
+}
+
+// redisLifecycle is the redisStats client lifecycle.
+//
+//	state           event         next state      effect
+//	redisReady      startUpdates  redisListening  pub/sub relay goroutine started
+//	redisListening  startUpdates  redisListening  another subscription replaces pubsub
+//	redisReady      close         redisClosed     stop signalled, client closed
+//	redisListening  close         redisClosed     stop signalled, pubsub + client closed
+//	redisClosed     startUpdates  redisClosed     subscription attempted; relay exits at once
+//	redisClosed     close         redisClosed     no-op
+type redisLifecycle uint8
+
+const (
+	redisReady redisLifecycle = iota
+	redisListening
+	redisClosed
+)
+
+func (s redisLifecycle) String() string {
+	switch s {
+	case redisReady:
+		return "ready"
+	case redisListening:
+		return "listening"
+	case redisClosed:
+		return "closed"
+	}
+	return "redisLifecycle(" + strconv.Itoa(int(s)) + ")"
 }
 
 func newRedisStats(url, prefix string) (*redisStats, error) {
@@ -46,8 +77,14 @@ func (r *redisStats) modelKey(model string) string {
 }
 
 func (r *redisStats) startUpdates(notify func([]byte)) {
-	r.pubsub = r.client.Subscribe(context.Background(), r.updatesKey())
-	events := r.pubsub.Channel()
+	pubsub := r.client.Subscribe(context.Background(), r.updatesKey())
+	r.mu.Lock()
+	r.pubsub = pubsub
+	if r.state == redisReady {
+		r.state = redisListening
+	}
+	r.mu.Unlock()
+	events := pubsub.Channel()
 	go func() {
 		for {
 			select {
@@ -64,13 +101,17 @@ func (r *redisStats) startUpdates(notify func([]byte)) {
 }
 
 func (r *redisStats) close() {
-	r.once.Do(func() {
-		close(r.stop)
-		if r.pubsub != nil {
-			_ = r.pubsub.Close()
-		}
-		_ = r.client.Close()
-	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state == redisClosed {
+		return
+	}
+	r.state = redisClosed
+	close(r.stop)
+	if r.pubsub != nil {
+		_ = r.pubsub.Close()
+	}
+	_ = r.client.Close()
 }
 
 // record writes counters, failure status, and histograms in one transaction.

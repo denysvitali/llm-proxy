@@ -68,7 +68,7 @@ func (st *Stats) seriesAt(rng string, now time.Time) (seriesSet, []string, error
 // by backend and model. Empty selectors mean "all"; this is the shared core
 // for fleet, provider, and model histories.
 func (st *Stats) seriesAtScope(rng string, now time.Time, backendName, modelName string) (scopedSeriesSet, []string, error) {
-	if st.redis != nil {
+	if st.storageMode() == storageShared {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if series, models, err := st.seriesAtScopeRedis(ctx, rng, now, backendName, modelName); err == nil {

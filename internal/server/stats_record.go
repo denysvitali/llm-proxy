@@ -70,7 +70,7 @@ func (st *Stats) recordAttempt(a completedAttempt) {
 		}
 		st.recentMu.Unlock()
 	}
-	if st.redis != nil {
+	if st.storageMode() == storageShared {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		_ = st.redis.record(ctx, a, st.cfg.RetentionDays)
 		cancel()

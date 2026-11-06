@@ -22,6 +22,68 @@ import (
 // stops growing (usage stats are lost for that response).
 const sniffCap = 8 << 20
 
+// sniffBufState is the parsing copy's lifecycle. Forwarding is unaffected:
+// the client receives every byte in either state.
+//
+//	state           event                          next state
+//	sniffBuffering  Read, copy stays <= sniffCap   sniffBuffering  (bytes retained)
+//	sniffBuffering  Read, copy would exceed cap    sniffOverflowed (copy discarded)
+//	sniffOverflowed Read                           sniffOverflowed (nothing retained)
+//
+// Close is a separate idempotent latch (closed): open → closed on the first
+// Close, later Closes are no-ops.
+type sniffBufState uint8
+
+const (
+	sniffBuffering sniffBufState = iota
+	sniffOverflowed
+)
+
+func (s sniffBufState) String() string {
+	switch s {
+	case sniffBuffering:
+		return "buffering"
+	case sniffOverflowed:
+		return "overflowed"
+	}
+	return "sniffBufState(" + strconv.Itoa(int(s)) + ")"
+}
+
+// sniffVerdict classifies a finished attempt body; Finish applies one rule
+// per verdict.
+//
+//	retained body  attempt status  wire  verdict
+//	empty          any             any   sniffNoBody      (nothing to fold)
+//	non-empty      non-2xx/error   any   sniffFailed      (body message → errMsg)
+//	non-empty      2xx             SSE   sniffStream      (scan for failure events)
+//	non-empty      2xx             JSON  sniffErrorBody   (error object: mark failure)
+//	non-empty      2xx             JSON  sniffOK          (otherwise)
+type sniffVerdict uint8
+
+const (
+	sniffNoBody sniffVerdict = iota
+	sniffFailed
+	sniffStream
+	sniffErrorBody
+	sniffOK
+)
+
+func (v sniffVerdict) String() string {
+	switch v {
+	case sniffNoBody:
+		return "no-body"
+	case sniffFailed:
+		return "failed"
+	case sniffStream:
+		return "stream"
+	case sniffErrorBody:
+		return "error-body"
+	case sniffOK:
+		return "ok"
+	}
+	return "sniffVerdict(" + strconv.Itoa(int(v)) + ")"
+}
+
 // sniffer forwards upstream bytes verbatim while keeping a bounded copy so
 // usage/tool-call stats can be parsed at Finish.
 type sniffer struct {
@@ -30,7 +92,7 @@ type sniffer struct {
 	sse           bool
 	attemptStatus string // HTTP status of the attempt this body belongs to
 	buf           bytes.Buffer
-	dropped       bool
+	state         sniffBufState
 	closed        bool
 }
 
@@ -46,18 +108,25 @@ func newSniffer(body io.ReadCloser, tr *tracker, sse bool, status int) *sniffer 
 	return &sniffer{body: body, tracker: tr, sse: sse, attemptStatus: attemptStatus}
 }
 
+// retain is the buffering → overflowed transition point: it keeps p while the
+// copy fits under sniffCap and otherwise discards the copy for good.
+func (sn *sniffer) retain(p []byte) {
+	if sn.state != sniffBuffering {
+		return
+	}
+	if int64(sn.buf.Len())+int64(len(p)) > sniffCap {
+		sn.state = sniffOverflowed
+		sn.buf.Reset()
+		return
+	}
+	sn.buf.Write(p)
+}
+
 func (sn *sniffer) Read(p []byte) (int, error) {
 	n, err := sn.body.Read(p)
 	if n > 0 {
 		sn.tracker.noteFirstByte()
-		if !sn.dropped {
-			if int64(sn.buf.Len())+int64(n) > sniffCap {
-				sn.dropped = true
-				sn.buf.Reset()
-			} else {
-				sn.buf.Write(p[:n])
-			}
-		}
+		sn.retain(p[:n])
 	}
 	return n, err
 }
@@ -72,6 +141,21 @@ func (sn *sniffer) Close() error {
 	return sn.body.Close()
 }
 
+// verdict classifies the retained body; see sniffVerdict.
+func (sn *sniffer) verdict(data []byte) sniffVerdict {
+	switch {
+	case len(data) == 0:
+		return sniffNoBody
+	case sn.attemptStatus == statusError || !strings.HasPrefix(sn.attemptStatus, "2"):
+		return sniffFailed
+	case sn.sse:
+		return sniffStream
+	case errorShapedBody(data) != nil:
+		return sniffErrorBody
+	}
+	return sniffOK
+}
+
 // Finish parses whatever was retained and folds it into the tracker. Two
 // post-processing rules apply to the retained body:
 //
@@ -84,12 +168,13 @@ func (sn *sniffer) Close() error {
 //     failure so uptime stays honest.
 func (sn *sniffer) Finish() {
 	data := sn.buf.Bytes()
-	if len(data) == 0 {
+	verdict := sn.verdict(data)
+	if verdict == sniffNoBody {
 		return
 	}
 	sn.tracker.rep.mergeMax(parseUsageReport(data, sn.sse))
-	success := sn.attemptStatus != statusError && strings.HasPrefix(sn.attemptStatus, "2")
-	if success && sn.sse {
+	switch verdict {
+	case sniffStream:
 		for _, payload := range sseDataPayloads(data) {
 			var event struct {
 				Type string `json:"type"`
@@ -99,17 +184,14 @@ func (sn *sniffer) Finish() {
 				sn.tracker.errMsg = truncateMessage(translate.ResponsesFailure(payload).Error())
 			}
 		}
-	}
-	if success && !sn.sse && errorShapedBody(data) != nil {
+	case sniffErrorBody:
 		// Gateway-200: the exchange will answer 502 for this. Mark the whole
 		// request failed so uptime counts it, and keep the body's message.
-		sn.tracker.bodyFail = true
+		sn.tracker.markBodyFailure()
 		if msg := truncateMessage(upstreamErrorSummary(data)); msg != "" {
 			sn.tracker.errMsg = msg
 		}
-		return
-	}
-	if !success {
+	case sniffFailed:
 		if msg := truncateMessage(upstreamErrorSummary(data)); msg != "" {
 			sn.tracker.errMsg = msg
 		}

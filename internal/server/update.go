@@ -14,18 +14,57 @@ const updateWriteTimeout = 5 * time.Second
 
 var statsUpdatedEvent = []byte(`{"type":"stats-updated"}`)
 
+// hubState is the updateHub lifecycle.
+//
+//	state      event        next state  effect
+//	hubOpen    subscribe    hubOpen     channel registered in subs
+//	hubOpen    notify       hubOpen     non-blocking send to every sub
+//	hubOpen    close        hubClosed   every sub released (channel closed)
+//	hubClosed  subscribe    hubClosed   returns an already-closed channel
+//	hubClosed  notify       hubClosed   dropped
+//	hubClosed  close        hubClosed   no-op
+//
+// Each subscription is live while its channel is a member of subs; release
+// (by unsubscribe or hub close, whichever is first) removes and closes it,
+// and a second release of the same channel is a no-op.
+type hubState uint8
+
+const (
+	hubOpen hubState = iota
+	hubClosed
+)
+
+func (s hubState) String() string {
+	switch s {
+	case hubOpen:
+		return "open"
+	case hubClosed:
+		return "closed"
+	}
+	return fmt.Sprintf("hubState(%d)", uint8(s))
+}
+
 // updateHub broadcasts lightweight stats-change notifications to dashboard
 // clients over WebSocket or SSE. Clients refetch the existing JSON APIs on
 // receipt; a per-request event may carry the inspected request so dashboard
 // clients can surface it immediately without waiting for the refetch.
 type updateHub struct {
-	mu     sync.Mutex
-	subs   map[chan []byte]struct{}
-	closed bool
+	mu    sync.Mutex
+	subs  map[chan []byte]struct{}
+	state hubState
 }
 
 func newUpdateHub() *updateHub {
 	return &updateHub{subs: make(map[chan []byte]struct{})}
+}
+
+// releaseLocked ends one subscription if it is still live. h.mu must be held.
+func (h *updateHub) releaseLocked(ch chan []byte) {
+	if _, ok := h.subs[ch]; !ok {
+		return
+	}
+	delete(h.subs, ch)
+	close(ch)
 }
 
 // subscribe registers a buffered event channel. The returned unsubscribe
@@ -34,7 +73,7 @@ func newUpdateHub() *updateHub {
 func (h *updateHub) subscribe() (<-chan []byte, func()) {
 	ch := make(chan []byte, 1)
 	h.mu.Lock()
-	if h.closed {
+	if h.state == hubClosed {
 		h.mu.Unlock()
 		close(ch)
 		return ch, func() {}
@@ -45,11 +84,7 @@ func (h *updateHub) subscribe() (<-chan []byte, func()) {
 	unsub := func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		if _, ok := h.subs[ch]; !ok {
-			return
-		}
-		delete(h.subs, ch)
-		close(ch)
+		h.releaseLocked(ch)
 	}
 	return ch, unsub
 }
@@ -61,7 +96,7 @@ func (h *updateHub) subscribe() (<-chan []byte, func()) {
 func (h *updateHub) notify(event []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed {
+	if h.state == hubClosed {
 		return
 	}
 	for ch := range h.subs {
@@ -75,13 +110,12 @@ func (h *updateHub) notify(event []byte) {
 func (h *updateHub) close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed {
+	if h.state == hubClosed {
 		return
 	}
-	h.closed = true
+	h.state = hubClosed
 	for ch := range h.subs {
-		delete(h.subs, ch)
-		close(ch)
+		h.releaseLocked(ch)
 	}
 }
 

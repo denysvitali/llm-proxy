@@ -47,14 +47,15 @@ type Percentiles struct {
 // counters with retained latency windows; otherwise Prometheus supplies this
 // process's counters and latency observations.
 func (st *Stats) snapshot() []ModelStat {
-	if st.redis != nil {
+	mode := st.storageMode()
+	if mode == storageShared {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if snapshot, err := st.redis.snapshot(ctx, st.cfg.RetentionDays); err == nil {
 			return snapshot
 		}
 	}
-	if st.cfg.PersistFile == "" {
+	if mode != storageFile {
 		return st.snapshotFromPrometheus()
 	}
 	return st.snapshotFromBuckets()

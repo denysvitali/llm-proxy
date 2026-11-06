@@ -7,18 +7,88 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"sync"
 	"time"
 )
 
+// persistLoopState is the lifecycle of the periodic JSON persistence loop.
+//
+//	state           event   next state      effect
+//	persistIdle     start   persistRunning  ticker goroutine launched
+//	persistIdle     stop    persistIdle     nothing (no file mode, no flush)
+//	persistRunning  stop    persistStopped  goroutine signalled, final flush
+//	persistStopped  stop    persistStopped  flush again (every Close flushes)
+//
+// start is only legal from persistIdle.
+type persistLoopState uint8
+
+const (
+	persistIdle persistLoopState = iota
+	persistRunning
+	persistStopped
+)
+
+func (s persistLoopState) String() string {
+	switch s {
+	case persistIdle:
+		return "idle"
+	case persistRunning:
+		return "running"
+	case persistStopped:
+		return "stopped"
+	}
+	return "persistLoopState(" + strconv.Itoa(int(s)) + ")"
+}
+
+// persistLoop owns the persistence goroutine's stop signal and state.
+type persistLoop struct {
+	mu    sync.Mutex
+	state persistLoopState
+	stop  chan struct{}
+}
+
+// begin is the idle → running transition; it returns the stop channel the
+// goroutine must watch, or false if the loop was already started.
+func (l *persistLoop) begin() (<-chan struct{}, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.state != persistIdle {
+		return nil, false
+	}
+	l.state = persistRunning
+	l.stop = make(chan struct{})
+	return l.stop, true
+}
+
+// halt is the stop event. It reports whether the caller must flush: true
+// whenever the loop was ever started, so repeated Close calls flush again.
+func (l *persistLoop) halt() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	switch l.state {
+	case persistRunning:
+		close(l.stop)
+		l.state = persistStopped
+		return true
+	case persistStopped:
+		return true
+	}
+	return false
+}
+
 func (st *Stats) startPersist() {
-	st.stopCh = make(chan struct{})
+	stop, ok := st.persistLoop.begin()
+	if !ok {
+		return
+	}
 	ticker := time.NewTicker(st.cfg.PersistInterval)
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
 				st.persist()
-			case <-st.stopCh:
+			case <-stop:
 				ticker.Stop()
 				return
 			}
@@ -28,13 +98,10 @@ func (st *Stats) startPersist() {
 
 // Close stops the background persistence goroutine and flushes once.
 func (st *Stats) Close() error {
-	if st.stopCh != nil {
-		st.stopOnce.Do(func() {
-			close(st.stopCh)
-		})
+	if st.persistLoop.halt() {
 		st.persist()
 	}
-	if st.redis != nil {
+	if st.storageMode() == storageShared {
 		st.redis.close()
 	}
 	return nil

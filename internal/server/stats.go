@@ -46,11 +46,62 @@ type Stats struct {
 	recent    []UpstreamErrorEvent
 	inspected []InspectedRequest
 
-	stopCh   chan struct{}
-	stopOnce sync.Once
+	persistLoop persistLoop
 
+	// redis and redisInitErr are the inputs of storageMode; read the mode
+	// rather than testing them directly.
 	redis        *redisStats
 	redisInitErr error
+}
+
+// statsStorageMode is where dashboard stats live. It is fixed by newStats
+// from configuration (a configured Redis URL clears PersistFile, so JSON
+// persistence and Redis never coexist); the only runtime edge is Close
+// shutting the Redis client, which leaves the mode unchanged.
+//
+//	configuration                    mode
+//	no redis_url, no persist_file    storageMetricsOnly  (summaries from Prometheus)
+//	no redis_url, persist_file       storageFile         (buckets + JSON snapshot)
+//	redis_url, client created        storageShared       (Redis first, local fallback)
+//	redis_url, init failed (sticky)  storageSharedFailed (local stats; activity APIs fail)
+//
+// Reads in storageShared fall back to the local model when Redis errors;
+// since PersistFile is empty there, that fallback is the Prometheus summary.
+type statsStorageMode uint8
+
+const (
+	storageMetricsOnly statsStorageMode = iota
+	storageFile
+	storageShared
+	storageSharedFailed
+)
+
+func (m statsStorageMode) String() string {
+	switch m {
+	case storageMetricsOnly:
+		return "metrics-only"
+	case storageFile:
+		return "file"
+	case storageShared:
+		return "shared"
+	case storageSharedFailed:
+		return "shared-failed"
+	}
+	return "statsStorageMode(" + strconv.Itoa(int(m)) + ")"
+}
+
+// storageMode derives the storage mode. The sticky init error takes
+// precedence over the client, matching the activity readers' check order.
+func (st *Stats) storageMode() statsStorageMode {
+	switch {
+	case st.redisInitErr != nil:
+		return storageSharedFailed
+	case st.redis != nil:
+		return storageShared
+	case st.cfg.PersistFile != "":
+		return storageFile
+	}
+	return storageMetricsOnly
 }
 
 // Token-type label values for llm_proxy_model_tokens_total.
@@ -114,10 +165,42 @@ func newStats(reg *prometheus.Registry, cfg config.StatsConfig) *Stats {
 		st.redis, st.redisInitErr = newRedisStats(cfg.RedisURL, cfg.RedisKeyPrefix)
 	}
 	reg.MustRegister(st.requests, st.ttft, st.e2e, st.tokens, st.through, st.calls, st.errs, st.statuses)
-	if st.cfg.PersistFile != "" && st.cfg.PersistInterval > 0 {
+	if st.storageMode() == storageFile && st.cfg.PersistInterval > 0 {
 		st.startPersist()
 	}
 	return st
+}
+
+// attemptPhase is the lifecycle of one tracked upstream attempt.
+//
+//	state             event             next state
+//	attemptPending    noteFirstByte     attemptFirstByte (TTFT stamped once)
+//	attemptPending    done              attemptDone      (recorded once)
+//	attemptFirstByte  noteFirstByte     attemptFirstByte (no-op)
+//	attemptFirstByte  done              attemptDone      (recorded once)
+//	attemptDone       done              attemptDone      (no-op)
+//	attemptDone       noteFirstByte     attemptDone      (stamp has no effect)
+//
+// The first-byte edge is an atomic CAS on firstAt so concurrent body readers
+// stay lock-free; the done edge runs on the owning goroutine.
+type attemptPhase uint8
+
+const (
+	attemptPending attemptPhase = iota
+	attemptFirstByte
+	attemptDone
+)
+
+func (p attemptPhase) String() string {
+	switch p {
+	case attemptPending:
+		return "pending"
+	case attemptFirstByte:
+		return "first-byte"
+	case attemptDone:
+		return "done"
+	}
+	return "attemptPhase(" + strconv.Itoa(int(p)) + ")"
 }
 
 // tracker accumulates one upstream request's observations until done().
@@ -130,8 +213,26 @@ type tracker struct {
 	errMsg   string // bounded summary of the upstream failure when status != 2xx
 	bodyFail bool   // a 2xx reply turned out to carry an error object
 	rep      usageReport
-	finished bool
+	finished bool // attemptDone latch; see phase
 	request  InspectedRequest
+}
+
+// phase derives the attempt's lifecycle state from the done latch and the
+// atomic first-byte stamp.
+func (t *tracker) phase() attemptPhase {
+	if t.finished {
+		return attemptDone
+	}
+	if t.firstAt.Load() != 0 {
+		return attemptFirstByte
+	}
+	return attemptPending
+}
+
+// succeeded reports the attempt outcome: an upstream 2xx whose body was not
+// an error object. statusError (no upstream response) never succeeds.
+func (t *tracker) succeeded() bool {
+	return !t.bodyFail && strings.HasPrefix(t.status, "2")
 }
 
 // markBodyFailure flags an HTTP-success reply whose body is an error object
@@ -168,7 +269,8 @@ func (t *tracker) noteTransportError(err error) {
 	t.errMsg = truncateMessage(fmt.Sprintf("%v", err))
 }
 
-// noteFirstByte stamps the TTFT moment; effective only for the first byte.
+// noteFirstByte is the pending → first-byte transition: it stamps the TTFT
+// moment and is effective only for the first byte (lock-free CAS).
 func (t *tracker) noteFirstByte() {
 	t.firstAt.CompareAndSwap(0, time.Now().UnixNano())
 }
@@ -183,13 +285,13 @@ func (t *tracker) setUpstreamStatus(status int) {
 // done freezes the observations once, so every storage adapter sees the same
 // completion timestamp, outcome, usage, and latency values.
 func (t *tracker) done() {
-	if t.finished {
+	if t.phase() == attemptDone {
 		return
 	}
 	t.finished = true
 	a := completedAttempt{
 		at: time.Now(), backend: t.labels[0], model: t.labels[1],
-		status: t.status, success: !t.bodyFail && strings.HasPrefix(t.status, "2"),
+		status: t.status, success: t.succeeded(),
 		message: t.errMsg, usage: t.rep, request: t.request,
 	}
 	// Latency describes generation: an error body (a 429 answered in a
@@ -378,7 +480,28 @@ type modelStats struct {
 	toolCalls  uint64
 	toolErrors uint64
 	buckets    map[int64]*bucket
-	lastEvict  int64 // last window index that ran retention eviction
+	lastEvict  evictionMark
+}
+
+// evictionMark is the retention-sweep latch of one modelStats: the index of
+// the 5-minute window that last ran eviction. Its states are "swept window w"
+// for every w; the zero value doubles as "never swept" (window 0 is 1970).
+//
+//	state      event              next state
+//	swept(w)   claim(v), v == w   swept(w)  (no sweep: this window already ran)
+//	swept(w)   claim(v), v != w   swept(v)  (caller sweeps)
+//
+// Callers must hold modelStats.mu.
+type evictionMark int64
+
+// claim transitions the mark to window win and reports whether the caller
+// should sweep expired buckets now.
+func (m *evictionMark) claim(win int64) bool {
+	if int64(*m) == win {
+		return false
+	}
+	*m = evictionMark(win)
+	return true
 }
 
 // histIndex returns the histogram bucket index for v given ascending edges
@@ -408,7 +531,7 @@ func (st *Stats) recordToolErrors(backend, model string, n int64) {
 	b.ToolErrors += uint64(n)
 	st.evictLocked(ms, now)
 	ms.mu.Unlock()
-	if st.redis != nil {
+	if st.storageMode() == storageShared {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		_ = st.redis.recordToolErrors(ctx, backend, model, n, now, st.cfg.RetentionDays)
 		cancel()
@@ -456,11 +579,9 @@ func (st *Stats) evictLocked(ms *modelStats, now time.Time) {
 	if st.cfg.RetentionDays <= 0 {
 		return
 	}
-	nowWin := now.Unix() / 300
-	if ms.lastEvict == nowWin {
+	if !ms.lastEvict.claim(now.Unix() / 300) {
 		return
 	}
-	ms.lastEvict = nowWin
 	cutoff := retentionCutoff(now, st.cfg.RetentionDays)
 	for win := range ms.buckets {
 		if win < cutoff {
