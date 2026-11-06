@@ -17,14 +17,140 @@ type cachedCatalog struct {
 	lastWarn  time.Time
 }
 
+// catalogEntryState classifies one backend's cache slot at a point in time.
+// get() and fetch() act on it:
+//
+//	fresh          → serve entry, no fetch
+//	stale-servable → refresh; on fetch failure serve the entry and warn
+//	expired        → refresh; on fetch failure propagate (beyond max staleness)
+//	failed-held    → return the held error until catalogFailureTTL elapses
+//	cold           → refresh; on fetch failure hold the error
+//
+// A successful fetch moves any state to fresh and clears the held failure.
+// A failure is only held when no entry exists, so it never shadows an entry.
+type catalogEntryState int
+
+const (
+	catalogCold catalogEntryState = iota
+	catalogFresh
+	catalogStaleServable
+	catalogExpired
+	catalogFailedHeld
+)
+
+func (s catalogEntryState) String() string {
+	switch s {
+	case catalogCold:
+		return "cold"
+	case catalogFresh:
+		return "fresh"
+	case catalogStaleServable:
+		return "stale-servable"
+	case catalogExpired:
+		return "expired"
+	case catalogFailedHeld:
+		return "failed-held"
+	default:
+		return "unknown"
+	}
+}
+
+// needsRefresh reports whether a lookup in this state must fetch.
+func (s catalogEntryState) needsRefresh() bool {
+	return s == catalogCold || s == catalogStaleServable || s == catalogExpired
+}
+
+// classifyCatalog orders the checks exactly as lookups do: a fresh entry wins,
+// a non-fresh entry is aged, and a held failure only applies without an entry.
+func classifyCatalog(entry cachedCatalog, hasEntry bool, failure catalogFailure, hasFailure bool, now time.Time) catalogEntryState {
+	switch {
+	case hasEntry && now.Before(entry.expires):
+		return catalogFresh
+	case hasEntry:
+		return entry.staleness(now)
+	case hasFailure && now.Before(failure.until):
+		return catalogFailedHeld
+	default:
+		return catalogCold
+	}
+}
+
+// staleness ages an entry from when it was last refreshed, ignoring its
+// expiry: stale-servable under catalogMaxStaleness, expired beyond it.
+func (e cachedCatalog) staleness(now time.Time) catalogEntryState {
+	if now.Sub(e.fetchedAt) < catalogMaxStaleness {
+		return catalogStaleServable
+	}
+	return catalogExpired
+}
+
+// catalogRefreshState tracks one shared refresh attempt:
+//
+//	running --publish(not canceled)--> published  (waiters return its result)
+//	running --publish(canceled)------> abandoned  (waiters retry themselves)
+//	running --finish (panic, no publish)--> abandoned
+//
+// finish always closes done; waiters read the state only after done closes.
+type catalogRefreshState int
+
+const (
+	catalogRefreshRunning catalogRefreshState = iota
+	catalogRefreshPublished
+	catalogRefreshAbandoned
+)
+
+func (s catalogRefreshState) String() string {
+	switch s {
+	case catalogRefreshRunning:
+		return "running"
+	case catalogRefreshPublished:
+		return "published"
+	case catalogRefreshAbandoned:
+		return "abandoned"
+	default:
+		return "unknown"
+	}
+}
+
 // catalogRefresh shares one attempt among callers for the same backend.
-// Closing done publishes the result. A canceled initiator leaves retry set so
-// healthy waiters can refresh using their own contexts.
+// Closing done publishes the result. A canceled initiator leaves the attempt
+// abandoned so healthy waiters can refresh using their own contexts.
 type catalogRefresh struct {
 	done   chan struct{}
 	models []string
 	err    error
-	retry  bool
+	state  catalogRefreshState
+}
+
+func newCatalogRefresh() *catalogRefresh {
+	return &catalogRefresh{done: make(chan struct{}), state: catalogRefreshRunning}
+}
+
+// publish records the leader's result. A canceled leader abandons the attempt.
+func (r *catalogRefresh) publish(models []string, err error, canceled bool) {
+	if r.state != catalogRefreshRunning {
+		return
+	}
+	r.models, r.err = models, err
+	if canceled {
+		r.state = catalogRefreshAbandoned
+	} else {
+		r.state = catalogRefreshPublished
+	}
+}
+
+// finish releases waiters; an attempt that never published (the provider
+// panicked) is abandoned. Callers hold catalogCache.mu.
+func (r *catalogRefresh) finish() {
+	if r.state == catalogRefreshRunning {
+		r.state = catalogRefreshAbandoned
+	}
+	close(r.done)
+}
+
+// shouldRetry reports whether a waiter must run its own lookup again.
+func (r *catalogRefresh) shouldRetry() bool {
+	return r.state != catalogRefreshPublished
 }
 
 const (
@@ -96,11 +222,12 @@ func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.Fi
 			c.ttl = catalogTTL
 		}
 		cached, ok := c.entries[name]
-		if ok && time.Now().Before(cached.expires) {
+		failed, held := c.failures[name]
+		switch classifyCatalog(cached, ok, failed, held, time.Now()) {
+		case catalogFresh:
 			c.mu.Unlock()
 			return cached.models, nil
-		}
-		if failed, held := c.failures[name]; held && !ok && time.Now().Before(failed.until) {
+		case catalogFailedHeld:
 			c.mu.Unlock()
 			return nil, failed.err
 		}
@@ -114,28 +241,28 @@ func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.Fi
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			if running.retry {
+			if running.shouldRetry() {
 				continue
 			}
 			return running.models, running.err
 		}
-		running := &catalogRefresh{done: make(chan struct{}), retry: true}
+		running := newCatalogRefresh()
 		c.refresh[name] = running
 		c.mu.Unlock()
 		// Also release waiters if provider code panics. The panic continues
-		// to the caller; retry stays set until a normal result is published.
+		// to the caller; the attempt is abandoned unless a result was published.
 		defer func() {
 			c.mu.Lock()
 			delete(c.refresh, name)
-			close(running.done)
+			running.finish()
 			c.mu.Unlock()
 		}()
 
 		// The initiating request owns this synchronous fetch. Cancellation
 		// never detaches provider work from the request that started it.
-		running.models, running.err = c.fetch(ctx, b, log, cached, ok)
-		running.retry = ctx.Err() != nil
-		if running.err != nil && !running.retry && !ok {
+		models, err := c.fetch(ctx, b, log, cached, ok)
+		running.publish(models, err, ctx.Err() != nil)
+		if running.err != nil && !running.shouldRetry() && !ok {
 			c.mu.Lock()
 			if c.failures == nil {
 				c.failures = make(map[string]catalogFailure)
@@ -157,7 +284,7 @@ func (c *catalogCache) fetch(ctx context.Context, b backend.Backend, log logrus.
 		if hasCached {
 			// Age is measured from when the entry was last refreshed.
 			age := now.Sub(cached.fetchedAt)
-			if age < catalogMaxStaleness {
+			if cached.staleness(now) == catalogStaleServable {
 				if now.Sub(cached.lastWarn) >= catalogStaleWarnInterval {
 					c.mu.Lock()
 					if existing, still := c.entries[b.Name()]; still {

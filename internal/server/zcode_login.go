@@ -6,7 +6,6 @@ import (
 	"html"
 	"io"
 	"net/http"
-	"time"
 )
 
 func (s *Server) zcodeLoginPage(w http.ResponseWriter, _ *http.Request) {
@@ -113,48 +112,28 @@ func (s *Server) zcodeLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginHeaders(w)
-	flusher, canFlush := w.(http.Flusher)
+	flush := loginFlusher(w)
 	_, _ = fmt.Fprint(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signing in to ZCode</title><style>body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.wrap{max-width:560px;margin:10vh auto;padding:24px}.card{background:white;border:1px solid #dfe4ec;border-radius:18px;padding:32px}h1{margin:0 0 12px}.log{margin-top:20px;padding:14px;background:#f2f5f9;border-radius:10px;line-height:1.7}a{color:#1769e0}.ok{color:#117a54}.err{color:#b42318}</style></head><body><main class="wrap"><section class="card"><h1>Waiting for ZCode authorization</h1><p>Keep this page open while you approve the sign-in.</p><div class="log">`)
-	if canFlush {
-		flusher.Flush()
-	}
-	messages := make(chan string, 8)
-	result := make(chan error, 1)
-	go func() {
-		result <- s.accounts.ZCode.LoginDevice(r.Context(), func(message string) {
+	flush()
+	outcome, err := streamDeviceLogin(r.Context(), w, flush, func(messages chan<- string) error {
+		return s.accounts.ZCode.LoginDevice(r.Context(), func(message string) {
 			select {
 			case messages <- message:
 			case <-r.Context().Done():
 			}
 		})
-	}()
-	heartbeat := time.NewTicker(10 * time.Second)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case message := <-messages:
-			writeLoginMessage(w, message)
-		case err := <-result:
-			if err != nil {
-				_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p><p><a href="/login/zcode">Try again</a> · <a href="/">Dashboard</a></p></section></main></body></html>`, html.EscapeString(err.Error()))
-			} else {
-				action := `<a href="/login/zcode">Open browser verification</a> · `
-				if !s.zcodeCaptchaAllowed() {
-					action = ""
-				}
-				_, _ = fmt.Fprintf(w, `</div><p class="ok">Sign-in successful. Your ZCode Start Plan is ready.</p><p>%s<a href="/">Dashboard</a></p></section></main></body></html>`, action)
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-			return
-		case <-heartbeat.C:
-			_, _ = fmt.Fprint(w, "<!-- waiting -->")
-		case <-r.Context().Done():
-			return
+	})
+	switch outcome {
+	case loginFailed:
+		_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p><p><a href="/login/zcode">Try again</a> · <a href="/">Dashboard</a></p></section></main></body></html>`, html.EscapeString(err.Error()))
+	case loginSucceeded:
+		action := `<a href="/login/zcode">Open browser verification</a> · `
+		if !s.zcodeCaptchaAllowed() {
+			action = ""
 		}
-		if canFlush {
-			flusher.Flush()
-		}
+		_, _ = fmt.Fprintf(w, `</div><p class="ok">Sign-in successful. Your ZCode Start Plan is ready.</p><p>%s<a href="/">Dashboard</a></p></section></main></body></html>`, action)
+	default:
+		return
 	}
+	flush()
 }

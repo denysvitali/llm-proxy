@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"net/http"
@@ -22,20 +23,32 @@ func (s *Server) workBuddyLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginHeaders(w)
-	flusher, canFlush := w.(http.Flusher)
+	flush := loginFlusher(w)
 	_, _ = fmt.Fprint(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signing in to WorkBuddy</title><style>body{font:16px system-ui,sans-serif;background:#f5f7fb;color:#182230;margin:0}.wrap{max-width:560px;margin:10vh auto;padding:24px}.card{background:white;border:1px solid #dfe4ec;border-radius:18px;padding:32px}.log{margin-top:20px;padding:14px;background:#f2f5f9;border-radius:10px;line-height:1.7}.ok{color:#117a54}.err{color:#b42318}a{color:#1769e0}</style></head><body><main class="wrap"><section class="card"><h1>Waiting for WorkBuddy authorization</h1><div class="log">`)
-	if canFlush {
-		flusher.Flush()
-	}
+	flush()
 	state, target, err := s.accounts.WorkBuddy.StartLogin(r.Context())
 	if err != nil {
 		_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p></section></main></body></html>`, html.EscapeString(err.Error()))
 		return
 	}
 	_, _ = fmt.Fprintf(w, `<div><a href="%s" target="_blank" rel="noreferrer">Continue to WorkBuddy</a></div><div>Complete sign-in in the new tab, then return here.</div>`, html.EscapeString(target))
-	if canFlush {
-		flusher.Flush()
+	flush()
+	outcome, pollErr := s.waitWorkBuddyLogin(r.Context(), w, flush, state)
+	switch outcome {
+	case loginFailed:
+		_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p><p><a href="/login/workbuddy">Try again</a></p></section></main></body></html>`, html.EscapeString(pollErr.Error()))
+	case loginSucceeded:
+		_, _ = fmt.Fprint(w, `</div><p class="ok">Sign-in successful. Your WorkBuddy account is ready.</p><p><a href="/">Open dashboard</a></p></section></main></body></html>`)
+		flush()
+	case loginTimedOut:
+		_, _ = fmt.Fprint(w, `</div><p class="err">Sign-in timed out.</p><p><a href="/login/workbuddy">Try again</a></p></section></main></body></html>`)
 	}
+}
+
+// waitWorkBuddyLogin polls every two seconds in the waiting state, writing a
+// flushed heartbeat per pending poll, until the poll fails or completes, five
+// minutes pass, or the client leaves.
+func (s *Server) waitWorkBuddyLogin(ctx context.Context, w http.ResponseWriter, flush func(), state string) (loginOutcome, error) {
 	ticker := time.NewTicker(2 * time.Second)
 	timeout := time.NewTimer(5 * time.Minute)
 	defer ticker.Stop()
@@ -43,27 +56,19 @@ func (s *Server) workBuddyLogin(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ticker.C:
-			done, pollErr := s.accounts.WorkBuddy.PollLogin(r.Context(), state)
+			done, pollErr := s.accounts.WorkBuddy.PollLogin(ctx, state)
 			if pollErr != nil {
-				_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p><p><a href="/login/workbuddy">Try again</a></p></section></main></body></html>`, html.EscapeString(pollErr.Error()))
-				return
+				return loginFailed, pollErr
 			}
 			if done {
-				_, _ = fmt.Fprint(w, `</div><p class="ok">Sign-in successful. Your WorkBuddy account is ready.</p><p><a href="/">Open dashboard</a></p></section></main></body></html>`)
-				if canFlush {
-					flusher.Flush()
-				}
-				return
+				return loginSucceeded, nil
 			}
 			_, _ = fmt.Fprint(w, "<!-- waiting -->")
-			if canFlush {
-				flusher.Flush()
-			}
+			flush()
 		case <-timeout.C:
-			_, _ = fmt.Fprint(w, `</div><p class="err">Sign-in timed out.</p><p><a href="/login/workbuddy">Try again</a></p></section></main></body></html>`)
-			return
-		case <-r.Context().Done():
-			return
+			return loginTimedOut, nil
+		case <-ctx.Done():
+			return loginClientGone, nil
 		}
 	}
 }

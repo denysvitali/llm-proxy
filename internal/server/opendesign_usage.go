@@ -70,7 +70,7 @@ func (c *openDesignUsageCache) get(ctx context.Context) (openDesignUsageView, er
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.value != nil && time.Since(c.value.FetchedAt) < openDesignUsageTTL {
+	if c.state(time.Now()) == usageSnapshotFresh {
 		return cloneOpenDesignUsage(*c.value), nil
 	}
 	usage, err := c.fetch(ctx)
@@ -80,6 +80,13 @@ func (c *openDesignUsageCache) get(ctx context.Context) (openDesignUsageView, er
 	view := newOpenDesignUsageView(usage, time.Now().UTC())
 	c.value = &view
 	return cloneOpenDesignUsage(view), nil
+}
+
+func (c *openDesignUsageCache) state(now time.Time) usageSnapshotState {
+	if c.value == nil {
+		return usageSnapshotEmpty
+	}
+	return usageSnapshotStateAt(true, c.value.FetchedAt, openDesignUsageTTL, now)
 }
 
 var errOpenDesignUsageUnavailable = errors.New("open design plan usage is not configured; set usage_key_env to the account control key")
@@ -169,7 +176,7 @@ func (s *Server) handleOpenDesignUsage(w http.ResponseWriter, r *http.Request) {
 // the dashboard shell.
 func (s *Server) openDesignUsageMetadata() usageMetadata {
 	if s.openDesignUsage == nil {
-		return usageMetadata{}
+		return usageUnconfigured.metadata("")
 	}
-	return usageMetadata{Configured: true, Available: true}
+	return usageAvailable.metadata("")
 }

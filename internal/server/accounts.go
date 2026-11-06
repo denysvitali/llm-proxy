@@ -35,8 +35,45 @@ type accountProvider struct {
 	registerRoutes func(*Server, *http.ServeMux)
 }
 
+// accountSessionState is a subscription account's sign-in state:
+//
+//	no manager                   → absent (never changes at runtime)
+//	manager, no stored session   → signed-out --login succeeds--> signed-in
+//	manager with a session       → signed-in  --sign-out/expiry--> signed-out
+type accountSessionState int
+
+const (
+	accountAbsent accountSessionState = iota
+	accountSignedOut
+	accountSignedIn
+)
+
+func (s accountSessionState) String() string {
+	switch s {
+	case accountAbsent:
+		return "absent"
+	case accountSignedOut:
+		return "signed-out"
+	case accountSignedIn:
+		return "signed-in"
+	default:
+		return "unknown"
+	}
+}
+
+func (p accountProvider) sessionState() accountSessionState {
+	switch {
+	case p.session == nil:
+		return accountAbsent
+	case p.session.HasSession():
+		return accountSignedIn
+	default:
+		return accountSignedOut
+	}
+}
+
 func (p accountProvider) configured() bool {
-	return p.session != nil && p.session.HasSession()
+	return p.sessionState() == accountSignedIn
 }
 
 func (a AccountProviders) providers() map[string]*accountProvider {

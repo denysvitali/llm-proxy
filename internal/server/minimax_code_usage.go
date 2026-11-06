@@ -23,15 +23,18 @@ type minimaxUsageView struct {
 func (s *Server) minimaxUsageMetadata() usageMetadata {
 	for _, bc := range s.cfg.Backends {
 		if bc.Type == "minimax-code" && bc.IsEnabled() {
-			return usageMetadata{Configured: true, Available: s.accounts.MiniMaxCode != nil && s.accounts.MiniMaxCode.HasSession()}
+			if s.accounts.MiniMaxCode == nil || !s.accounts.MiniMaxCode.HasSession() {
+				return usageUnavailable.metadata("")
+			}
+			return usageAvailable.metadata("")
 		}
 	}
-	return usageMetadata{}
+	return usageUnconfigured.metadata("")
 }
 
 func (s *Server) requireMiniMaxAccount(w http.ResponseWriter) bool {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.minimaxUsageMetadata().Available {
+	if s.minimaxUsageMetadata().availability() != usageAvailable {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MiniMax Code account is unavailable; enable the backend and sign in."})
 		return false
 	}
@@ -71,18 +74,70 @@ func (s *Server) handleMiniMaxCodeUsage(w http.ResponseWriter, r *http.Request) 
 	wg.Wait()
 	view.FetchedAt = time.Now().UTC()
 	// Independent account services can fail separately; keep the usable portion.
-	status := http.StatusOK
-	if view.Account == nil && view.Checkin == nil {
-		status = http.StatusBadGateway
-		if backend.IsTerminal(accountErr) && backend.IsTerminal(checkinErr) {
-			// The session itself is dead (refresh rejected or signed out): the
-			// operator must sign in again, retrying the gateway will not help.
-			status = http.StatusConflict
-			view.AccountError = "MiniMax Code session expired; sign in again from the dashboard."
-			view.CheckinError = ""
-		}
+	result := classifyMiniMaxUsage(view.Account != nil, view.Checkin != nil, accountErr, checkinErr)
+	if result == minimaxUsageSessionExpired {
+		// The session itself is dead (refresh rejected or signed out): the
+		// operator must sign in again, retrying the gateway will not help.
+		view.AccountError = "MiniMax Code session expired; sign in again from the dashboard."
+		view.CheckinError = ""
 	}
-	writeJSON(w, status, view)
+	writeJSON(w, result.status(), view)
+}
+
+// minimaxUsageResult combines the two independent account reads:
+//
+//	both succeeded                         → complete (200)
+//	exactly one succeeded                  → partial (200, failed half carries its error)
+//	both failed, not both terminal         → failed (502)
+//	both failed with terminal session errs → session-expired (409)
+type minimaxUsageResult int
+
+const (
+	minimaxUsageComplete minimaxUsageResult = iota
+	minimaxUsagePartial
+	minimaxUsageFailed
+	minimaxUsageSessionExpired
+)
+
+func (r minimaxUsageResult) String() string {
+	switch r {
+	case minimaxUsageComplete:
+		return "complete"
+	case minimaxUsagePartial:
+		return "partial"
+	case minimaxUsageFailed:
+		return "failed"
+	case minimaxUsageSessionExpired:
+		return "session-expired"
+	default:
+		return "unknown"
+	}
+}
+
+func (r minimaxUsageResult) status() int {
+	switch r {
+	case minimaxUsageFailed:
+		return http.StatusBadGateway
+	case minimaxUsageSessionExpired:
+		return http.StatusConflict
+	default:
+		return http.StatusOK
+	}
+}
+
+// classifyMiniMaxUsage decides from which halves produced a value; errors
+// only distinguish a dead session when neither half is usable.
+func classifyMiniMaxUsage(hasAccount, hasCheckin bool, accountErr, checkinErr error) minimaxUsageResult {
+	switch {
+	case hasAccount && hasCheckin:
+		return minimaxUsageComplete
+	case hasAccount || hasCheckin:
+		return minimaxUsagePartial
+	case backend.IsTerminal(accountErr) && backend.IsTerminal(checkinErr):
+		return minimaxUsageSessionExpired
+	default:
+		return minimaxUsageFailed
+	}
 }
 
 func (s *Server) handleMiniMaxCodeCheckin(w http.ResponseWriter, r *http.Request) {

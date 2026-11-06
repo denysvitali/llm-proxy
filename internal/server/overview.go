@@ -34,6 +34,58 @@ type usageMetadata struct {
 	Error      string `json:"error,omitempty"`
 }
 
+// usageAvailability is the dashboard's view of one provider's usage card:
+//
+//	backend not enabled                       → unconfigured {}
+//	enabled, no session or the read failed    → unavailable {configured, error?}
+//	enabled, signed in and the read succeeded → available {configured, available}
+//
+// Only an unavailable card carries an error reason, and it may be empty.
+type usageAvailability int
+
+const (
+	usageUnconfigured usageAvailability = iota
+	usageUnavailable
+	usageAvailable
+)
+
+func (a usageAvailability) String() string {
+	switch a {
+	case usageUnconfigured:
+		return "unconfigured"
+	case usageUnavailable:
+		return "unavailable"
+	case usageAvailable:
+		return "available"
+	default:
+		return "unknown"
+	}
+}
+
+// metadata renders the state; reason is kept only for an unavailable card.
+func (a usageAvailability) metadata(reason string) usageMetadata {
+	switch a {
+	case usageUnavailable:
+		return usageMetadata{Configured: true, Error: reason}
+	case usageAvailable:
+		return usageMetadata{Configured: true, Available: true}
+	default:
+		return usageMetadata{}
+	}
+}
+
+// availability recovers the state a metadata value encodes.
+func (m usageMetadata) availability() usageAvailability {
+	switch {
+	case !m.Configured:
+		return usageUnconfigured
+	case m.Available:
+		return usageAvailable
+	default:
+		return usageUnavailable
+	}
+}
+
 // overviewRoute is one configured route. An empty Upstream means the requested
 // model name is forwarded unchanged.
 type overviewRoute struct {

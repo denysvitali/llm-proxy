@@ -34,16 +34,19 @@ func (s *Server) grokUsageMetadata(r *http.Request) usageMetadata {
 		break
 	}
 	if !configured {
-		return usageMetadata{}
+		return usageUnconfigured.metadata("")
 	}
 	if s.accounts.Grok == nil || !s.accounts.Grok.HasSession() {
-		return usageMetadata{Configured: true}
+		return usageUnavailable.metadata("")
 	}
 	usage, err := s.grokUsageCache.get(r.Context(), false)
 	if err != nil {
-		return usageMetadata{Configured: true, Available: false, Error: sanitizeUsageError(err)}
+		return usageUnavailable.metadata(sanitizeUsageError(err))
 	}
-	return usageMetadata{Configured: true, Available: usage.Available}
+	if !usage.Available {
+		return usageUnavailable.metadata("")
+	}
+	return usageAvailable.metadata("")
 }
 
 func grokUsageBaseURL(backends []config.BackendConfig) string {

@@ -37,7 +37,7 @@ func (c *grokUsageCache) get(ctx context.Context, refresh bool) (grokbackend.Usa
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !refresh && c.value != nil && time.Since(c.value.FetchedAt) < grokUsageTTL {
+	if !refresh && c.state(time.Now()) == usageSnapshotFresh {
 		return cloneGrokUsage(*c.value), nil
 	}
 	usage, err := c.fetch(ctx)
@@ -47,6 +47,13 @@ func (c *grokUsageCache) get(ctx context.Context, refresh bool) (grokbackend.Usa
 	view := grokbackend.NewUsageView(usage, time.Now())
 	c.value = &view
 	return cloneGrokUsage(view), nil
+}
+
+func (c *grokUsageCache) state(now time.Time) usageSnapshotState {
+	if c.value == nil {
+		return usageSnapshotEmpty
+	}
+	return usageSnapshotStateAt(true, c.value.FetchedAt, grokUsageTTL, now)
 }
 
 // Each optional amount must remain detached while retaining unknown versus zero.

@@ -42,15 +42,15 @@ func (s *Server) zcodeUsageMetadata(r *http.Request) usageMetadata {
 		break
 	}
 	if !configured {
-		return usageMetadata{}
+		return usageUnconfigured.metadata("")
 	}
 	if s.accounts.ZCode == nil || !s.accounts.ZCode.HasSession() {
-		return usageMetadata{Configured: true}
+		return usageUnavailable.metadata("")
 	}
 	// The dashboard consumes quota, which also includes plans. Share that
 	// cached snapshot with its subsequent quota request.
 	if _, err := s.zcodeUsageCache.quota(r.Context()); err != nil {
-		return usageMetadata{Configured: true, Available: false, Error: err.Error()}
+		return usageUnavailable.metadata(err.Error())
 	}
-	return usageMetadata{Configured: true, Available: true}
+	return usageAvailable.metadata("")
 }

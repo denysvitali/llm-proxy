@@ -42,7 +42,7 @@ func (c *zcodeUsageCache) plans(ctx context.Context) ([]zcodebackend.PlanUsage, 
 	}
 	c.plansMu.Lock()
 	defer c.plansMu.Unlock()
-	if !c.plansAt.IsZero() && time.Since(c.plansAt) < zcodeUsageTTL {
+	if zcodeSnapshotState(c.plansAt, time.Now()) == usageSnapshotFresh {
 		return cloneZcodePlans(c.plansValue), nil
 	}
 	plans, err := c.fetchPlans(ctx)
@@ -60,7 +60,7 @@ func (c *zcodeUsageCache) quota(ctx context.Context) (zcodebackend.PlanQuota, er
 	}
 	c.quotaMu.Lock()
 	defer c.quotaMu.Unlock()
-	if !c.quotaAt.IsZero() && time.Since(c.quotaAt) < zcodeUsageTTL {
+	if zcodeSnapshotState(c.quotaAt, time.Now()) == usageSnapshotFresh {
 		return cloneZcodeQuota(c.quotaValue), nil
 	}
 	quota, err := c.fetchQuota(ctx)
@@ -82,8 +82,15 @@ func (c *zcodeUsageCache) invalidate() {
 	defer c.plansMu.Unlock()
 	c.quotaMu.Lock()
 	defer c.quotaMu.Unlock()
+	// Both windows return to the empty state.
 	c.plansAt = time.Time{}
 	c.quotaAt = time.Time{}
+}
+
+// zcodeSnapshotState treats a zero fetch time as the empty (never fetched or
+// invalidated) state.
+func zcodeSnapshotState(fetchedAt, now time.Time) usageSnapshotState {
+	return usageSnapshotStateAt(!fetchedAt.IsZero(), fetchedAt, zcodeUsageTTL, now)
 }
 
 func cloneZcodePlans(plans []zcodebackend.PlanUsage) []zcodebackend.PlanUsage {
