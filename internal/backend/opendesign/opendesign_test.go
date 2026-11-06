@@ -30,7 +30,7 @@ func TestSupportsAndDefaults(t *testing.T) {
 		kind backend.Kind
 		want bool
 	}{
-		{backend.KindAnthropic, true},
+		{backend.KindAnthropic, false}, // translated to Chat Completions; see package doc
 		{backend.KindOpenAIChat, true},
 		{backend.KindOpenAIResponses, true},
 		{"", false},
@@ -45,20 +45,12 @@ func TestSendNativeEndpoints(t *testing.T) {
 	const requestBody = `{"model":"deepseek-v4.1-flash","messages":[]}`
 	const responseBody = `{"id":"response-id"}`
 	tests := []struct {
-		name             string
-		kind             backend.Kind
-		path             string
-		streaming        bool
-		wantAccept       string
-		wantAnthropicVer string
+		name       string
+		kind       backend.Kind
+		path       string
+		streaming  bool
+		wantAccept string
 	}{
-		{
-			name:             "anthropic non-streaming",
-			kind:             backend.KindAnthropic,
-			path:             "/messages",
-			wantAccept:       "application/json",
-			wantAnthropicVer: anthropicVersion,
-		},
 		{
 			name:       "chat completions streaming",
 			kind:       backend.KindOpenAIChat,
@@ -94,9 +86,6 @@ func TestSendNativeEndpoints(t *testing.T) {
 				}
 				if got := r.Header.Get("Accept"); got != test.wantAccept {
 					t.Errorf("Accept = %q, want %q", got, test.wantAccept)
-				}
-				if got := r.Header.Get("Anthropic-Version"); got != test.wantAnthropicVer {
-					t.Errorf("Anthropic-Version = %q, want %q", got, test.wantAnthropicVer)
 				}
 				_, _ = fmt.Fprint(w, responseBody)
 			}))
@@ -215,17 +204,15 @@ func TestModelsErrors(t *testing.T) {
 	}
 }
 
-func TestSendAnthropicHeadersAndUpstreamErrors(t *testing.T) {
+func TestSendHeadersAndUpstreamErrors(t *testing.T) {
 	const payload = `{"error":{"code":"free_tier_daily_limit_exceeded","message":"Daily limit"}}`
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for name, want := range map[string]string{
-			"Authorization":     "Bearer upstream-secret",
-			"X-Api-Key":         "upstream-secret",
-			"Anthropic-Version": "2024-01-01",
-			"Anthropic-Beta":    "interleaved-thinking-2025-05-14",
-		} {
-			if got := r.Header.Get(name); got != want {
-				t.Errorf("%s = %q, want %q", name, got, want)
+		if got := r.Header.Get("Authorization"); got != "Bearer upstream-secret" {
+			t.Errorf("Authorization = %q, want upstream key", got)
+		}
+		for _, name := range []string{"X-Api-Key", "Anthropic-Version", "Anthropic-Beta"} {
+			if got := r.Header.Get(name); got != "" {
+				t.Errorf("%s = %q leaked upstream", name, got)
 			}
 		}
 		if r.Header.Get("Cookie") != "" {
@@ -239,7 +226,7 @@ func TestSendAnthropicHeadersAndUpstreamErrors(t *testing.T) {
 	c := New(upstream.URL, "upstream-secret")
 	defer c.HTTP.CloseIdleConnections()
 	resp, err := c.Send(context.Background(), &backend.Request{
-		Kind:    backend.KindAnthropic,
+		Kind:    backend.KindOpenAIChat,
 		RawBody: []byte(`{}`),
 		Header: http.Header{
 			"Authorization":     {"Bearer client-key"},
@@ -279,34 +266,5 @@ func TestModelsAnonymousAndEmpty(t *testing.T) {
 				t.Fatalf("empty catalog = %#v, error %v", models, err)
 			}
 		})
-	}
-}
-
-// Open Design's origin fails any request carrying a tool_reference block
-// (Cloudflare answers an HTML 502), so native Messages requests inline them as
-// text while other wires pass through untouched.
-func TestSendInlinesToolReferences(t *testing.T) {
-	const withReference = `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"tool_reference","tool_name":"Weather"}]}]}]}`
-	var got []byte
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got, _ = io.ReadAll(r.Body)
-		_, _ = io.WriteString(w, `{}`)
-	}))
-	defer upstream.Close()
-	c := New(upstream.URL, "k")
-	defer c.HTTP.CloseIdleConnections()
-	for _, kind := range []backend.Kind{backend.KindAnthropic, backend.KindOpenAIChat} {
-		resp, err := c.Send(context.Background(), &backend.Request{Kind: kind, RawBody: []byte(withReference)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-		hasReference := bytes.Contains(got, []byte("tool_reference"))
-		if kind == backend.KindAnthropic && (hasReference || !bytes.Contains(got, []byte("Tool Weather is now available."))) {
-			t.Errorf("anthropic body not rewritten: %s", got)
-		}
-		if kind == backend.KindOpenAIChat && string(got) != withReference {
-			t.Errorf("chat body changed: %s", got)
-		}
 	}
 }

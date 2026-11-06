@@ -1,7 +1,12 @@
 // Package opendesign implements the Open Design Cloud (AMR) inference
-// backend. Open Design exposes native OpenAI Chat Completions, OpenAI
-// Responses, and Anthropic Messages APIs at amr-link.open-design.ai, plus a
-// live per-account model catalog.
+// backend. Open Design serves OpenAI Chat Completions and Responses at
+// amr-link.open-design.ai, plus a live per-account model catalog.
+//
+// Its Anthropic Messages endpoint is deliberately not used: the origin drops
+// the connection (Cloudflare answers an HTML 502) on tool_reference blocks,
+// which Claude Code sends after every tool search, and streams that hit
+// max_tokens end without message_delta/message_stop. Anthropic clients are
+// translated to Chat Completions instead, where neither problem exists.
 package opendesign
 
 import (
@@ -15,15 +20,9 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/backend/upstream"
-	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
-const (
-	defaultBaseURL = "https://amr-link.open-design.ai/v1"
-
-	// anthropicVersion is the API version header expected on /messages.
-	anthropicVersion = "2023-06-01"
-)
+const defaultBaseURL = "https://amr-link.open-design.ai/v1"
 
 type Client struct {
 	BaseURL string
@@ -53,10 +52,11 @@ func init() {
 	})
 }
 
-// Supports reports the native API shapes exposed by Open Design.
+// Supports reports the API shapes the proxy uses natively. Messages is left
+// out on purpose (see the package doc), so Anthropic clients are translated.
 func (c *Client) Supports(kind backend.Kind) bool {
 	switch kind {
-	case backend.KindAnthropic, backend.KindOpenAIChat, backend.KindOpenAIResponses:
+	case backend.KindOpenAIChat, backend.KindOpenAIResponses:
 		return true
 	default:
 		return false
@@ -65,8 +65,6 @@ func (c *Client) Supports(kind backend.Kind) bool {
 
 func endpoint(kind backend.Kind) (string, bool) {
 	switch kind {
-	case backend.KindAnthropic:
-		return "/messages", true
 	case backend.KindOpenAIChat:
 		return "/chat/completions", true
 	case backend.KindOpenAIResponses:
@@ -84,43 +82,12 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if !ok {
 		return nil, backend.Terminal(fmt.Errorf("opendesign backend does not support kind %q", req.Kind))
 	}
-	body := req.RawBody
-	if req.Kind == backend.KindAnthropic {
-		// Open Design's origin drops the connection (Cloudflare answers an
-		// HTML 502) on any tool_reference block, which Claude Code sends after
-		// every tool search; that poisons the whole session, since each retry
-		// replays the same history. Inline the references as text.
-		// A body that does not decode is forwarded as-is for the upstream
-		// to judge.
-		if rewritten, _, err := translate.InlineToolReferences(body); err == nil {
-			body = rewritten
-		}
-	}
-	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+path, body, req.Streaming)
+	httpReq, err := upstream.JSONRequest(ctx, c.BaseURL+path, req.RawBody, req.Streaming)
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	if req.Kind == backend.KindAnthropic {
-		version := req.Header.Get("Anthropic-Version")
-		if version == "" {
-			version = anthropicVersion
-		}
-		httpReq.Header.Set("Anthropic-Version", version)
-		httpReq.Header.Set("X-Api-Key", c.Key)
-		if beta := req.Header.Get("Anthropic-Beta"); beta != "" {
-			httpReq.Header.Set("Anthropic-Beta", beta)
-		}
-	}
-	resp, err := upstream.SendInference(c.HTTP, httpReq, "Open Design", c.BaseURL, req.TracePropagation)
-	if err != nil {
-		return nil, err
-	}
-	if req.Kind == backend.KindAnthropic && req.Streaming && resp.Status >= 200 && resp.Status < 300 &&
-		strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		resp.Body = newMaxTokensCompleter(resp.Body, body)
-	}
-	return resp, nil
+	return upstream.SendInference(c.HTTP, httpReq, "Open Design", c.BaseURL, req.TracePropagation)
 }
 
 func (c *Client) Models(ctx context.Context) ([]string, error) {

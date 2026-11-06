@@ -23,7 +23,7 @@ not upstream API keys.
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
 | `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
 | `anyrouter` | [AnyRouter](https://docs.anyrouter.dev/api-reference/overview) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live model catalog, including `stealth/fledge-alpha`. |
-| `opendesign` | [Open Design Cloud](https://open-design.ai/help/cloud-api/) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live per-account model catalog. |
+| `opendesign` | [Open Design Cloud](https://open-design.ai/help/cloud-api/) | Chat Completions, Responses | Native forwarding for both; Anthropic Messages clients are translated to Chat Completions (Open Design's own Messages endpoint is unreliable); live per-account model catalog. |
 | `mistral-vibe` (`mistral` also supported) | [Mistral Vibe](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles) | Chat Completions | Mistral API keys, live chat-model catalog; Messages and Responses clients use translation. `mistral-vibe` stamps `metadata.call_source="vibe_code"` so usage meters against the Vibe Code allowance. |
 | `paperinstruments` | [Paper Instruments](https://docs.paperinstruments.com/docs/ultramarine) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs (`https://api.paperinstruments.com/v1`, `pi_live_` keys); live catalog with `ultramarine-1-flash`. See [Paper Instruments](#paper-instruments). |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
@@ -465,13 +465,17 @@ Select `opendesign/<model>` in clients, or use a route alias. The backend
 fetches the live authenticated `GET /models` catalog, so the listed models are
 those your plan allows. `base_url` can replace the default API root.
 
-All three request formats use their matching Open Design endpoints. Request
-JSON (apart from the proxy's model rewrite), response bodies, and SSE events
-pass through unchanged. Each model's `metadata.context_limit` and
+Chat Completions and Responses requests use their matching Open Design
+endpoints: request JSON (apart from the proxy's model rewrite), response
+bodies, and SSE events pass through unchanged. Anthropic Messages requests are
+translated to Chat Completions rather than sent to Open Design's own
+`/messages`, whose origin fails any request carrying a `tool_reference` block
+(Claude Code sends one after every tool search) with a Cloudflare HTML 502 and
+whose streams end without `message_delta`/`message_stop` when `max_tokens`
+runs out. Each model's `metadata.context_limit` and
 `output_budget` feed the Codex catalog as its context window and output
 ceiling (`context_budget` only bounds the prompt and is not used). The proxy
-sends the key as a bearer token (plus
-`x-api-key` and the Anthropic version/beta headers on Messages). Upstream
+sends the key as a bearer token. Upstream
 `402` responses mean the plan allowance or wallet is exhausted.
 
 **Plan usage (5-hour / weekly windows).** Open Design exposes Coding Plan
@@ -496,12 +500,8 @@ and the wallet balance. `GET /api/opendesign/usage` serves the same data,
 cached for one minute. Overuse stays visible as "over limit" rather than
 being clamped. With several workspaces and no default, set `workspace_id`.
 
-Claude Code (`ANTHROPIC_BASE_URL`) and Codex (`wire_api = "responses"`) both
-work against `opendesign/<model>` through their native endpoints. Note that
-Open Design's streamed Messages endpoint omits `message_delta`/`message_stop`
-when `max_tokens` runs out mid-thinking on reasoning models; the proxy then
-surfaces an in-stream `api_error` instead of a silent truncated success, so
-give reasoning models a generous `max_tokens`.
+Claude Code (`ANTHROPIC_BASE_URL`, translated to Chat Completions) and Codex
+(`wire_api = "responses"`, native) both work against `opendesign/<model>`.
 
 ### Mistral Vibe / Mistral
 

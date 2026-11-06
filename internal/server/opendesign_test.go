@@ -62,6 +62,8 @@ func TestOpenDesignCatalogAndAlias(t *testing.T) {
 	}
 }
 
+// TestOpenDesignClientAPIs checks the OpenAI endpoints, which pass through
+// natively. Messages clients are translated; see TestOpenDesignMessagesTranslated.
 func TestOpenDesignClientAPIs(t *testing.T) {
 	for _, tc := range []struct {
 		path     string
@@ -69,7 +71,6 @@ func TestOpenDesignClientAPIs(t *testing.T) {
 		response string
 		stream   string
 	}{
-		{"/v1/messages", `{"model":"opendesign/deepseek-v4.1-flash","max_tokens":128,"messages":[{"role":"user","content":"Hello"}],"thinking":{"type":"enabled","budget_tokens":64}}`, `{"id":"msg-test","type":"message","role":"assistant","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":1},"amr_metadata":{"provider":"opencode-zen"}}`, "event: message_stop\ndata: {\"type\":\"message_stop\",\"amr_metadata\":{\"provider\":\"opencode-zen\"}}\n\n"},
 		{"/v1/chat/completions", `{"model":"opendesign/deepseek-v4.1-flash","messages":[{"role":"user","content":"Hello"}],"reasoning_effort":"high","provider":{"order":["opencode-zen"]},"tools":[{"type":"function","function":{"name":"weather","parameters":{"type":"object"}}}]}`, `{"id":"chat-test","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"amr_metadata":{"provider":"opencode-zen"}}`, "data: {\"id\":\"chat-test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"},
 		{"/v1/responses", `{"model":"opendesign/deepseek-v4.1-flash","input":"Hello","reasoning":{"effort":"high"},"store":false,"tools":[{"type":"function","name":"weather","parameters":{"type":"object"}}]}`, `{"id":"resp-test","object":"response","status":"completed","output":[],"amr_metadata":{"provider":"opencode-zen"}}`, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-test\",\"status\":\"completed\",\"output\":[]}}\n\nevent: response.amr.metadata\ndata: {\"type\":\"response.amr.metadata\",\"amr_metadata\":{\"provider\":\"opencode-zen\"}}\n\n"},
 	} {
@@ -124,5 +125,43 @@ func TestOpenDesignClientAPIs(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Open Design's own Messages endpoint fails tool_reference blocks with an
+// HTML 502 and drops message_stop at max_tokens, so Messages clients go
+// through Chat Completions: references become text and a length stop
+// becomes a clean max_tokens ending.
+func TestOpenDesignMessagesTranslated(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("upstream request = %s %s, want POST /v1/chat/completions", r.Method, r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "tool_reference") || !strings.Contains(string(body), "Tool Weather is now available.") {
+			t.Errorf("tool_reference not inlined: %s", body)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":\"c\",\"choices\":[{\"delta\":{\"reasoning_content\":\"hm\"}}]}\n\n"+
+			"data: {\"id\":\"c\",\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":16}}\n\n"+
+			"data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+	bc := config.BackendConfig{Type: "opendesign", BaseURL: upstream.URL + "/v1", APIKey: "test-token"}
+	c, err := backend.New(bc.Type, backend.Options{BaseURL: bc.BaseURL, APIKey: bc.APIKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t, []backend.Backend{c}, bc)
+	rec := postOpenAI(t, s, "/v1/messages", `{"model":"opendesign/deepseek-v4.1-flash","max_tokens":16,"stream":true,`+
+		`"thinking":{"type":"enabled","budget_tokens":8},`+
+		`"tools":[{"name":"ToolSearch","input_schema":{"type":"object"}},{"name":"Weather","defer_loading":true,"input_schema":{"type":"object"}}],`+
+		`"messages":[{"role":"user","content":"load weather"},`+
+		`{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"ToolSearch","input":{}}]},`+
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"tool_reference","tool_name":"Weather"}]}]}]}`)
+	out := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(out, `"stop_reason":"max_tokens"`) ||
+		!strings.Contains(out, "event: message_stop") || strings.Contains(out, "interrupted") {
+		t.Fatalf("status = %d, body = %s", rec.Code, out)
 	}
 }
