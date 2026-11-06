@@ -193,6 +193,52 @@ const anthropicToolErrorPrefix = "[Tool execution failed]\n"
 // OpenAI has no is_error flag. Keep the failure explicit as a text prefix;
 // content itself stays ordered and is never converted to a success result.
 func anthropicToolOutput(block anthropicBlock, responses bool) (json.RawMessage, error) {
+	output, images, err := anthropicToolOutputParts(block, responses)
+	if err != nil {
+		return nil, err
+	}
+	if len(images) > 0 {
+		// Only Chat defers images; callers that cannot place them must not
+		// silently drop them.
+		return nil, fmt.Errorf("chat tool messages cannot represent image results")
+	}
+	return output, nil
+}
+
+// chatToolImageNote stands in for images a Chat tool message cannot carry;
+// they follow in a user message after the turn's tool messages.
+func chatToolImageNote(count int) string {
+	if count == 1 {
+		return "[1 image from this tool result is attached in the next user message.]"
+	}
+	return fmt.Sprintf("[%d images from this tool result are attached in the next user message.]", count)
+}
+
+// anthropicChatToolOutput converts a tool_result for a Chat tool message.
+// Chat tool messages are text-only, so images are returned separately, as
+// user-message parts introduced by a caption naming the call; the tool
+// message keeps its text plus a note pointing at them.
+func anthropicChatToolOutput(block anthropicBlock) (json.RawMessage, []map[string]any, error) {
+	output, images, err := anthropicToolOutputParts(block, false)
+	if err != nil || len(images) == 0 {
+		return output, nil, err
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(output, &parts); err != nil {
+		return nil, nil, err
+	}
+	parts = append(parts, map[string]any{"type": "text", "text": chatToolImageNote(len(images))})
+	output, err = json.Marshal(parts)
+	if err != nil {
+		return nil, nil, err
+	}
+	user := append([]map[string]any{{"type": "text", "text": "Images returned by tool call " + block.ToolUseID + ":"}}, images...)
+	return output, user, nil
+}
+
+// anthropicToolOutputParts renders a tool_result's content. On Responses,
+// images stay in the output; on Chat they are returned as image_url parts.
+func anthropicToolOutputParts(block anthropicBlock, responses bool) (json.RawMessage, []map[string]any, error) {
 	raw := block.Content
 	if len(raw) == 0 {
 		raw = json.RawMessage(`""`)
@@ -201,17 +247,19 @@ func anthropicToolOutput(block anthropicBlock, responses bool) (json.RawMessage,
 		if block.IsError {
 			text = anthropicToolErrorPrefix + text
 		}
-		return json.Marshal(text)
+		output, err := json.Marshal(text)
+		return output, nil, err
 	}
 	blocks, err := anthropicInputBlocks(raw)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	textType := "text"
 	if responses {
 		textType = "input_text"
 	}
 	parts := make([]map[string]any, 0, len(blocks))
+	var images []map[string]any
 	if block.IsError {
 		parts = append(parts, map[string]any{"type": textType, "text": anthropicToolErrorPrefix})
 	}
@@ -220,17 +268,19 @@ func anthropicToolOutput(block anthropicBlock, responses bool) (json.RawMessage,
 		case "text":
 			parts = append(parts, map[string]any{"type": textType, "text": part.Text})
 		case "image":
-			if !responses {
-				return nil, fmt.Errorf("chat tool messages cannot represent image results")
-			}
 			url, err := anthropicImageURL(part.Source)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
+			}
+			if !responses {
+				images = append(images, map[string]any{"type": "image_url", "image_url": map[string]string{"url": url}})
+				continue
 			}
 			parts = append(parts, map[string]any{"type": "input_image", "image_url": url})
 		default:
-			return nil, fmt.Errorf("unsupported tool result content %q", part.Type)
+			return nil, nil, fmt.Errorf("unsupported tool result content %q", part.Type)
 		}
 	}
-	return json.Marshal(parts)
+	output, err := json.Marshal(parts)
+	return output, images, err
 }

@@ -246,6 +246,7 @@ func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 	var messages []openAIMessage
 	var parts []any
 	var calls []openAIToolCall
+	var deferredImages []map[string]any
 	flush := func() {
 		if len(parts) == 0 && len(calls) == 0 {
 			return
@@ -291,12 +292,24 @@ func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 				return nil, fmt.Errorf("tool_result requires a user message")
 			}
 			flush()
-			output, err := anthropicToolOutput(block, false)
+			output, images, err := anthropicChatToolOutput(block)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, openAIMessage{Role: "tool", ToolCallID: block.ToolUseID, Content: output})
+			deferredImages = append(deferredImages, images...)
 		}
+	}
+	// Tool-result images go in one user message after every tool message of
+	// the turn (parallel results must stay contiguous), ahead of any text the
+	// client sent alongside them.
+	if len(deferredImages) > 0 {
+		trailing := parts
+		parts = make([]any, 0, len(deferredImages)+len(trailing))
+		for _, image := range deferredImages {
+			parts = append(parts, image)
+		}
+		parts = append(parts, trailing...)
 	}
 	flush()
 	return messages, nil
