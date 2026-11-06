@@ -35,6 +35,8 @@ export default function ProvidersPage() {
   const grokUsage = useQuery(dashboardQueries.grokUsage(overview.data?.grokUsage.configured ?? false))
   const minimaxEnabled = overview.data?.minimaxUsage?.configured ?? false
   const minimaxUsage = useQuery(dashboardQueries.minimaxUsage(minimaxEnabled))
+  const openDesignEnabled = overview.data?.openDesignUsage?.configured ?? false
+  const openDesignUsage = useQuery(dashboardQueries.openDesignUsage(openDesignEnabled))
   const palette = useChartPalette()
   const mobile = useMediaQuery('(max-width: 48em)') ?? false
   const [search, setSearch] = useState('')
@@ -223,6 +225,9 @@ export default function ProvidersPage() {
                     minimaxUsageQuery={
                       backend.name === 'minimax-code' && minimaxEnabled ? minimaxUsage : undefined
                     }
+                    openDesignUsageQuery={
+                      backend.name === 'opendesign' && openDesignEnabled ? openDesignUsage : undefined
+                    }
                     onInspect={() => setSelectedName(backend.name)}
                   />
                 ))}
@@ -273,6 +278,9 @@ export default function ProvidersPage() {
               grokUsage={selected.backend.name === 'grok' ? grokUsage.data : undefined}
               minimaxUsageQuery={
                 selected.backend.name === 'minimax-code' && minimaxEnabled ? minimaxUsage : undefined
+              }
+              openDesignUsageQuery={
+                selected.backend.name === 'opendesign' && openDesignEnabled ? openDesignUsage : undefined
               }
               series={history.data?.series}
               seriesLoading={history.isPending}

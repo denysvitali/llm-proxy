@@ -50,6 +50,13 @@ type BackendConfig struct {
 	RetryMaxBackoff time.Duration `mapstructure:"retry_max_backoff"`
 	// ModelMetadata supplies operator-verified catalog hints for exact model IDs.
 	ModelMetadata []ModelMetadata `mapstructure:"model_metadata"`
+	// UsageKeyEnv names an environment variable holding a separate account
+	// credential used only for plan-usage reads (opendesign: the account
+	// control key). Inference never uses it.
+	UsageKeyEnv string `mapstructure:"usage_key_env"`
+	// WorkspaceID selects the account workspace whose plan usage is shown
+	// (opendesign). Empty means the account's default workspace.
+	WorkspaceID string `mapstructure:"workspace_id"`
 }
 
 // FallbackRoute is one alternate backend for a failing route: the backend
@@ -296,6 +303,14 @@ func (b BackendConfig) ResolveKey(lookup func(string) string) string {
 		}
 	}
 	return b.APIKey
+}
+
+// ResolveUsageKey returns the plan-usage credential named by UsageKeyEnv.
+func (b BackendConfig) ResolveUsageKey(lookup func(string) string) string {
+	if b.UsageKeyEnv == "" || lookup == nil {
+		return ""
+	}
+	return lookup(b.UsageKeyEnv)
 }
 
 // IsEnabled reports whether the backend participates in routing.

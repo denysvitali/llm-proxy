@@ -156,6 +156,7 @@ export interface Overview {
   grokUsage: GrokUsageMetadata
   zcodeUsage: ZcodeUsageMetadata
   minimaxUsage?: GrokUsageMetadata
+  openDesignUsage?: GrokUsageMetadata
   hasDefault: boolean
   defaultRoute: OverviewRoute
   exampleModel: string
@@ -288,6 +289,35 @@ export interface MiniMaxUsage {
   accountError?: string
   checkinError?: string
   fetchedAt: string
+}
+
+export interface OpenDesignWindow {
+  label: string
+  durationSeconds: number
+  resetMode?: string
+  usedPercent: number
+  remainingPercent: number
+  usedCredits: number
+  limitCredits: number
+  remainingCredits: number
+  usedUsd?: number
+  limitUsd?: number
+  remainingUsd?: number
+  resetsAt?: string
+}
+
+export interface OpenDesignUsage {
+  tier?: string
+  eligible: boolean
+  funding?: string
+  balanceUsd?: string
+  windows: OpenDesignWindow[]
+  fetchedAt: string
+}
+
+export async function fetchOpenDesignUsage(signal?: AbortSignal): Promise<OpenDesignUsage> {
+  const usage = await getJSON<OpenDesignUsage>('/api/opendesign/usage', 'GET', signal)
+  return { ...usage, windows: usage.windows ?? [] }
 }
 
 export interface MiniMaxCheckinResult {

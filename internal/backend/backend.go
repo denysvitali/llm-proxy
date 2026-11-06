@@ -109,3 +109,19 @@ type ModelWireOverrider interface {
 	// shape natively for this specific model.
 	SupportsModel(kind Kind, model string) bool
 }
+
+// ModelInfo is per-model capability data an upstream declares in its live
+// catalog. Zero values mean "not declared"; consumers must not guess them.
+type ModelInfo struct {
+	ContextWindow   int
+	MaxOutputTokens int
+	// InputModalities lists what the model reads ("text", "image", ...).
+	InputModalities []string
+}
+
+// ModelInfoProvider is an optional Backend refinement for providers whose
+// catalog carries model limits. Info reflects the most recent successful
+// Models call; operator model_metadata still takes precedence.
+type ModelInfoProvider interface {
+	ModelInfo(model string) (ModelInfo, bool)
+}

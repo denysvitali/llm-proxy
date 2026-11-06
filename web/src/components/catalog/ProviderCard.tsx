@@ -1,11 +1,12 @@
 import { Badge, Box, Button, Card, Group, Stack, Text, Title } from '@mantine/core'
 import { IconChevronRight, IconKey, IconUser } from '@tabler/icons-react'
 import type { UseQueryResult } from '@tanstack/react-query'
-import type { GrokUsage, MiniMaxUsage, OverviewBackend } from '../../api'
+import type { GrokUsage, MiniMaxUsage, OpenDesignUsage, OverviewBackend } from '../../api'
 import { fmtInt, plural } from '../../format'
 import UptimeBadge from '../UptimeBadge'
 import GrokUsageCompact from '../GrokUsageCompact'
 import { MiniMaxUsageCompact } from '../MiniMaxUsageCard'
+import { OpenDesignUsageCompact } from '../OpenDesignUsageCard'
 import TokenMixBar from '../TokenMixBar'
 import { pct, type ProviderAggregate, type StatsState } from './providerData'
 import { StatusDot } from './ProviderStatus'
@@ -18,6 +19,7 @@ export default function ProviderCard({
   statsState,
   grokUsage,
   minimaxUsageQuery,
+  openDesignUsageQuery,
   onInspect,
 }: {
   backend: OverviewBackend
@@ -27,6 +29,7 @@ export default function ProviderCard({
   statsState: StatsState
   grokUsage?: GrokUsage
   minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
+  openDesignUsageQuery?: UseQueryResult<OpenDesignUsage, Error>
   onInspect: () => void
 }) {
   const ready = statsState === 'ready'
@@ -85,7 +88,7 @@ export default function ProviderCard({
           Details
         </Button>
       </div>
-      {(grokUsage || minimaxUsageQuery) && (
+      {(grokUsage || minimaxUsageQuery || openDesignUsageQuery) && (
         <Stack gap="xs" className="catalog-provider-usage">
           {grokUsage && <GrokUsageCompact usage={grokUsage} />}
           {minimaxUsageQuery &&
@@ -94,6 +97,14 @@ export default function ProviderCard({
             ) : (
               <Text size="xs" c="dimmed">
                 {minimaxUsageQuery.isPending ? 'Loading MiniMax account…' : 'Usage unavailable'}
+              </Text>
+            ))}
+          {openDesignUsageQuery &&
+            (openDesignUsageQuery.data ? (
+              <OpenDesignUsageCompact usage={openDesignUsageQuery.data} />
+            ) : (
+              <Text size="xs" c="dimmed">
+                {openDesignUsageQuery.isPending ? 'Loading Open Design plan…' : 'Usage unavailable'}
               </Text>
             ))}
         </Stack>

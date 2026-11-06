@@ -156,7 +156,7 @@ func TestModels(t *testing.T) {
 			t.Errorf("Authorization = %q, want bearer token", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":[{"id":"deepseek-v4.1-flash","enabled":true,"default":true},{"id":""},{"id":"retired-model","enabled":false},{"id":"claude-haiku-5.5"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"id":"deepseek-v4.1-flash","enabled":true,"default":true,"metadata":{"context_limit":1000000,"context_budget":228000,"output_budget":128000}},{"id":""},{"id":"retired-model","enabled":false},{"id":"claude-haiku-5.5","architecture":{"input_modalities":["text","image","file"]},"metadata":{"context_limit":1000,"output_budget":5000}}]}`)
 	}))
 	defer server.Close()
 
@@ -167,6 +167,24 @@ func TestModels(t *testing.T) {
 	want := []string{"deepseek-v4.1-flash", "claude-haiku-5.5"}
 	if !reflect.DeepEqual(models, want) {
 		t.Errorf("Models() = %#v, want %#v", models, want)
+	}
+	client := New(server.URL, "secret")
+	if _, ok := client.ModelInfo("deepseek-v4.1-flash"); ok {
+		t.Fatal("ModelInfo before any catalog fetch should be unknown")
+	}
+	if _, err := client.Models(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// context_budget bounds the prompt only and must not become the window.
+	if got, _ := client.ModelInfo("deepseek-v4.1-flash"); got.ContextWindow != 1000000 || got.MaxOutputTokens != 128000 {
+		t.Errorf("deepseek info = %+v, want window 1000000 output 128000", got)
+	}
+	// An output budget larger than the window is an impossible claim: drop it.
+	if got, _ := client.ModelInfo("claude-haiku-5.5"); got.ContextWindow != 1000 || got.MaxOutputTokens != 0 || !reflect.DeepEqual(got.InputModalities, []string{"text", "image", "file"}) {
+		t.Errorf("haiku info = %+v", got)
+	}
+	if _, ok := client.ModelInfo("retired-model"); ok {
+		t.Error("disabled model should carry no info")
 	}
 }
 

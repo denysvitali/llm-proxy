@@ -154,7 +154,7 @@ func newCodexModel(id, owner string, metadata config.ModelMetadata) codexModel {
 		SupportsReasoningSummaryParameter: metadata.SupportsReasoningSummary,
 		ShellType:                         "shell_command",
 		WebSearchToolType:                 "text",
-		InputModalities:                   []string{"text"},
+		InputModalities:                   codexInputModalities(metadata.InputModalities),
 		ExperimentalSupportedTools:        []string{},
 		AdditionalSpeedTiers:              []string{},
 		ServiceTiers:                      []codexServiceTier{},
@@ -183,6 +183,7 @@ func (s *Server) codexMetadata(e modelEntry) config.ModelMetadata {
 	if b == nil {
 		return config.ModelMetadata{}
 	}
+	mergeCatalogInfo(&metadata, b, model)
 	wire, ok := resolveWire(backend.KindOpenAIResponses, b, model)
 	if !ok {
 		return config.ModelMetadata{}
@@ -201,6 +202,43 @@ func (s *Server) codexMetadata(e modelEntry) config.ModelMetadata {
 		}
 	}
 	return metadata
+}
+
+// mergeCatalogInfo fills limits the operator left unset from what the
+// backend's live catalog declares. Operator entries win field by field.
+func mergeCatalogInfo(metadata *config.ModelMetadata, b backend.Backend, model string) {
+	provider, ok := b.(backend.ModelInfoProvider)
+	if !ok {
+		return
+	}
+	info, ok := provider.ModelInfo(model)
+	if !ok {
+		return
+	}
+	if metadata.ContextWindow == nil && info.ContextWindow > 0 {
+		window := info.ContextWindow
+		metadata.ContextWindow = &window
+	}
+	if metadata.MaxOutputTokens == nil && info.MaxOutputTokens > 0 &&
+		(metadata.ContextWindow == nil || info.MaxOutputTokens <= *metadata.ContextWindow) {
+		output := info.MaxOutputTokens
+		metadata.MaxOutputTokens = &output
+	}
+	if len(metadata.InputModalities) == 0 {
+		metadata.InputModalities = info.InputModalities
+	}
+}
+
+// codexInputModalities keeps only the modalities Codex's catalog parser
+// knows; an unknown enum value would fail the whole catalog decode.
+func codexInputModalities(declared []string) []string {
+	out := []string{"text"}
+	for _, m := range declared {
+		if m == "image" {
+			return append(out, "image")
+		}
+	}
+	return out
 }
 
 // isCodexClient reports whether the request comes from a Codex process.

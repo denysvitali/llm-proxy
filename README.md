@@ -467,9 +467,34 @@ those your plan allows. `base_url` can replace the default API root.
 
 All three request formats use their matching Open Design endpoints. Request
 JSON (apart from the proxy's model rewrite), response bodies, and SSE events
-pass through unchanged. The proxy sends the key as a bearer token (plus
+pass through unchanged. Each model's `metadata.context_limit` and
+`output_budget` feed the Codex catalog as its context window and output
+ceiling (`context_budget` only bounds the prompt and is not used). The proxy
+sends the key as a bearer token (plus
 `x-api-key` and the Anthropic version/beta headers on Messages). Upstream
 `402` responses mean the plan allowance or wallet is exhausted.
+
+**Plan usage (5-hour / weekly windows).** Open Design exposes Coding Plan
+windows only through its account API (`amr-api.open-design.ai`), which takes
+the account **control key** — the desktop app's sign-in credential in
+`~/.amr/config.json` → `profiles.prod.controlKey` — not an `sk-amr` API key.
+The control key can manage the account, so it is optional and read only for
+usage; inference never uses it:
+
+```yaml
+backends:
+  - type: opendesign
+    api_key_env: OPENDESIGN_API_KEY
+    usage_key_env: OPENDESIGN_CONTROL_KEY
+    # workspace_id: ws_...   # optional; defaults to the account's default workspace
+```
+
+The dashboard then shows an Open Design card (Overview → Subscription usage,
+and on the Providers page) with each window's remaining share, dollars used
+of the limit when the account states a credits-per-USD rate, the reset time,
+and the wallet balance. `GET /api/opendesign/usage` serves the same data,
+cached for one minute. Overuse stays visible as "over limit" rather than
+being clamped. With several workspaces and no default, set `workspace_id`.
 
 Claude Code (`ANTHROPIC_BASE_URL`) and Codex (`wire_api = "responses"`) both
 work against `opendesign/<model>` through their native endpoints. Note that
@@ -1120,6 +1145,7 @@ backends:
         supports_parallel_tools: true
         supports_verbosity: false
         supports_reasoning_summary: false
+        input_modalities: [text, image]
 ```
 
 These example limits are illustrative, not provider defaults. Omit unknown
@@ -1132,6 +1158,14 @@ Freeform patch tools are not advertised. The 10,000-byte Codex tool-output
 truncation policy is a client policy, **not** a model context or compaction limit.
 Codex may apply its own defaults when limits are unknown. The ordinary OpenAI
 catalog envelope is unchanged.
+
+Backends whose live catalog declares limits (currently `opendesign`) fill in
+`context_window`, `max_output_tokens`, and image input for Codex
+automatically. Operator `model_metadata` still wins field by field, and an
+output limit larger than the window is dropped as an impossible claim.
+Claude Code cannot consume this: its gateway model discovery reads only IDs
+and display names, so set `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (or append
+`[1m]` to the model ID) for gateway models whose window is not 200K.
 
 ### Fallbacks
 
@@ -1207,6 +1241,8 @@ non-loopback listener; intentional loopback-only operation remains supported.
 | `backends[].enabled`         | —                                    | `true`                   | Set `false` to take the backend out of routing without deleting it.         |
 | `backends[].trace_propagation` | —                                 | `false`                  | Opt a trusted backend into W3C trace context on inference requests to its resolved origin. Baggage is never sent. |
 | `backends[].default_model`   | —                                    | —                        | Model used when a client model cannot be matched against this backend's catalog. |
+| `backends[].usage_key_env`   | —                                    | —                        | `opendesign` only: env var holding the account control key used solely to read plan usage. |
+| `backends[].workspace_id`    | —                                    | —                        | `opendesign` only: workspace whose plan usage is shown; empty selects the account default. |
 | `backends[].fallbacks`       | —                                    | —                        | Alternate backends (with optional model rewrites) tried when this backend fails before anything reaches the client. |
 | `backends[].retry_attempts`  | —                                    | `3` when omitted         | Extra connection-phase attempts after a transient upstream failure. An explicit `0` makes one request one upstream call. |
 | `backends[].retry_max_backoff` | —                                  | `30s`                    | Cap on a single retry pause (exponential backoff and provider `Retry-After`). |

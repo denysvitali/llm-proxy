@@ -28,6 +28,7 @@ type Server struct {
 	catalogs         catalogCache
 	grokUsageCache   *grokUsageCache
 	zcodeUsageCache  *zcodeUsageCache
+	openDesignUsage  *openDesignUsageCache // nil without a usage key
 }
 
 // Dependencies names the components required to assemble a Server. Backends
@@ -86,6 +87,7 @@ func NewWithDependencies(deps Dependencies) *Server {
 		catalogs:         newCatalogCache(),
 		grokUsageCache:   newGrokUsageCache(deps.Accounts.Grok, grokUsageBaseURL(cfg.Backends)),
 		zcodeUsageCache:  newZcodeUsageCache(deps.Accounts.ZCode),
+		openDesignUsage:  newOpenDesignUsageCache(cfg.Backends),
 	}
 }
 
@@ -107,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
 	mux.HandleFunc("GET /api/updates/sse", s.handleUpdatesSSE)
+	mux.HandleFunc("GET /api/opendesign/usage", s.handleOpenDesignUsage)
 	for _, provider := range s.accountProviders {
 		provider.registerRoutes(s, mux)
 	}

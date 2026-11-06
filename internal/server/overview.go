@@ -54,6 +54,7 @@ type overviewPage struct {
 	GrokUsage     usageMetadata     `json:"grokUsage"`
 	ZcodeUsage    usageMetadata     `json:"zcodeUsage"`
 	MiniMaxUsage  usageMetadata     `json:"minimaxUsage"`
+	OpenDesign    usageMetadata     `json:"openDesignUsage"`
 	HasDefault    bool              `json:"hasDefault"`
 	DefaultRoute  overviewRoute     `json:"defaultRoute"`
 	ExampleModel  string            `json:"exampleModel"`
@@ -116,6 +117,7 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 	page.GrokUsage = s.grokUsageMetadata(r)
 	page.ZcodeUsage = s.zcodeUsageMetadata(r)
 	page.MiniMaxUsage = s.minimaxUsageMetadata()
+	page.OpenDesign = s.openDesignUsageMetadata()
 	page.ExampleModel = exampleModel(page.Backends)
 
 	for _, name := range s.sortedRoutes() {

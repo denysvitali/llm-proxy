@@ -14,11 +14,12 @@ import {
   Title,
 } from '@mantine/core'
 import type { UseQueryResult } from '@tanstack/react-query'
-import type { GrokUsage, MiniMaxUsage, ModelStat, OverviewBackend, StatsSeries } from '../../api'
+import type { GrokUsage, MiniMaxUsage, ModelStat, OpenDesignUsage, OverviewBackend, StatsSeries } from '../../api'
 import { fmtInt, fmtSec, fmtTps } from '../../format'
 import { healthState } from '../../lib/stats'
 import GrokUsageCompact from '../GrokUsageCompact'
 import MiniMaxUsageCard from '../MiniMaxUsageCard'
+import OpenDesignUsageCard from '../OpenDesignUsageCard'
 import StatTile from '../StatTile'
 import UptimeBadge from '../UptimeBadge'
 import { TimeRangeControl } from '../TimeRangeControl'
@@ -34,6 +35,7 @@ export default function ProviderDetail({
   statsState,
   grokUsage,
   minimaxUsageQuery,
+  openDesignUsageQuery,
   series,
   seriesLoading,
   seriesError,
@@ -47,6 +49,7 @@ export default function ProviderDetail({
   statsState: StatsState
   grokUsage?: GrokUsage
   minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
+  openDesignUsageQuery?: UseQueryResult<OpenDesignUsage, Error>
   series?: StatsSeries
   seriesLoading?: boolean
   seriesError?: string
@@ -143,6 +146,7 @@ export default function ProviderDetail({
         )}
 
         {minimaxUsageQuery && <MiniMaxUsageCard query={minimaxUsageQuery} />}
+        {openDesignUsageQuery && <OpenDesignUsageCard query={openDesignUsageQuery} />}
 
         {backend.name === 'grok' && grokUsage && <GrokUsageCompact usage={grokUsage} />}
 

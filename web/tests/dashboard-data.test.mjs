@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import {
-  ApiError, claimMiniMaxCheckin, claimZcodeOffer, fetchBackendStatsSeries, fetchStats, fetchStatsSeries, fetchZcodeOffers, fetchZcodeQuota,
+  ApiError, claimMiniMaxCheckin, claimZcodeOffer, fetchBackendStatsSeries, fetchOpenDesignUsage, fetchStats, fetchStatsSeries, fetchZcodeOffers, fetchZcodeQuota,
 } from '../src/api.ts'
 import { dashboardQueries, dashboardQueryDefaults, queryKeys, refreshLiveQueries } from '../src/queries.ts'
 import { createLiveRefreshScheduler } from '../src/liveRefresh.ts'
@@ -69,6 +69,22 @@ test('usage query policy allows only one retry', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({ error: 'unavailable' }, { status: 503 }))
   await assert.rejects(queryClient(t).fetchQuery(dashboardQueries.minimaxUsage(true)), { status: 503 })
   assert.equal(fetch.mock.callCount(), 2)
+})
+
+test('Open Design usage normalizes absent windows and is a live usage query', async (t) => {
+  let body = { eligible: false, fetchedAt: '2030-01-01T00:00:00Z' }
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    assert.equal(url, '/api/opendesign/usage')
+    return Response.json(body)
+  })
+  assert.deepEqual((await fetchOpenDesignUsage()).windows, [])
+  body = { ...body, windows: null }
+  assert.deepEqual((await fetchOpenDesignUsage()).windows, [])
+  const window = { label: '5-hour', durationSeconds: 18000, usedPercent: 25, remainingPercent: 75, usedCredits: 1, limitCredits: 4, remainingCredits: 3 }
+  body = { ...body, eligible: true, windows: [window] }
+  assert.deepEqual((await fetchOpenDesignUsage()).windows, [window])
+  assert.equal(dashboardQueries.openDesignUsage(false).enabled, false)
+  assert.deepEqual(dashboardQueries.openDesignUsage(true).queryKey, queryKeys.openDesignUsage)
 })
 
 test('ZCode quota normalizes nullable collections without inventing counters', async (t) => {

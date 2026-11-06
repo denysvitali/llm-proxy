@@ -16,6 +16,8 @@ type ModelMetadata struct {
 	SupportsVerbosity        bool     `mapstructure:"supports_verbosity"`
 	SupportsParallelTools    bool     `mapstructure:"supports_parallel_tools"`
 	SupportsReasoningSummary bool     `mapstructure:"supports_reasoning_summary"`
+	// InputModalities lists what the model reads ("text", "image").
+	InputModalities []string `mapstructure:"input_modalities"`
 }
 
 func validateModelMetadata(entries []ModelMetadata) error {
@@ -47,6 +49,11 @@ func validateModelMetadata(entries []ModelMetadata) error {
 				return fmt.Errorf("model_metadata[%s]: duplicate reasoning effort %q", entry.Model, effort)
 			}
 			efforts[effort] = true
+		}
+		for _, modality := range entry.InputModalities {
+			if modality != "text" && modality != "image" {
+				return fmt.Errorf("model_metadata[%s]: unsupported input modality %q", entry.Model, modality)
+			}
 		}
 		if entry.DefaultReasoningEffort != nil && !efforts[*entry.DefaultReasoningEffort] {
 			return fmt.Errorf("model_metadata[%s]: default_reasoning_effort must be in reasoning_efforts", entry.Model)

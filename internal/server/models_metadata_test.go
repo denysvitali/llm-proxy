@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,5 +131,52 @@ func TestCodexExactModelMetadata(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type infoBackend struct {
+	fakeBackend
+	info map[string]backend.ModelInfo
+}
+
+func (b *infoBackend) ModelInfo(model string) (backend.ModelInfo, bool) {
+	info, ok := b.info[model]
+	return info, ok
+}
+
+func TestCodexCatalogDeclaredModelInfo(t *testing.T) {
+	operatorWindow := 32000
+	s := newTestServer(t, []backend.Backend{
+		&infoBackend{
+			fakeBackend: fakeBackend{name: "venice", models: []string{"declared", "overridden", "bare"}},
+			info: map[string]backend.ModelInfo{
+				"declared":   {ContextWindow: 1_000_000, MaxOutputTokens: 128_000, InputModalities: []string{"text", "image", "file"}},
+				"overridden": {ContextWindow: 1_000_000, MaxOutputTokens: 64_000},
+			},
+		},
+	}, config.BackendConfig{Type: "venice", ModelMetadata: []config.ModelMetadata{{Model: "overridden", ContextWindow: &operatorWindow}}})
+	rec, list := getCodexModels(t, s, "/v1/models")
+	if rec.Code != 200 {
+		t.Fatalf("%s", rec.Body.String())
+	}
+	got := map[string]codexModel{}
+	for _, m := range list.Models {
+		got[m.Slug] = m
+	}
+	declared := got["venice/declared"]
+	if declared.ContextWindow == nil || *declared.ContextWindow != 1_000_000 || declared.MaxOutputTokens == nil || *declared.MaxOutputTokens != 128_000 {
+		t.Errorf("declared limits lost: %+v", declared)
+	}
+	if strings.Join(declared.InputModalities, ",") != "text,image" {
+		t.Errorf("modalities = %v, want text,image (unknown values filtered)", declared.InputModalities)
+	}
+	// Operator window wins; a catalog output above that window is dropped.
+	overridden := got["venice/overridden"]
+	if overridden.ContextWindow == nil || *overridden.ContextWindow != operatorWindow || overridden.MaxOutputTokens != nil {
+		t.Errorf("operator precedence broken: window=%v output=%v", overridden.ContextWindow, overridden.MaxOutputTokens)
+	}
+	bare := got["venice/bare"]
+	if bare.ContextWindow != nil || strings.Join(bare.InputModalities, ",") != "text" {
+		t.Errorf("undeclared model got guessed metadata: %+v", bare)
 	}
 }

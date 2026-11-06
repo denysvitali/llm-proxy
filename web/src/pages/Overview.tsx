@@ -8,6 +8,7 @@ import type { ModelStat, Overview } from '../api'
 import GrokUsageCard from '../components/GrokUsageCard'
 import ZcodeUsageCard from '../components/ZcodeUsageCard'
 import MiniMaxUsageCard from '../components/MiniMaxUsageCard'
+import OpenDesignUsageCard from '../components/OpenDesignUsageCard'
 import { PageHeader } from '../components/PageHeader'
 import { PageSection } from '../components/PageSection'
 import { clampRate, fmtInt, fmtTps } from '../format'
@@ -32,6 +33,8 @@ export default function OverviewPage() {
   const grokUsageQ = useQuery(dashboardQueries.grokUsage(grokUsageEnabled))
   const zcodeQuotaQ = useQuery(dashboardQueries.zcodeQuota(zcodeUsageEnabled))
   const minimaxUsageQ = useQuery(dashboardQueries.minimaxUsage(minimaxUsageEnabled))
+  const openDesignUsageEnabled = ov?.openDesignUsage?.configured ?? false
+  const openDesignUsageQ = useQuery(dashboardQueries.openDesignUsage(openDesignUsageEnabled))
   const [range, setRange] = useState('24h')
   const seriesQ = useQuery(dashboardQueries.series(range))
   const errorsQ = useQuery(dashboardQueries.errors())
@@ -50,7 +53,9 @@ export default function OverviewPage() {
       speed: speeds.length ? (speeds.length % 2 ? speeds[middle] : (speeds[middle - 1] + speeds[middle]) / 2) : Number.NaN,
     }
   }, [models])
-  const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax'].filter(Boolean)
+  const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax', openDesignUsageEnabled && 'Open Design'].filter(Boolean)
+  // In the two-column grid, an odd last card spans the row instead of leaving a hole.
+  const usageSpan = (name: string) => usageNames.length > 1 && usageNames.length % 2 === 1 && usageNames[usageNames.length - 1] === name ? { gridColumn: '1 / -1' } : undefined
 
   const coreFailed = statsQ.isError && ovQ.isError && seriesQ.isError && errorsQ.isError && requestsQ.isError
   return (
@@ -112,9 +117,10 @@ export default function OverviewPage() {
               </Group>
             </Accordion.Control>
             <Accordion.Panel><SimpleGrid cols={{ base: 1, lg: Math.min(usageNames.length, 2) }} spacing="md" className="overview-usage-grid">
-              {grokUsageEnabled && <GrokUsageCard query={grokUsageQ} />}
-              {zcodeUsageEnabled && <ZcodeUsageCard query={zcodeQuotaQ} />}
-              {minimaxUsageEnabled && <Box style={usageNames.length === 3 ? { gridColumn: '1 / -1' } : undefined}><MiniMaxUsageCard query={minimaxUsageQ} /></Box>}
+              {grokUsageEnabled && <Box style={usageSpan('Grok')}><GrokUsageCard query={grokUsageQ} /></Box>}
+              {zcodeUsageEnabled && <Box style={usageSpan('ZCode')}><ZcodeUsageCard query={zcodeQuotaQ} /></Box>}
+              {minimaxUsageEnabled && <Box style={usageSpan('MiniMax')}><MiniMaxUsageCard query={minimaxUsageQ} /></Box>}
+              {openDesignUsageEnabled && <Box style={usageSpan('Open Design')}><OpenDesignUsageCard query={openDesignUsageQ} /></Box>}
             </SimpleGrid></Accordion.Panel>
           </Accordion.Item>
         </Accordion>}

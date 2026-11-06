@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -27,6 +28,9 @@ type Client struct {
 	BaseURL string
 	Key     string
 	HTTP    *http.Client
+
+	mu   sync.RWMutex
+	info map[string]backend.ModelInfo
 }
 
 func New(baseURL, key string) *Client {
@@ -110,34 +114,67 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	if resp.Status < 200 || resp.Status >= 300 {
 		return nil, &HTTPError{Status: resp.Status, Body: resp.Body}
 	}
-	models, err := enabledModelIDs(resp.Body)
+	models, info, err := parseCatalog(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("decode models: %w", err)
 	}
+	c.mu.Lock()
+	c.info = info
+	c.mu.Unlock()
 	return models, nil
 }
 
-// enabledModelIDs extracts catalog IDs, skipping entries the account cannot
-// use. Open Design marks each model with "enabled"; a missing flag counts as
-// enabled so a catalog without it still lists everything.
-func enabledModelIDs(data []byte) ([]string, error) {
+// ModelInfo reports the limits Open Design declared for model in the most
+// recent catalog fetch.
+func (c *Client) ModelInfo(model string) (backend.ModelInfo, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	info, ok := c.info[model]
+	return info, ok
+}
+
+// catalogEntry is one /models item. metadata.context_limit is the model's
+// window and metadata.output_budget its answer ceiling; context_budget only
+// bounds the prompt and is deliberately not used as either.
+type catalogEntry struct {
+	ID           string `json:"id"`
+	Enabled      *bool  `json:"enabled"`
+	Architecture struct {
+		InputModalities []string `json:"input_modalities"`
+	} `json:"architecture"`
+	Metadata struct {
+		ContextLimit int `json:"context_limit"`
+		OutputBudget int `json:"output_budget"`
+	} `json:"metadata"`
+}
+
+// parseCatalog extracts catalog IDs and their declared limits, skipping
+// entries the account cannot use. Open Design marks each model with
+// "enabled"; a missing flag counts as enabled.
+func parseCatalog(data []byte) ([]string, map[string]backend.ModelInfo, error) {
 	var list struct {
-		Data []struct {
-			ID      string `json:"id"`
-			Enabled *bool  `json:"enabled"`
-		} `json:"data"`
+		Data []catalogEntry `json:"data"`
 	}
 	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	models := make([]string, 0, len(list.Data))
-	for _, model := range list.Data {
-		if model.ID == "" || (model.Enabled != nil && !*model.Enabled) {
+	info := make(map[string]backend.ModelInfo, len(list.Data))
+	for _, entry := range list.Data {
+		if entry.ID == "" || (entry.Enabled != nil && !*entry.Enabled) {
 			continue
 		}
-		models = append(models, model.ID)
+		models = append(models, entry.ID)
+		mi := backend.ModelInfo{InputModalities: entry.Architecture.InputModalities}
+		if entry.Metadata.ContextLimit > 0 {
+			mi.ContextWindow = entry.Metadata.ContextLimit
+		}
+		if entry.Metadata.OutputBudget > 0 && (mi.ContextWindow == 0 || entry.Metadata.OutputBudget <= mi.ContextWindow) {
+			mi.MaxOutputTokens = entry.Metadata.OutputBudget
+		}
+		info[entry.ID] = mi
 	}
-	return models, nil
+	return models, info, nil
 }
 
 type HTTPError struct {

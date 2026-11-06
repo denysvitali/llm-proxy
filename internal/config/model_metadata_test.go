@@ -24,6 +24,8 @@ func TestModelMetadataValidation(t *testing.T) {
 		{"effort", []ModelMetadata{{Model: "m", ReasoningEfforts: []string{"max"}}}, "unsupported reasoning"},
 		{"duplicate effort", []ModelMetadata{{Model: "m", ReasoningEfforts: []string{"high", "high"}}}, "duplicate reasoning"},
 		{"default", []ModelMetadata{{Model: "m", ReasoningEfforts: []string{"medium"}, DefaultReasoningEffort: &high}}, "must be in"},
+		{"modalities", []ModelMetadata{{Model: "m", InputModalities: []string{"text", "image"}}}, ""},
+		{"modality", []ModelMetadata{{Model: "m", InputModalities: []string{"file"}}}, "unsupported input modality"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -55,6 +57,7 @@ func TestLoadModelMetadata(t *testing.T) {
         supports_verbosity: true
         supports_parallel_tools: true
         supports_reasoning_summary: true
+        input_modalities: [text, image]
       - model: vendor/exactmodel
 `))
 	cfg, err := Load()
@@ -66,7 +69,7 @@ func TestLoadModelMetadata(t *testing.T) {
 		t.Fatalf("entries = %+v", entries)
 	}
 	m := entries[0]
-	if m.Model != "Vendor/ExactModel" || m.ContextWindow == nil || *m.ContextWindow != 64000 || m.MaxOutputTokens == nil || *m.MaxOutputTokens != 8192 || m.DefaultReasoningEffort == nil || *m.DefaultReasoningEffort != "high" || len(m.ReasoningEfforts) != 2 || !m.SupportsVerbosity || !m.SupportsParallelTools || !m.SupportsReasoningSummary {
+	if m.Model != "Vendor/ExactModel" || m.ContextWindow == nil || *m.ContextWindow != 64000 || m.MaxOutputTokens == nil || *m.MaxOutputTokens != 8192 || m.DefaultReasoningEffort == nil || *m.DefaultReasoningEffort != "high" || len(m.ReasoningEfforts) != 2 || !m.SupportsVerbosity || !m.SupportsParallelTools || !m.SupportsReasoningSummary || strings.Join(m.InputModalities, ",") != "text,image" {
 		t.Fatalf("metadata = %+v", m)
 	}
 	if entries[1].Model != "vendor/exactmodel" || entries[1].ContextWindow != nil || entries[1].DefaultReasoningEffort != nil {
