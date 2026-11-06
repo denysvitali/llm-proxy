@@ -23,6 +23,7 @@ not upstream API keys.
 | --------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
 | `abliteration` | [abliteration.ai](https://abliteration.ai/docs) | Anthropic Messages, Chat Completions, Responses | All three APIs pass through natively. The live catalog contains `abliterated-model` and the large model variants. |
 | `anyrouter` | [AnyRouter](https://docs.anyrouter.dev/api-reference/overview) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live model catalog, including `stealth/fledge-alpha`. |
+| `opendesign` | [Open Design Cloud](https://open-design.ai/help/cloud-api/) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs; live per-account model catalog. |
 | `mistral-vibe` (`mistral` also supported) | [Mistral Vibe](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles) | Chat Completions | Mistral API keys, live chat-model catalog; Messages and Responses clients use translation. `mistral-vibe` stamps `metadata.call_source="vibe_code"` so usage meters against the Vibe Code allowance. |
 | `paperinstruments` | [Paper Instruments](https://docs.paperinstruments.com/docs/ultramarine) | Anthropic Messages, Chat Completions, Responses | Native forwarding for all three APIs (`https://api.paperinstruments.com/v1`, `pi_live_` keys); live catalog with `ultramarine-1-flash`. See [Paper Instruments](#paper-instruments). |
 | `apodex`   | [Apodex](https://platform.apodex.ai/docs) | Anthropic Messages, Chat Completions | Responses clients use the Chat translation path because Apodex's `/responses` compatibility is insufficient for Codex history. See [Apodex](#apodex) for the model tiers and their limits. |
@@ -439,6 +440,43 @@ Messages for non-Anthropic models. Request JSON (apart from the proxy's model
 rewrite), response bodies, and SSE events pass through unchanged, preserving
 provider routing, reasoning, tools, and AnyRouter metadata. The proxy supplies
 upstream credentials and forwards Anthropic version/beta headers for Messages.
+
+### Open Design
+
+[Open Design Cloud](https://open-design.ai/help/cloud-api/) (AMR) provides Chat
+Completions, Anthropic Messages, and OpenAI Responses at
+`https://amr-link.open-design.ai/v1`. Create an API key on the web console's
+**API keys** page (Go, Plus, Pro, or Max plan; Free is not supported). API
+calls share the plan's credits and usage windows with the desktop app:
+
+```yaml
+backends:
+  - type: opendesign
+    api_key_env: OPENDESIGN_API_KEY
+
+# Optional shorter model name for clients:
+routes:
+  flash:
+    backend: opendesign
+    model: deepseek-v4.1-flash
+```
+
+Select `opendesign/<model>` in clients, or use a route alias. The backend
+fetches the live authenticated `GET /models` catalog, so the listed models are
+those your plan allows. `base_url` can replace the default API root.
+
+All three request formats use their matching Open Design endpoints. Request
+JSON (apart from the proxy's model rewrite), response bodies, and SSE events
+pass through unchanged. The proxy sends the key as a bearer token (plus
+`x-api-key` and the Anthropic version/beta headers on Messages). Upstream
+`402` responses mean the plan allowance or wallet is exhausted.
+
+Claude Code (`ANTHROPIC_BASE_URL`) and Codex (`wire_api = "responses"`) both
+work against `opendesign/<model>` through their native endpoints. Note that
+Open Design's streamed Messages endpoint omits `message_delta`/`message_stop`
+when `max_tokens` runs out mid-thinking on reasoning models; the proxy then
+surfaces an in-stream `api_error` instead of a silent truncated success, so
+give reasoning models a generous `max_tokens`.
 
 ### Mistral Vibe / Mistral
 
@@ -1162,7 +1200,7 @@ non-loopback listener; intentional loopback-only operation remains supported.
 | `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
 | `minimax_code_auto_checkin` | `LLM_PROXY_MINIMAX_CODE_AUTO_CHECKIN` | `true` | Automatically claim eligible MiniMax daily rewards at startup and on hourly checks. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`, `paperinstruments`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `opendesign`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`, `paperinstruments`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
