@@ -28,17 +28,115 @@ type responsesEvent struct {
 	Error        *responsesErrorBody  `json:"error,omitempty"`
 }
 
-// responsesOutBlock tracks one open Anthropic content block and which
-// upstream output index it came from.
+// responsesWriterPhase is the client-facing lifecycle shared by
+// ResponsesStreamWriter and ChatResponsesStreamWriter.
+//
+//	idle         --first frame-->  streaming    (emits the opening frame)
+//	idle         --Finish/Fail-->  closedEmpty  (emits nothing)
+//	streaming    --Finish-->       closed       (emits the terminal frames)
+//	streaming    --Fail-->         closed       (emits an error frame)
+//	closedEmpty  --first frame-->  closed       (emits only the opening frame)
+//
+// The last edge mirrors the original started/finished flags: nothing in the
+// server reaches it, because Consume is never resumed after Finish or Fail.
+type responsesWriterPhase int
+
+const (
+	responsesWriterIdle responsesWriterPhase = iota
+	responsesWriterStreaming
+	responsesWriterClosedEmpty
+	responsesWriterClosed
+)
+
+func (p responsesWriterPhase) String() string {
+	switch p {
+	case responsesWriterIdle:
+		return "idle"
+	case responsesWriterStreaming:
+		return "streaming"
+	case responsesWriterClosedEmpty:
+		return "closed_empty"
+	case responsesWriterClosed:
+		return "closed"
+	default:
+		return fmt.Sprintf("responsesWriterPhase(%d)", int(p))
+	}
+}
+
+// started reports whether the opening frame was emitted.
+func (p responsesWriterPhase) started() bool {
+	return p == responsesWriterStreaming || p == responsesWriterClosed
+}
+
+// finished reports whether Finish or Fail already ran.
+func (p responsesWriterPhase) finished() bool {
+	return p == responsesWriterClosedEmpty || p == responsesWriterClosed
+}
+
+// start applies the first-frame transition and reports whether the caller
+// must emit the opening frame.
+func (p *responsesWriterPhase) start() bool {
+	switch *p {
+	case responsesWriterIdle:
+		*p = responsesWriterStreaming
+	case responsesWriterClosedEmpty:
+		*p = responsesWriterClosed
+	default:
+		return false
+	}
+	return true
+}
+
+// finish applies the Finish/Fail transition and reports whether the caller
+// must emit terminal frames; it is false when already finished or when the
+// stream never started.
+func (p *responsesWriterPhase) finish() bool {
+	switch *p {
+	case responsesWriterIdle:
+		*p = responsesWriterClosedEmpty
+	case responsesWriterStreaming:
+		*p = responsesWriterClosed
+		return true
+	}
+	return false
+}
+
+// responsesOutBlock tracks one Anthropic content block and which upstream
+// output index it came from.
 type responsesOutBlock struct {
 	index int
-	kind  string // "text", "tool_use", or "ignored"
-	open  bool
-	// sentArgDelta records that input_json bytes were already forwarded for
-	// this tool_use block (via function_call_arguments.delta or the item
-	// fallback). Partial JSON fragments concatenate client-side, so the
-	// complete arguments must never be re-emitted after any delta went out.
-	sentArgDelta bool
+	kind  string // "text" or "tool_use"; empty while ignored
+	phase responsesBlockPhase
+}
+
+// responsesBlockPhase is the lifecycle of the Anthropic block bound to one
+// upstream output index.
+//
+//	(none)   --message/function_call/text delta-->  open     (content_block_start)
+//	(none)   --reasoning item-->                    ignored  (nothing emitted)
+//	ignored  --text delta-->                        open     (replaces the ignored slot)
+//	open     --output_item.done / Finish / Fail-->  closed   (content_block_stop)
+//
+// Ignored and closed blocks swallow argument deltas and further closes.
+type responsesBlockPhase int
+
+const (
+	responsesBlockIgnored responsesBlockPhase = iota
+	responsesBlockOpen
+	responsesBlockClosed
+)
+
+func (p responsesBlockPhase) String() string {
+	switch p {
+	case responsesBlockIgnored:
+		return "ignored"
+	case responsesBlockOpen:
+		return "open"
+	case responsesBlockClosed:
+		return "closed"
+	default:
+		return fmt.Sprintf("responsesBlockPhase(%d)", int(p))
+	}
 }
 
 // ResponsesStreamWriter converts an OpenAI Responses SSE stream into the
@@ -49,8 +147,7 @@ type ResponsesStreamWriter struct {
 	model           string
 	includeThinking bool
 
-	started  bool
-	finished bool
+	phase    responsesWriterPhase
 	failure  error
 	writeErr error
 	state    responsesStreamState
@@ -128,10 +225,10 @@ func (s *ResponsesStreamWriter) Consume(body io.Reader) error {
 	if s.failure != nil {
 		return s.failure
 	}
-	if s.finished {
+	if s.phase.finished() {
 		return s.writeErr
 	}
-	if s.started {
+	if s.phase.started() {
 		return errors.New("upstream stream ended without completing the response")
 	}
 	return errors.New("upstream ended the stream without emitting any events")
@@ -162,7 +259,7 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 			})
 			s.stopReason = "tool_use"
 		case "reasoning":
-			s.blocks[event.OutputIndex] = &responsesOutBlock{kind: "ignored"}
+			s.blocks[event.OutputIndex] = &responsesOutBlock{phase: responsesBlockIgnored}
 		}
 
 	case "response.output_text.delta", "response.refusal.delta":
@@ -177,11 +274,10 @@ func (s *ResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 
 	case "response.function_call_arguments.delta":
 		block := s.blocks[event.OutputIndex]
-		if block == nil || block.kind != "tool_use" || !block.open {
+		if block == nil || block.kind != "tool_use" || block.phase != responsesBlockOpen {
 			return false
 		}
 		s.emitDelta(block.index, map[string]any{"type": "input_json_delta", "partial_json": event.Delta})
-		block.sentArgDelta = true
 
 	case "response.output_item.done":
 		s.closeUpstreamBlock(event.OutputIndex)
@@ -215,10 +311,10 @@ func (s *ResponsesStreamWriter) captureUsage(usage responsesUsage) {
 // start overrides the content_block_start payload when non-nil (used for
 // tool_use blocks carrying their id and name).
 func (s *ResponsesStreamWriter) openUpstreamBlock(outputIndex int, kind string, start map[string]any) *responsesOutBlock {
-	if block, ok := s.blocks[outputIndex]; ok && block.kind != "ignored" {
+	if block, ok := s.blocks[outputIndex]; ok && block.phase != responsesBlockIgnored {
 		return block
 	}
-	block := &responsesOutBlock{index: s.nextBlockIndex, kind: kind, open: true}
+	block := &responsesOutBlock{index: s.nextBlockIndex, kind: kind, phase: responsesBlockOpen}
 	s.nextBlockIndex++
 	s.blocks[outputIndex] = block
 
@@ -246,10 +342,10 @@ func (s *ResponsesStreamWriter) closeUpstreamBlock(outputIndex int) {
 }
 
 func (s *ResponsesStreamWriter) closeBlock(block *responsesOutBlock) {
-	if !block.open {
+	if block.phase != responsesBlockOpen {
 		return
 	}
-	block.open = false
+	block.phase = responsesBlockClosed
 	s.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": block.index})
 }
 
@@ -269,10 +365,9 @@ func (s *ResponsesStreamWriter) emitError(errType, message string) {
 }
 
 func (s *ResponsesStreamWriter) ensureStarted(id, model string) {
-	if s.started {
+	if !s.phase.start() {
 		return
 	}
-	s.started = true
 	if model != "" {
 		s.model = model
 	}
@@ -292,7 +387,7 @@ func (s *ResponsesStreamWriter) ensureStarted(id, model string) {
 func (s *ResponsesStreamWriter) closeOpenBlocks() {
 	open := make([]*responsesOutBlock, 0, len(s.blocks))
 	for _, block := range s.blocks {
-		if block.open {
+		if block.phase == responsesBlockOpen {
 			open = append(open, block)
 		}
 	}
@@ -305,11 +400,7 @@ func (s *ResponsesStreamWriter) closeOpenBlocks() {
 // Finish closes any dangling content block and ends the message. It is safe
 // to call more than once, and is a no-op when nothing was ever emitted.
 func (s *ResponsesStreamWriter) Finish() {
-	if s.finished {
-		return
-	}
-	s.finished = true
-	if !s.started {
+	if !s.phase.finish() {
 		return
 	}
 
@@ -331,11 +422,7 @@ func (s *ResponsesStreamWriter) Finish() {
 // normal completion, so a mid-stream break reaches the client as a real
 // failure it can retry rather than a truncated answer that looks finished.
 func (s *ResponsesStreamWriter) Fail(message string) {
-	if s.finished {
-		return
-	}
-	s.finished = true
-	if !s.started {
+	if !s.phase.finish() {
 		return
 	}
 	s.closeOpenBlocks()
@@ -396,16 +483,16 @@ type ChatResponsesStreamWriter struct {
 	id      string
 	created int64
 
-	started    bool
-	finished   bool
+	phase      responsesWriterPhase
 	failure    error
 	writeErr   error
 	state      responsesStreamState
-	sawTool    bool
 	stopReason string
 	usage      *chatUsageOut
-	toolIndex  map[int]int
-	nextTool   int
+	// toolIndex allocates client tool_calls indices densely in first-seen
+	// order of upstream output indices; nextTool > 0 means a tool was seen.
+	toolIndex map[int]int
+	nextTool  int
 }
 
 func ChatStreamFromResponses(writer io.Writer, flush func(), model string) *ChatResponsesStreamWriter {
@@ -461,10 +548,10 @@ func (c *ChatResponsesStreamWriter) Consume(body io.Reader) error {
 	if c.failure != nil {
 		return c.failure
 	}
-	if c.finished {
+	if c.phase.finished() {
 		return c.writeErr
 	}
-	if c.started {
+	if c.phase.started() {
 		return errors.New("upstream stream ended before the completion marker")
 	}
 	return errors.New("upstream ended the stream without emitting any events")
@@ -483,7 +570,6 @@ func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		}
 		c.ensureStarted("", "")
 		index := c.toolFor(event.OutputIndex)
-		c.sawTool = true
 		c.emitChunk(chatDeltaOut{ToolCalls: []chatChunkToolCall{{
 			Index:    index,
 			ID:       event.Item.CallID,
@@ -504,7 +590,6 @@ func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 
 	case "response.function_call_arguments.delta":
 		index := c.toolFor(event.OutputIndex)
-		c.sawTool = true
 		c.emitChunk(chatDeltaOut{ToolCalls: []chatChunkToolCall{{
 			Index:    index,
 			Function: chatFuncOut{Arguments: event.Delta},
@@ -514,7 +599,7 @@ func (c *ChatResponsesStreamWriter) consumeEvent(event responsesEvent) bool {
 		if event.Response != nil {
 			usage := responsesUsageToChat(event.Response.Usage)
 			c.usage = &usage
-			c.stopReason, _ = responsesFinish(*event.Response, c.sawTool)
+			c.stopReason, _ = responsesFinish(*event.Response, c.sawTool())
 			c.ensureStarted(event.Response.ID, event.Response.Model)
 		}
 		c.Finish()
@@ -536,11 +621,13 @@ func (c *ChatResponsesStreamWriter) toolFor(outputIndex int) int {
 	return index
 }
 
+// sawTool reports whether any tool call was forwarded to the client.
+func (c *ChatResponsesStreamWriter) sawTool() bool { return c.nextTool > 0 }
+
 func (c *ChatResponsesStreamWriter) ensureStarted(id, model string) {
-	if c.started {
+	if !c.phase.start() {
 		return
 	}
-	c.started = true
 	if id != "" {
 		c.id = id
 	}
@@ -551,7 +638,7 @@ func (c *ChatResponsesStreamWriter) ensureStarted(id, model string) {
 }
 
 func (c *ChatResponsesStreamWriter) emitChunk(delta chatDeltaOut, finishReason *string) {
-	if !c.started {
+	if !c.phase.started() {
 		c.ensureStarted("", "")
 	}
 	c.writeData(chatChunk{
@@ -572,17 +659,13 @@ func (c *ChatResponsesStreamWriter) writeData(payload any) {
 // Finish emits the terminating finish_reason chunk and [DONE]. It is safe to
 // call more than once, and emits nothing when no content was streamed.
 func (c *ChatResponsesStreamWriter) Finish() {
-	if c.finished {
-		return
-	}
-	c.finished = true
-	if !c.started {
+	if !c.phase.finish() {
 		return
 	}
 
 	reason := c.stopReason
 	if reason == "" {
-		if c.sawTool {
+		if c.sawTool() {
 			reason = "tool_calls"
 		} else {
 			reason = "stop"
@@ -605,11 +688,7 @@ func (c *ChatResponsesStreamWriter) Finish() {
 // finish_reason chunk and [DONE], so a mid-stream break reaches the client
 // as a real failure rather than a completed turn.
 func (c *ChatResponsesStreamWriter) Fail(message string) {
-	if c.finished {
-		return
-	}
-	c.finished = true
-	if !c.started {
+	if !c.phase.finish() {
 		return
 	}
 	errType := "api_error"

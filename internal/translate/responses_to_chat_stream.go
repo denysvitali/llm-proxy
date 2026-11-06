@@ -17,7 +17,76 @@ type streamedResponseItem struct {
 	namespace string
 	text      strings.Builder
 	args      strings.Builder
-	closed    bool
+	phase     streamedItemPhase
+}
+
+// streamedItemPhase is the lifecycle of one emitted Responses output item.
+//
+//	open  --closeResponseItem-->  closed  (emits the *.done events)
+//
+// Text and argument deltas are dropped once closed; closing twice is a no-op.
+type streamedItemPhase int
+
+const (
+	streamedItemOpen streamedItemPhase = iota
+	streamedItemClosed
+)
+
+func (p streamedItemPhase) String() string {
+	switch p {
+	case streamedItemOpen:
+		return "open"
+	case streamedItemClosed:
+		return "closed"
+	default:
+		return fmt.Sprintf("streamedItemPhase(%d)", int(p))
+	}
+}
+
+// accepts reports whether the item is present and still takes deltas.
+func (item *streamedResponseItem) accepts() bool {
+	return item != nil && item.phase == streamedItemOpen
+}
+
+// close applies the open -> closed transition and reports whether it happened.
+func (item *streamedResponseItem) close() bool {
+	if !item.accepts() {
+		return false
+	}
+	item.phase = streamedItemClosed
+	return true
+}
+
+// responsesItemStreamPhase is the lifecycle of the outbound Responses stream.
+//
+//	idle      --ensureCreated-->  streaming  (response.created + in_progress)
+//	idle      --Finish-->         finished   (created first, then completed)
+//	streaming --Finish-->         finished   (response.completed/incomplete)
+//	streaming --Fail-->           finished   (response.failed)
+//	idle      --Fail-->           idle       (nothing emitted)
+//
+// The phase is derived from the started/finished fields, which
+// responses_anthropic.go reads directly; markCreated and markFinished are the
+// only writers. Sequence numbers increase by one per emitted frame, in emit.
+type responsesItemStreamPhase int
+
+const (
+	responsesItemStreamIdle responsesItemStreamPhase = iota
+	responsesItemStreamStreaming
+	responsesItemStreamFinished
+)
+
+func (p responsesItemStreamPhase) String() string {
+	switch p {
+	case responsesItemStreamIdle:
+		return "idle"
+	case responsesItemStreamStreaming:
+		return "streaming"
+	case responsesItemStreamFinished:
+		return "finished"
+	default:
+		return fmt.Sprintf("responsesItemStreamPhase(%d)", int(p))
+	}
 }
 
 // responsesItemStream owns stable identity, complete content lifecycles and
@@ -33,7 +102,7 @@ type responsesItemStream struct {
 	started    bool
 	finished   bool
 	writeErr   error
-	sequence   int
+	sequence   int // next sequence_number; only emit advances it
 	incomplete bool
 	reason     string
 	usage      responsesUsage
@@ -41,8 +110,41 @@ type responsesItemStream struct {
 	current    *streamedResponseItem
 }
 
+func (s *responsesItemStream) phase() responsesItemStreamPhase {
+	switch {
+	case s.finished:
+		return responsesItemStreamFinished
+	case s.started:
+		return responsesItemStreamStreaming
+	default:
+		return responsesItemStreamIdle
+	}
+}
+
+// markCreated applies idle -> streaming and reports whether it happened.
+func (s *responsesItemStream) markCreated() bool {
+	if s.phase() != responsesItemStreamIdle {
+		return false
+	}
+	s.started = true
+	return true
+}
+
+// markFinished applies streaming -> finished. Callers create the response
+// first, so a finished stream has always started.
+func (s *responsesItemStream) markFinished() {
+	if s.phase() == responsesItemStreamStreaming {
+		s.finished = true
+	}
+}
+
+// accepting reports whether new items and deltas may still be emitted.
+func (s *responsesItemStream) accepting() bool {
+	return s.phase() != responsesItemStreamFinished && s.writeErr == nil
+}
+
 func (s *responsesItemStream) addItem(kind, callID, name, namespace string) *streamedResponseItem {
-	if s.finished || s.writeErr != nil {
+	if !s.accepting() {
 		return nil
 	}
 	s.ensureCreated()
@@ -62,10 +164,10 @@ func (s *responsesItemStream) addItem(kind, callID, name, namespace string) *str
 }
 
 func (s *responsesItemStream) openItem(kind string) bool {
-	if s.finished || s.writeErr != nil {
+	if !s.accepting() {
 		return false
 	}
-	if s.current != nil && !s.current.closed && s.current.kind == kind && kind != "function_call" {
+	if s.current.accepts() && s.current.kind == kind && kind != "function_call" {
 		return true
 	}
 	s.closeItem()
@@ -121,10 +223,9 @@ func (s *responsesItemStream) itemPayload(item *streamedResponseItem, done bool)
 }
 
 func (s *responsesItemStream) closeResponseItem(item *streamedResponseItem) {
-	if item == nil || item.closed {
+	if !item.close() {
 		return
 	}
-	item.closed = true
 	payload := map[string]any{"item_id": item.id, "output_index": item.index}
 	switch item.kind {
 	case "function_call":
@@ -154,7 +255,7 @@ func (s *responsesItemStream) closeResponseItem(item *streamedResponseItem) {
 }
 
 func (s *responsesItemStream) appendItemText(item *streamedResponseItem, delta string) {
-	if item == nil || item.closed {
+	if !item.accepts() {
 		return
 	}
 	item.text.WriteString(delta)
@@ -172,7 +273,7 @@ func (s *responsesItemStream) appendText(delta string)      { s.appendItemText(s
 func (s *responsesItemStream) appendReasoning(delta string) { s.appendItemText(s.current, delta) }
 
 func (s *responsesItemStream) appendItemArgs(item *streamedResponseItem, delta string) {
-	if item == nil || item.closed {
+	if !item.accepts() {
 		return
 	}
 	item.args.WriteString(delta)
@@ -211,27 +312,27 @@ func (s *responsesItemStream) envelope(status string) map[string]any {
 }
 
 func (s *responsesItemStream) ensureCreated() {
-	if s.started {
+	if s.phase() != responsesItemStreamIdle {
 		return
 	}
 	s.id = responseID(s.id, "resp_")
 	if s.created == 0 {
 		s.created = nowUnix()
 	}
-	s.started = true
+	s.markCreated()
 	s.emit("response.created", map[string]any{"response": s.envelope("in_progress")})
 	s.emit("response.in_progress", map[string]any{"response": s.envelope("in_progress")})
 }
 
 func (s *responsesItemStream) Finish() {
-	if s.finished {
+	if s.phase() == responsesItemStreamFinished {
 		return
 	}
 	s.ensureCreated()
 	for _, item := range s.items {
 		s.closeResponseItem(item)
 	}
-	s.finished = true
+	s.markFinished()
 	status, event := "completed", "response.completed"
 	if s.incomplete {
 		status, event = "incomplete", "response.incomplete"
@@ -240,14 +341,14 @@ func (s *responsesItemStream) Finish() {
 }
 
 func (s *responsesItemStream) Fail(message string) {
-	if s.finished || !s.started {
+	if s.phase() != responsesItemStreamStreaming {
 		return
 	}
 	s.incomplete = true
 	for _, item := range s.items {
 		s.closeResponseItem(item)
 	}
-	s.finished = true
+	s.markFinished()
 	response := s.envelope("failed")
 	response["incomplete_details"] = nil
 	response["error"] = map[string]any{"code": "api_error", "message": message}
@@ -270,10 +371,45 @@ type ResponsesStreamFromChatWriter struct {
 	namespaces map[string]responseNamespaceTool
 	tools      map[int]*streamedResponseItem
 	callIDs    responseCallIDs
-	// emptyContent records a present-but-empty content field; Finish emits an
-	// empty message for it when no text arrived, matching the buffered path.
-	emptyContent, sawContent bool
+	content    responsesFromChatContent
 }
+
+// responsesFromChatContent records what assistant content the upstream sent.
+//
+//	none       --empty content field-->      emptyOnly
+//	none       --text content opened-->      text
+//	emptyOnly  --text content opened-->      text
+//	text       --any content-->              text
+//
+// Finish emits an empty message only in emptyOnly, matching the buffered path.
+type responsesFromChatContent int
+
+const (
+	responsesFromChatContentNone responsesFromChatContent = iota
+	responsesFromChatContentEmptyOnly
+	responsesFromChatContentText
+)
+
+func (c responsesFromChatContent) String() string {
+	switch c {
+	case responsesFromChatContentNone:
+		return "none"
+	case responsesFromChatContentEmptyOnly:
+		return "empty_only"
+	case responsesFromChatContentText:
+		return "text"
+	default:
+		return fmt.Sprintf("responsesFromChatContent(%d)", int(c))
+	}
+}
+
+func (c *responsesFromChatContent) sawEmpty() {
+	if *c == responsesFromChatContentNone {
+		*c = responsesFromChatContentEmptyOnly
+	}
+}
+
+func (c *responsesFromChatContent) sawText() { *c = responsesFromChatContentText }
 
 func NewResponsesStreamFromChat(writer io.Writer, flush func(), model string) *ResponsesStreamFromChatWriter {
 	return newResponsesStreamFromChat(writer, flush, model, nil)
@@ -294,7 +430,7 @@ func newResponsesStreamFromChat(writer io.Writer, flush func(), model string, na
 func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		if string(payload) == "[DONE]" {
-			if !s.stream.started {
+			if s.stream.phase() == responsesItemStreamIdle {
 				return false, errors.New("upstream stream ended without emitting any events")
 			}
 			s.Finish()
@@ -307,7 +443,7 @@ func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
 			return false, chatChunkError(chunk.Error)
 		}
-		if !s.stream.started {
+		if s.stream.phase() == responsesItemStreamIdle {
 			if chunk.ID != "" {
 				s.stream.id = chunk.ID
 			}
@@ -326,10 +462,10 @@ func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if s.stream.finished {
+	switch s.stream.phase() {
+	case responsesItemStreamFinished:
 		return s.stream.writeErr
-	}
-	if s.stream.started {
+	case responsesItemStreamStreaming:
 		return errors.New("upstream stream ended before the completion marker")
 	}
 	return errors.New("upstream stream ended without emitting any events")
@@ -373,10 +509,10 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 		// every reasoning delta; opening items for them would interleave empty
 		// messages between reasoning fragments.
 		if delta.Content != nil && *delta.Content == "" {
-			s.emptyContent = true
+			s.content.sawEmpty()
 			s.stream.ensureCreated()
 		} else if delta.Content != nil && s.stream.openItem("message") {
-			s.sawContent = true
+			s.content.sawText()
 			s.stream.appendText(*delta.Content)
 		}
 		if delta.Refusal != nil && *delta.Refusal != "" && s.stream.openItem("refusal") {
@@ -428,7 +564,7 @@ func chatChunkError(raw json.RawMessage) error {
 }
 
 func (s *ResponsesStreamFromChatWriter) Finish() {
-	if s.emptyContent && !s.sawContent && s.stream.openItem("message") {
+	if s.content == responsesFromChatContentEmptyOnly && s.stream.openItem("message") {
 		s.stream.appendText("")
 	}
 	s.stream.Finish()

@@ -6,12 +6,85 @@ import (
 	"fmt"
 )
 
+// anthropicStreamMessagePhase is the message-level lifecycle of an upstream
+// Messages stream as seen by anthropicStreamState.
+//
+//	awaiting  --message_start-->            streaming
+//	streaming --message_delta(stop_reason)--> stopped
+//	stopped   --message_delta(stop_reason)--> stopped
+//
+// Only ping (and error, which always fails) is legal while awaiting. A second
+// message_start is rejected from any later phase, and content_block_start or
+// content_block_delta is rejected once stopped. message_stop does not change
+// the phase: it is terminal for the consuming writer, which stops reading.
+type anthropicStreamMessagePhase uint8
+
+const (
+	anthropicStreamAwaitingStart anthropicStreamMessagePhase = iota
+	anthropicStreamStreaming
+	anthropicStreamStopped
+)
+
+func (p anthropicStreamMessagePhase) String() string {
+	switch p {
+	case anthropicStreamAwaitingStart:
+		return "awaiting_message_start"
+	case anthropicStreamStreaming:
+		return "streaming"
+	case anthropicStreamStopped:
+		return "stopped"
+	}
+	return fmt.Sprintf("anthropicStreamMessagePhase(%d)", uint8(p))
+}
+
+// anthropicStreamBlockPhase is the lifecycle of one upstream content block.
+//
+//	open      --input_json_delta--> open_args
+//	open      --content_block_stop--> closed
+//	open_args --content_block_stop--> closed
+//
+// Deltas are legal only while open or open_args; a repeated stop on a closed
+// block is ignored. A tool block closing while still open (no streamed
+// arguments) replays its start-time input as one synthetic delta.
+type anthropicStreamBlockPhase uint8
+
+const (
+	anthropicStreamBlockOpen anthropicStreamBlockPhase = iota
+	anthropicStreamBlockOpenArgs
+	anthropicStreamBlockClosed
+)
+
+func (p anthropicStreamBlockPhase) String() string {
+	switch p {
+	case anthropicStreamBlockOpen:
+		return "open"
+	case anthropicStreamBlockOpenArgs:
+		return "open_args"
+	case anthropicStreamBlockClosed:
+		return "closed"
+	}
+	return fmt.Sprintf("anthropicStreamBlockPhase(%d)", uint8(p))
+}
+
 type anthropicStreamState struct {
-	blocks  map[int]*anthropicStreamBlock
-	calls   responseCallIDs
-	started bool
-	stopped bool
-	bytes   int
+	blocks map[int]*anthropicStreamBlock
+	calls  responseCallIDs
+	phase  anthropicStreamMessagePhase
+	bytes  int
+}
+
+// begin moves awaiting -> streaming on the single legal message_start.
+func (s *anthropicStreamState) begin() error {
+	if s.phase != anthropicStreamAwaitingStart {
+		return errors.New("upstream requires one message_start")
+	}
+	s.phase = anthropicStreamStreaming
+	return nil
+}
+
+// stop records a stop_reason; it is legal (and idempotent) once streaming.
+func (s *anthropicStreamState) stop() {
+	s.phase = anthropicStreamStopped
 }
 
 type anthropicStreamBlock struct {
@@ -20,8 +93,29 @@ type anthropicStreamBlock struct {
 	sourceID string
 	name     string
 	input    json.RawMessage
-	args     bool
-	closed   bool
+	phase    anthropicStreamBlockPhase
+}
+
+func (b *anthropicStreamBlock) open() bool {
+	return b.phase != anthropicStreamBlockClosed
+}
+
+// sawArgs moves open -> open_args; it is a no-op once arguments were seen.
+func (b *anthropicStreamBlock) sawArgs() {
+	if b.phase == anthropicStreamBlockOpen {
+		b.phase = anthropicStreamBlockOpenArgs
+	}
+}
+
+// close moves an open block to closed and reports whether the transition
+// happened and whether it closed without streamed arguments.
+func (b *anthropicStreamBlock) close() (closed, withoutArgs bool) {
+	if b.phase == anthropicStreamBlockClosed {
+		return false, false
+	}
+	withoutArgs = b.phase == anthropicStreamBlockOpen
+	b.phase = anthropicStreamBlockClosed
+	return true, withoutArgs
 }
 
 func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, error) {
@@ -44,18 +138,20 @@ func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, 
 		s.blocks = map[int]*anthropicStreamBlock{}
 		s.calls = responseCallIDs{}
 	}
-	if event.Type != "message_start" && event.Type != "ping" && !s.started {
+	if event.Type != "message_start" && event.Type != "ping" && s.phase == anthropicStreamAwaitingStart {
 		return nil, errors.New("upstream event requires message_start")
 	}
-	if s.stopped && (event.Type == "content_block_start" || event.Type == "content_block_delta") {
+	if s.phase == anthropicStreamStopped && (event.Type == "content_block_start" || event.Type == "content_block_delta") {
 		return nil, errors.New("upstream content arrived after stop_reason")
 	}
 	switch event.Type {
 	case "message_start":
-		if s.started || event.Message == nil {
+		if event.Message == nil {
 			return nil, errors.New("upstream requires one message_start")
 		}
-		s.started = true
+		if err := s.begin(); err != nil {
+			return nil, err
+		}
 	case "content_block_start":
 		if event.ContentBlock == nil {
 			return nil, errors.New("upstream block start requires content")
@@ -63,7 +159,7 @@ func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, 
 		block := event.ContentBlock
 		sourceID := block.ID
 		if old := s.blocks[event.Index]; old != nil {
-			if old.closed || old.kind != block.Type || old.sourceID != sourceID || old.name != block.Name {
+			if !old.open() || old.kind != block.Type || old.sourceID != sourceID || old.name != block.Name {
 				return nil, errors.New("upstream changed block identity")
 			}
 			return nil, nil
@@ -96,7 +192,7 @@ func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, 
 		}
 	case "content_block_delta":
 		block := s.blocks[event.Index]
-		if block == nil || block.closed || event.Delta == nil {
+		if block == nil || !block.open() || event.Delta == nil {
 			return nil, errors.New("upstream delta requires an open block")
 		}
 		delta := event.Delta
@@ -111,18 +207,18 @@ func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, 
 			return nil, err
 		}
 		if delta.Type == "input_json_delta" {
-			block.args = true
+			block.sawArgs()
 		}
 	case "content_block_stop":
 		block := s.blocks[event.Index]
 		if block == nil {
 			return nil, errors.New("upstream stopped an unknown block")
 		}
-		if block.closed {
+		closed, withoutArgs := block.close()
+		if !closed {
 			return nil, nil
 		}
-		block.closed = true
-		if block.kind == "tool_use" && !block.args && len(block.input) > 0 {
+		if block.kind == "tool_use" && withoutArgs && len(block.input) > 0 {
 			fallback := anthropicEvent{Type: "content_block_delta", Index: event.Index, Delta: &anthropicStreamDelta{Type: "input_json_delta", PartialJSON: string(block.input)}}
 			return []anthropicEvent{fallback, event}, nil
 		}
@@ -132,11 +228,13 @@ func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, 
 				return nil, err
 			}
 			if event.Delta.StopReason != "" {
-				s.stopped = true
+				s.stop()
 			}
 		}
 	case "message_stop":
-		if !s.started {
+		// Unreachable: the awaiting-phase guard above already reports
+		// "upstream event requires message_start" for a bare message_stop.
+		if s.phase == anthropicStreamAwaitingStart {
 			return nil, errors.New("upstream stopped without message_start")
 		}
 		// A message_delta carrying stop_reason and content_block_stop for every

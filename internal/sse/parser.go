@@ -20,14 +20,89 @@ type Event struct {
 // Decoder accepts arbitrarily fragmented reads. The callback's data is valid
 // only during the call. A true callback result stops decoding immediately.
 type Decoder struct {
-	line      []byte
-	event     Event
-	frameSize int
-	skipLF    bool
-	started   bool
-	stopped   bool
-	failure   error
-	decode    func(Event) (bool, error)
+	line       []byte
+	event      Event
+	frameSize  int
+	terminator lineTerminator
+	phase      decoderPhase
+	failure    error
+	decode     func(Event) (bool, error)
+}
+
+// decoderPhase is the Decoder lifecycle.
+//
+//	awaitingFirstLine --first line ends-->         streaming (a leading BOM is stripped)
+//	awaitingFirstLine, streaming --callback stop--> stopped   (a callback error is kept too)
+//	awaitingFirstLine, streaming --error-->         failed    (oversized frame or callback error)
+//
+// stopped and failed are terminal: Feed and End return the recorded result.
+// End dispatches a pending event without recording its result, as before.
+type decoderPhase int
+
+const (
+	decoderAwaitingFirstLine decoderPhase = iota
+	decoderStreaming
+	decoderStopped
+	decoderFailed
+)
+
+func (p decoderPhase) String() string {
+	switch p {
+	case decoderAwaitingFirstLine:
+		return "awaiting_first_line"
+	case decoderStreaming:
+		return "streaming"
+	case decoderStopped:
+		return "stopped"
+	case decoderFailed:
+		return "failed"
+	default:
+		return fmt.Sprintf("decoderPhase(%d)", int(p))
+	}
+}
+
+func (p decoderPhase) terminal() bool { return p == decoderStopped || p == decoderFailed }
+
+// result returns what Feed and End report once the decoder is terminal.
+func (d *Decoder) result() (bool, error) { return d.phase == decoderStopped, d.failure }
+
+// settle applies a callback result: stop wins over an error, which still
+// travels with it; neither leaves the phase unchanged.
+func (d *Decoder) settle(stop bool, err error) {
+	switch {
+	case stop:
+		d.phase, d.failure = decoderStopped, err
+	case err != nil:
+		d.phase, d.failure = decoderFailed, err
+	}
+}
+
+func (d *Decoder) fail(err error) (bool, error) {
+	d.phase, d.failure = decoderFailed, err
+	return d.result()
+}
+
+// lineTerminator tracks CRLF folding across reads.
+//
+//	none --CR--> afterCR   (the line ends at the CR)
+//	afterCR --LF--> none   (the LF is consumed as part of the CRLF, not a new line)
+//	afterCR --other byte--> none, then that byte is processed normally
+type lineTerminator int
+
+const (
+	lineTerminatorNone lineTerminator = iota
+	lineTerminatorAfterCR
+)
+
+func (t lineTerminator) String() string {
+	switch t {
+	case lineTerminatorNone:
+		return "none"
+	case lineTerminatorAfterCR:
+		return "after_cr"
+	default:
+		return fmt.Sprintf("lineTerminator(%d)", int(t))
+	}
 }
 
 func NewDecoder(decode func(Event) (bool, error)) *Decoder {
@@ -35,18 +110,17 @@ func NewDecoder(decode func(Event) (bool, error)) *Decoder {
 }
 
 func (d *Decoder) Feed(p []byte) (bool, error) {
-	if d.failure != nil || d.stopped {
-		return d.stopped, d.failure
+	if d.phase.terminal() {
+		return d.result()
 	}
 	for _, b := range p {
-		if d.skipLF {
-			d.skipLF = false
+		if d.terminator == lineTerminatorAfterCR {
+			d.terminator = lineTerminatorNone
 			if b == '\n' {
 				if d.frameSize > 0 {
 					d.frameSize++
 					if d.frameSize > MaxFrameSize {
-						d.failure = fmt.Errorf("SSE frame exceeds %d bytes", MaxFrameSize)
-						return false, d.failure
+						return d.fail(fmt.Errorf("SSE frame exceeds %d bytes", MaxFrameSize))
 					}
 				}
 				continue
@@ -54,15 +128,16 @@ func (d *Decoder) Feed(p []byte) (bool, error) {
 		}
 		d.frameSize++
 		if d.frameSize > MaxFrameSize {
-			d.failure = fmt.Errorf("SSE frame exceeds %d bytes", MaxFrameSize)
-			return false, d.failure
+			return d.fail(fmt.Errorf("SSE frame exceeds %d bytes", MaxFrameSize))
 		}
 		if b == '\r' || b == '\n' {
-			d.skipLF = b == '\r'
-			d.stopped, d.failure = d.finishLine()
+			if b == '\r' {
+				d.terminator = lineTerminatorAfterCR
+			}
+			d.settle(d.finishLine())
 			d.line = d.line[:0]
-			if d.stopped || d.failure != nil {
-				return d.stopped, d.failure
+			if d.phase.terminal() {
+				return d.result()
 			}
 		} else {
 			d.line = append(d.line, b)
@@ -78,19 +153,19 @@ func (d *Decoder) Feed(p []byte) (bool, error) {
 // pending events are dispatched so a final [DONE], usage chunk, or message_stop
 // still counts; a truncated last line without its newline stays discarded.
 func (d *Decoder) End() (bool, error) {
-	if d.failure != nil {
-		return d.stopped, d.failure
+	if d.phase.terminal() {
+		return d.result()
 	}
-	if d.stopped || len(d.line) > 0 || !d.event.HasData || len(d.event.Data) == 0 {
-		return d.stopped, nil
+	if len(d.line) > 0 || !d.event.HasData || len(d.event.Data) == 0 {
+		return false, nil
 	}
 	return d.finishLine()
 }
 
 func (d *Decoder) finishLine() (bool, error) {
 	line := d.line
-	if !d.started {
-		d.started = true
+	if d.phase == decoderAwaitingFirstLine {
+		d.phase = decoderStreaming
 		line = bytes.TrimPrefix(line, []byte{0xef, 0xbb, 0xbf})
 	}
 	if len(line) == 0 {

@@ -25,6 +25,66 @@ type chatAnthropicTool struct {
 	name  string
 }
 
+// chatToAnthropicPhase is the message lifecycle of StreamWriter.
+//
+//	pending --first accepted chunk (ensureStarted)--> open
+//	open    --Finish--> finished
+//	open    --Fail-->   failed
+//
+// Finish and Fail act only from open: neither emits anything while pending,
+// and both are no-ops once terminal. ensureStarted acts only from pending, so
+// a terminal writer never reopens.
+type chatToAnthropicPhase uint8
+
+const (
+	chatToAnthropicPending chatToAnthropicPhase = iota
+	chatToAnthropicOpen
+	chatToAnthropicFinished
+	chatToAnthropicFailed
+)
+
+func (p chatToAnthropicPhase) String() string {
+	switch p {
+	case chatToAnthropicPending:
+		return "pending"
+	case chatToAnthropicOpen:
+		return "open"
+	case chatToAnthropicFinished:
+		return "finished"
+	case chatToAnthropicFailed:
+		return "failed"
+	}
+	return fmt.Sprintf("chatToAnthropicPhase(%d)", uint8(p))
+}
+
+// chatToAnthropicTextPhase tracks StreamWriter's single text block.
+//
+//	none --text/refusal/content delta--> open
+//	open --closeBlocks-->                none
+//
+// Once open the block keeps its index; later text deltas append to it even
+// after tool blocks have started.
+type chatToAnthropicTextPhase uint8
+
+const (
+	chatToAnthropicTextNone chatToAnthropicTextPhase = iota
+	chatToAnthropicTextOpen
+)
+
+func (p chatToAnthropicTextPhase) String() string {
+	switch p {
+	case chatToAnthropicTextNone:
+		return "none"
+	case chatToAnthropicTextOpen:
+		return "open"
+	}
+	return fmt.Sprintf("chatToAnthropicTextPhase(%d)", uint8(p))
+}
+
+// chatToAnthropicRefusal is the sticky stop reason set by a non-empty refusal
+// delta; once recorded, a later finish_reason cannot replace it.
+const chatToAnthropicRefusal = "refusal"
+
 // StreamWriter turns an OpenAI chat-completions SSE stream into the Anthropic
 // Messages event stream clients expect.
 type StreamWriter struct {
@@ -33,14 +93,13 @@ type StreamWriter struct {
 	model           string
 	includeThinking bool
 
-	started    bool
-	finished   bool
+	phase      chatToAnthropicPhase
 	writeErr   error
 	failure    error
-	blockOpen  bool
-	blockIndex int
-	textIndex  int
-	tools      map[int]*chatAnthropicTool
+	textPhase  chatToAnthropicTextPhase
+	blockIndex int                        // next Anthropic content block index
+	textIndex  int                        // valid while textPhase is open
+	tools      map[int]*chatAnthropicTool // upstream index -> started tool block, open until closeBlocks
 	toolIDs    responseCallIDs
 	stopReason string
 	usage      AnthropicUsage
@@ -57,7 +116,7 @@ func (s *StreamWriter) Consume(body io.Reader) error {
 	terminal := false
 	err := scanSSE(body, func(payload []byte) (bool, error) {
 		if string(payload) == "[DONE]" {
-			if !s.started {
+			if s.phase == chatToAnthropicPending {
 				return false, errors.New("upstream stream ended without emitting any events")
 			}
 			s.Finish()
@@ -99,7 +158,7 @@ func (s *StreamWriter) Consume(body io.Reader) error {
 	if terminal {
 		return s.writeErr
 	}
-	if s.started {
+	if s.phase != chatToAnthropicPending {
 		return errors.New("upstream stream ended before the completion marker")
 	}
 	return errors.New("upstream stream ended without emitting any events")
@@ -135,16 +194,10 @@ func (s *StreamWriter) consumeChunk(chunk openAIChunk) error {
 	refusal := choice.Delta.Refusal != nil && *choice.Delta.Refusal != ""
 	if refusal {
 		text += *choice.Delta.Refusal
-		s.stopReason = "refusal"
+		s.stopReason = chatToAnthropicRefusal
 	}
 	if text != "" || choice.Delta.ContentPresent || refusal {
-		if !s.blockOpen {
-			s.textIndex = s.blockIndex
-			s.blockIndex++
-			s.blockOpen = true
-			s.emit("content_block_start", map[string]any{"type": "content_block_start", "index": s.textIndex,
-				"content_block": map[string]any{"type": "text", "text": ""}})
-		}
+		s.openText()
 		s.emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": s.textIndex,
 			"delta": map[string]any{"type": "text_delta", "text": text}})
 	}
@@ -153,10 +206,23 @@ func (s *StreamWriter) consumeChunk(chunk openAIChunk) error {
 			return err
 		}
 	}
-	if choice.FinishReason != "" && s.stopReason != "refusal" {
+	if choice.FinishReason != "" && s.stopReason != chatToAnthropicRefusal {
 		s.stopReason = stopReason(choice.FinishReason)
 	}
 	return s.writeErr
+}
+
+// openText moves the text block none -> open, emitting its start; it is a
+// no-op while the block is already open.
+func (s *StreamWriter) openText() {
+	if s.textPhase == chatToAnthropicTextOpen {
+		return
+	}
+	s.textIndex = s.blockIndex
+	s.blockIndex++
+	s.textPhase = chatToAnthropicTextOpen
+	s.emit("content_block_start", map[string]any{"type": "content_block_start", "index": s.textIndex,
+		"content_block": map[string]any{"type": "text", "text": ""}})
 }
 
 // Tool state follows the upstream index, not whichever block most recently
@@ -182,10 +248,10 @@ func (s *StreamWriter) consumeToolCall(call openAIToolCall) error {
 }
 
 func (s *StreamWriter) ensureStarted(id, model string) {
-	if s.started || s.finished {
+	if s.phase != chatToAnthropicPending {
 		return
 	}
-	s.started = true
+	s.phase = chatToAnthropicOpen
 	if model != "" {
 		s.model = model
 	}
@@ -199,14 +265,22 @@ func (s *StreamWriter) closeBlocks() {
 		s.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
 	}
 	s.blockIndex = 0
-	s.blockOpen = false
+	s.textPhase = chatToAnthropicTextNone
+}
+
+// end moves open -> to and reports whether the transition happened.
+func (s *StreamWriter) end(to chatToAnthropicPhase) bool {
+	if s.phase != chatToAnthropicOpen {
+		return false
+	}
+	s.phase = to
+	return true
 }
 
 func (s *StreamWriter) Finish() {
-	if !s.started || s.finished {
+	if !s.end(chatToAnthropicFinished) {
 		return
 	}
-	s.finished = true
 	s.closeBlocks()
 	reason := s.stopReason
 	if reason == "" {
@@ -218,10 +292,9 @@ func (s *StreamWriter) Finish() {
 }
 
 func (s *StreamWriter) Fail(message string) {
-	if !s.started || s.finished {
+	if !s.end(chatToAnthropicFailed) {
 		return
 	}
-	s.finished = true
 	s.closeBlocks()
 	errType := "api_error"
 	var upstream *UpstreamError

@@ -24,17 +24,114 @@ type responsesStreamItem struct {
 	sourceCallID string
 	item         responsesOutputItem
 	args         strings.Builder
-	argDelta     bool
-	argDone      bool
-	closed       bool
+	phase        responsesItemPhase
 	parts        map[int]*responsesStreamPart
 }
 
+// responsesItemPhase is the lifecycle of one upstream output item.
+//
+//	announced     --argument delta-->      argsStreaming
+//	argsStreaming --argument delta-->      argsStreaming
+//	announced     --arguments done-->      argsDone
+//	argsStreaming --arguments done-->      argsDone
+//	announced     --output_item.done-->    closed   (items without arguments)
+//	argsDone      --output_item.done-->    closed
+//
+// Function calls always pass through argsDone before closing, so a closed
+// call's arguments are complete. A terminal response.completed/incomplete
+// replays output_item.done for every item it lists and then for every item
+// still not closed, so all items end closed.
+type responsesItemPhase int
+
+const (
+	responsesItemAnnounced responsesItemPhase = iota
+	responsesItemArgsStreaming
+	responsesItemArgsDone
+	responsesItemClosed
+)
+
+func (p responsesItemPhase) String() string {
+	switch p {
+	case responsesItemAnnounced:
+		return "announced"
+	case responsesItemArgsStreaming:
+		return "args_streaming"
+	case responsesItemArgsDone:
+		return "args_done"
+	case responsesItemClosed:
+		return "closed"
+	default:
+		return fmt.Sprintf("responsesItemPhase(%d)", int(p))
+	}
+}
+
+// argsStarted reports whether arguments arrived as deltas or a done event,
+// superseding any announcement placeholder.
+func (item *responsesStreamItem) argsStarted() bool {
+	return item.phase != responsesItemAnnounced
+}
+
+// argsComplete reports whether no further argument deltas are legal.
+func (item *responsesStreamItem) argsComplete() bool {
+	return item.phase == responsesItemArgsDone || item.phase == responsesItemClosed
+}
+
+func (item *responsesStreamItem) closed() bool { return item.phase == responsesItemClosed }
+
+// streamArgs records an argument delta transition.
+func (item *responsesStreamItem) streamArgs() {
+	item.phase = responsesItemArgsStreaming
+}
+
+// completeArgs records the arguments done transition.
+func (item *responsesStreamItem) completeArgs() {
+	item.phase = responsesItemArgsDone
+}
+
+// close records the output_item.done transition and reports whether the item
+// was still open.
+func (item *responsesStreamItem) close() bool {
+	if item.phase == responsesItemClosed {
+		return false
+	}
+	item.phase = responsesItemClosed
+	return true
+}
+
 type responsesStreamPart struct {
-	kind string
-	text strings.Builder
-	seen bool
-	done bool
+	kind  string
+	text  strings.Builder
+	phase responsesPartPhase
+}
+
+// responsesPartPhase is the lifecycle of one content part of an item.
+//
+//	empty     --text delta-->  streaming
+//	streaming --text delta-->  streaming
+//	empty     --text done-->   done      (snapshot replayed as one delta)
+//	streaming --text done-->   done      (text must equal the deltas)
+//	done      --text done-->   done      (text must equal the completed part)
+//
+// Text deltas are illegal once done.
+type responsesPartPhase int
+
+const (
+	responsesPartEmpty responsesPartPhase = iota
+	responsesPartStreaming
+	responsesPartDone
+)
+
+func (p responsesPartPhase) String() string {
+	switch p {
+	case responsesPartEmpty:
+		return "empty"
+	case responsesPartStreaming:
+		return "streaming"
+	case responsesPartDone:
+		return "done"
+	default:
+		return fmt.Sprintf("responsesPartPhase(%d)", int(p))
+	}
 }
 
 func (s *responsesStreamState) consume(event responsesEvent) ([]responsesEvent, error) {
@@ -74,12 +171,12 @@ func (s *responsesStreamState) consume(event responsesEvent) ([]responsesEvent, 
 		sort.Ints(indices)
 		for _, index := range indices {
 			item := s.items[index]
-			if item.closed {
+			if item.closed() {
 				continue
 			}
 			// Deltas supersede announcement placeholders when no final snapshot exists.
 			snapshot := item.item
-			if item.argDelta || item.argDone {
+			if item.argsStarted() {
 				snapshot.Arguments = item.args.String()
 			}
 			frames, err := s.consume(responsesEvent{Type: "response.output_item.done", OutputIndex: index, Item: &snapshot})
@@ -99,7 +196,7 @@ func (s *responsesStreamState) consume(event responsesEvent) ([]responsesEvent, 
 		if err != nil {
 			return nil, err
 		}
-		if event.Type == "response.output_item.added" && item.closed {
+		if event.Type == "response.output_item.added" && item.closed() {
 			return nil, errors.New("upstream reannounced a completed item")
 		}
 		var output []responsesEvent
@@ -140,10 +237,9 @@ func (s *responsesStreamState) consume(event responsesEvent) ([]responsesEvent, 
 			}
 			output = append(output, frames...)
 		}
-		if item.closed {
+		if !item.close() {
 			return output, nil
 		}
-		item.closed = true
 		return append(output, event), nil
 	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
 		item := s.items[event.OutputIndex]
@@ -156,14 +252,14 @@ func (s *responsesStreamState) consume(event responsesEvent) ([]responsesEvent, 
 		if event.Type == "response.function_call_arguments.done" {
 			return s.argumentsDone(event.OutputIndex, item, event.Arguments)
 		}
-		if item.closed || item.argDone {
+		if item.argsComplete() {
 			return nil, errors.New("upstream arguments arrived after call completion")
 		}
 		if err := s.reserve(len(event.Delta)); err != nil {
 			return nil, err
 		}
 		item.args.WriteString(event.Delta)
-		item.argDelta = true
+		item.streamArgs()
 		return []responsesEvent{event}, nil
 	case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta",
 		"response.output_text.done", "response.refusal.done", "response.reasoning_text.done", "response.reasoning_summary_text.done":
@@ -196,21 +292,21 @@ func (s *responsesStreamState) consume(event responsesEvent) ([]responsesEvent, 
 			}
 			return s.textDone(event.OutputIndex, event.ContentIndex, item, kind, text)
 		}
-		if item.closed {
+		if item.closed() {
 			return nil, errors.New("upstream text arrived after item completion")
 		}
 		part, err := s.part(item, event.ContentIndex, kind)
 		if err != nil {
 			return nil, err
 		}
-		if part.done {
+		if part.phase == responsesPartDone {
 			return nil, errors.New("upstream text arrived after part completion")
 		}
 		if err := s.reserve(len(event.Delta)); err != nil {
 			return nil, err
 		}
 		part.text.WriteString(event.Delta)
-		part.seen = true
+		part.phase = responsesPartStreaming
 		return []responsesEvent{event}, nil
 	default:
 		return []responsesEvent{event}, nil
@@ -283,13 +379,14 @@ func (s *responsesStreamState) reserve(bytes int) error {
 }
 
 func (s *responsesStreamState) argumentsDone(index int, item *responsesStreamItem, args string) ([]responsesEvent, error) {
-	if item.argDone {
+	if item.argsComplete() {
 		if args != "" && args != item.args.String() {
 			return nil, errors.New("upstream repeated arguments disagree with completed call")
 		}
 		return nil, nil
 	}
-	if item.argDelta {
+	streamed := item.phase == responsesItemArgsStreaming
+	if streamed {
 		if args != "" && args != item.args.String() {
 			return nil, errors.New("upstream completed arguments disagree with deltas")
 		}
@@ -299,8 +396,8 @@ func (s *responsesStreamState) argumentsDone(index int, item *responsesStreamIte
 		}
 		item.args.WriteString(args)
 	}
-	item.argDone = true
-	if item.argDelta || args == "" {
+	item.completeArgs()
+	if streamed || args == "" {
 		return nil, nil
 	}
 	return []responsesEvent{{Type: "response.function_call_arguments.delta", OutputIndex: index, ItemID: item.item.ID, Delta: args}}, nil
@@ -326,24 +423,24 @@ func (s *responsesStreamState) textDone(index, content int, item *responsesStrea
 	if err != nil {
 		return nil, err
 	}
-	if part.done {
+	switch part.phase {
+	case responsesPartDone:
 		if text != part.text.String() {
 			return nil, errors.New("upstream repeated text disagrees with completed part")
 		}
 		return nil, nil
-	}
-	if part.seen {
+	case responsesPartStreaming:
 		if text != part.text.String() {
 			return nil, errors.New("upstream completed text disagrees with deltas")
 		}
-		part.done = true
+		part.phase = responsesPartDone
 		return nil, nil
 	}
 	if err := s.reserve(len(text)); err != nil {
 		return nil, err
 	}
 	part.text.WriteString(text)
-	part.seen, part.done = true, true
+	part.phase = responsesPartDone
 	event := "response.output_text.delta"
 	if kind == "refusal" {
 		event = "response.refusal.delta"

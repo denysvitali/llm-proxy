@@ -279,9 +279,21 @@ func responsesFromAnthropic(body []byte, model string, namespaces map[string]res
 
 // ResponsesStreamFromAnthropic converts an upstream Anthropic SSE stream into
 // OpenAI Responses API events.
+//
+// Message and per-block legality is enforced by anthropicStreamState before
+// any event reaches consumeEvent; the output lifecycle (created -> finished
+// or failed, incomplete reason) is owned by responsesItemStream. This writer
+// only maps blocks onto items:
+//
+//	content_block_start --> addItem (text: message, thinking: reasoning,
+//	                        tool_use: function_call); repeats never arrive
+//	content_block_delta --> append text or arguments to the block's item
+//	content_block_stop  --> close the block's item
+//	message_delta       --> record the incomplete reason, if any
+//	message_stop        --> Finish (terminal)
 type ResponsesStreamFromAnthropic struct {
 	stream       responsesItemStream
-	blocks       map[int]*streamedResponseItem
+	blocks       map[int]*streamedResponseItem // anthropic block index -> output item
 	state        anthropicStreamState
 	namespaces   map[string]responseNamespaceTool
 	failure      error
@@ -402,14 +414,8 @@ func (s *ResponsesStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 
 	case "message_delta":
 		if event.Delta != nil {
-			switch event.Delta.StopReason {
-			case "max_tokens":
-				s.stream.incomplete, s.stream.reason = true, "max_output_tokens"
-			case "model_context_window_exceeded":
-				s.stream.incomplete, s.stream.reason = true, "model_context_window_exceeded"
-			case "refusal":
-				// Messages supplies refusal only after text has already streamed.
-				s.stream.incomplete, s.stream.reason = true, "content_filter"
+			if reason, ok := responsesFromAnthropicIncomplete(event.Delta.StopReason); ok {
+				s.stream.incomplete, s.stream.reason = true, reason
 			}
 		}
 		if event.Usage != nil {
@@ -422,6 +428,23 @@ func (s *ResponsesStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 		return true
 	}
 	return false
+}
+
+// responsesFromAnthropicIncomplete maps a Messages stop_reason to the
+// Responses incomplete reason it implies; ok is false for stop reasons that
+// leave the response completed. A later incomplete stop_reason overrides an
+// earlier one; a completing one leaves an earlier incomplete reason in place.
+func responsesFromAnthropicIncomplete(stopReason string) (reason string, ok bool) {
+	switch stopReason {
+	case "max_tokens":
+		return "max_output_tokens", true
+	case "model_context_window_exceeded":
+		return "model_context_window_exceeded", true
+	case "refusal":
+		// Messages supplies refusal only after text has already streamed.
+		return "content_filter", true
+	}
+	return "", false
 }
 
 // Finish closes any open item and emits response.completed.

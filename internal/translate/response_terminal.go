@@ -30,36 +30,89 @@ func validateAnthropicStop(stop string) error {
 	}
 }
 
-// responsesFinish preserves the reason for incomplete generation. An absent
-// status remains compatible with providers omitting it; nonterminal states do not.
-func responsesFinish(response responsesResponse, hasTools bool) (string, error) {
+// responsesTerminalKind classifies a successful Responses terminal state.
+// The classification is total over the accepted inputs; everything else is an
+// error rather than a kind:
+//
+//	response.error set                                     -> upstream error
+//	status "" | "completed"                                -> responsesTerminalCompleted
+//	status "incomplete", reason max_output_tokens |
+//	    model_context_window_exceeded                      -> responsesTerminalLength
+//	status "incomplete", reason content_filter             -> responsesTerminalContentFilter
+//	any other status or incomplete reason                  -> error
+type responsesTerminalKind int
+
+const (
+	responsesTerminalCompleted responsesTerminalKind = iota
+	responsesTerminalLength
+	responsesTerminalContentFilter
+)
+
+func (k responsesTerminalKind) String() string {
+	switch k {
+	case responsesTerminalCompleted:
+		return "completed"
+	case responsesTerminalLength:
+		return "length"
+	case responsesTerminalContentFilter:
+		return "content_filter"
+	default:
+		return fmt.Sprintf("responsesTerminalKind(%d)", int(k))
+	}
+}
+
+// chatFinish maps the terminal kind to a Chat Completions finish_reason.
+func (k responsesTerminalKind) chatFinish(hasTools bool) string {
+	switch k {
+	case responsesTerminalLength:
+		return "length"
+	case responsesTerminalContentFilter:
+		return "content_filter"
+	default:
+		if hasTools {
+			return "tool_calls"
+		}
+		return "stop"
+	}
+}
+
+// responsesTerminal classifies a terminal response. An absent status remains
+// compatible with providers omitting it; nonterminal states do not.
+func responsesTerminal(response responsesResponse) (responsesTerminalKind, error) {
 	if response.Error != nil {
-		return "", response.Error.asUpstreamError()
+		return 0, response.Error.asUpstreamError()
 	}
 	switch response.Status {
 	case "", "completed":
-		if hasTools {
-			return "tool_calls", nil
-		}
-		return "stop", nil
+		return responsesTerminalCompleted, nil
 	case "incomplete":
 		var details struct {
 			Reason string `json:"reason"`
 		}
 		if err := json.Unmarshal(response.IncompleteDetails, &details); err != nil {
-			return "", fmt.Errorf("invalid upstream incomplete_details: %w", err)
+			return 0, fmt.Errorf("invalid upstream incomplete_details: %w", err)
 		}
 		switch details.Reason {
 		case "max_output_tokens", "model_context_window_exceeded":
-			return "length", nil
+			return responsesTerminalLength, nil
 		case "content_filter":
-			return "content_filter", nil
+			return responsesTerminalContentFilter, nil
 		default:
-			return "", fmt.Errorf("unsupported upstream incomplete reason %q", details.Reason)
+			return 0, fmt.Errorf("unsupported upstream incomplete reason %q", details.Reason)
 		}
 	default:
-		return "", fmt.Errorf("upstream response status %q is not a successful terminal state", response.Status)
+		return 0, fmt.Errorf("upstream response status %q is not a successful terminal state", response.Status)
 	}
+}
+
+// responsesFinish preserves the reason for incomplete generation as a Chat
+// finish_reason; see responsesTerminal for the classification.
+func responsesFinish(response responsesResponse, hasTools bool) (string, error) {
+	kind, err := responsesTerminal(response)
+	if err != nil {
+		return "", err
+	}
+	return kind.chatFinish(hasTools), nil
 }
 
 func setResponsesFinish(response *responsesResponse, finish string) {

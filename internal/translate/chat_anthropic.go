@@ -423,6 +423,43 @@ type anthropicStreamDelta struct {
 	StopReason  string `json:"stop_reason"`
 }
 
+// anthropicToChatPhase is the lifecycle of ChatStreamFromAnthropic.
+//
+//	pending   --message_start / first chunk (ensureStarted)--> streaming
+//	streaming --message_stop (Finish)-->                       finished
+//	streaming --Fail (error chunk)-->                          failed
+//	pending   --Fail (emits nothing)-->                        failed
+//	any       --upstream error event (error chunk + [DONE])--> failed
+//
+// Finish acts only from streaming; Fail acts from pending or streaming;
+// finished and failed are terminal.
+type anthropicToChatPhase uint8
+
+const (
+	anthropicToChatPending anthropicToChatPhase = iota
+	anthropicToChatStreaming
+	anthropicToChatFinished
+	anthropicToChatFailed
+)
+
+func (p anthropicToChatPhase) String() string {
+	switch p {
+	case anthropicToChatPending:
+		return "pending"
+	case anthropicToChatStreaming:
+		return "streaming"
+	case anthropicToChatFinished:
+		return "finished"
+	case anthropicToChatFailed:
+		return "failed"
+	}
+	return fmt.Sprintf("anthropicToChatPhase(%d)", uint8(p))
+}
+
+func (p anthropicToChatPhase) terminal() bool {
+	return p == anthropicToChatFinished || p == anthropicToChatFailed
+}
+
 // ChatStreamFromAnthropic converts an upstream Anthropic SSE stream into
 // OpenAI chat-completions chunks terminated by [DONE].
 type ChatStreamFromAnthropic struct {
@@ -432,12 +469,9 @@ type ChatStreamFromAnthropic struct {
 	id      string
 	created int64
 
-	started      bool
-	finished     bool
-	blockKinds   map[int]string // anthropic block index -> content kind
-	toolSlots    map[int]int    // anthropic block index -> client tool_calls index
-	nextTool     int
-	sawTool      bool
+	phase        anthropicToChatPhase
+	toolSlots    map[int]int // anthropic block index -> client tool_calls index
+	nextTool     int         // tool_calls slots assigned so far
 	stopReason   string
 	usage        chatUsageOut
 	messageUsage AnthropicUsage
@@ -450,13 +484,12 @@ type ChatStreamFromAnthropic struct {
 // writer, flushed after every chunk via flush.
 func NewChatStreamFromAnthropic(writer io.Writer, flush func(), model string) *ChatStreamFromAnthropic {
 	return &ChatStreamFromAnthropic{
-		writer:     writer,
-		flush:      flush,
-		model:      model,
-		id:         responseID("", "chatcmpl_"),
-		created:    time.Now().Unix(),
-		blockKinds: map[int]string{},
-		toolSlots:  map[int]int{},
+		writer:    writer,
+		flush:     flush,
+		model:     model,
+		id:        responseID("", "chatcmpl_"),
+		created:   time.Now().Unix(),
+		toolSlots: map[int]int{},
 	}
 }
 
@@ -490,10 +523,10 @@ func (c *ChatStreamFromAnthropic) Consume(body io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if c.finished {
+	if c.phase.terminal() {
 		return c.writeErr
 	}
-	if c.started {
+	if c.phase == anthropicToChatStreaming {
 		return errors.New("upstream stream ended before the completion marker")
 	}
 	return errors.New("upstream stream ended without emitting any events")
@@ -520,7 +553,6 @@ func (c *ChatStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 		if event.ContentBlock == nil {
 			return false
 		}
-		c.blockKinds[event.Index] = event.ContentBlock.Type
 		if event.ContentBlock.Type == "text" {
 			text := event.ContentBlock.Text
 			c.emitChunk(chatDeltaOut{Content: &text}, nil)
@@ -531,7 +563,6 @@ func (c *ChatStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 			slot := c.nextTool
 			c.nextTool++
 			c.toolSlots[event.Index] = slot
-			c.sawTool = true
 			c.emitChunk(chatDeltaOut{ToolCalls: []chatChunkToolCall{{
 				Index:    slot,
 				ID:       event.ContentBlock.ID,
@@ -562,7 +593,6 @@ func (c *ChatStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 		}
 
 	case "content_block_stop":
-		delete(c.blockKinds, event.Index)
 
 	case "message_delta":
 		if event.Delta != nil && event.Delta.StopReason != "" {
@@ -593,24 +623,28 @@ func (c *ChatStreamFromAnthropic) consumeEvent(event anthropicEvent) bool {
 			"code":    nil,
 		}})
 		c.writeString("data: [DONE]\n\n")
-		c.finished = true
+		c.phase = anthropicToChatFailed
 		return true
 	}
 	return false
 }
 
+// ensureStarted moves pending -> streaming, emitting the role chunk.
 func (c *ChatStreamFromAnthropic) ensureStarted() {
-	if c.started {
+	if c.phase != anthropicToChatPending {
 		return
 	}
-	c.started = true
+	c.phase = anthropicToChatStreaming
 	c.emitChunk(chatDeltaOut{Role: "assistant"}, nil)
 }
 
+// sawTool reports whether any tool_use block has been relayed.
+func (c *ChatStreamFromAnthropic) sawTool() bool {
+	return c.nextTool > 0
+}
+
 func (c *ChatStreamFromAnthropic) emitChunk(delta chatDeltaOut, finishReason *string) {
-	if !c.started {
-		c.ensureStarted()
-	}
+	c.ensureStarted()
 	c.writeData(chatChunk{
 		ID:      c.id,
 		Object:  "chat.completion.chunk",
@@ -635,13 +669,13 @@ func (c *ChatStreamFromAnthropic) writeString(text string) {
 // Finish emits the terminating finish_reason chunk and [DONE]. It is safe to
 // call more than once, and emits nothing when no content was streamed.
 func (c *ChatStreamFromAnthropic) Finish() {
-	if c.finished || !c.started {
+	if c.phase != anthropicToChatStreaming {
 		return
 	}
-	c.finished = true
+	c.phase = anthropicToChatFinished
 	reason := c.stopReason
 	if reason == "" {
-		reason = anthropicStopToFinish("", c.sawTool)
+		reason = anthropicStopToFinish("", c.sawTool())
 	}
 	finishReason := reason
 	c.writeData(chatChunk{
@@ -659,11 +693,12 @@ func (c *ChatStreamFromAnthropic) Finish() {
 // finish_reason chunk and [DONE], so a mid-stream break reaches the client
 // as a real failure rather than a completed turn.
 func (c *ChatStreamFromAnthropic) Fail(message string) {
-	if c.finished {
+	if c.phase.terminal() {
 		return
 	}
-	c.finished = true
-	if !c.started {
+	wasStreaming := c.phase == anthropicToChatStreaming
+	c.phase = anthropicToChatFailed
+	if !wasStreaming {
 		return
 	}
 	c.writeData(map[string]any{"error": map[string]any{
