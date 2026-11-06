@@ -12,7 +12,8 @@ func (m *openAIMessageOut) UnmarshalJSON(data []byte) error {
 	type alias openAIMessageOut
 	var fields struct {
 		*alias
-		Content json.RawMessage `json:"content"`
+		Content          json.RawMessage `json:"content"`
+		ReasoningDetails json.RawMessage `json:"reasoning_details"`
 	}
 	*m = openAIMessageOut{}
 	fields.alias = (*alias)(m)
@@ -26,6 +27,9 @@ func (m *openAIMessageOut) UnmarshalJSON(data []byte) error {
 	m.Content = content
 	m.ContentPresent = present
 	m.ReasoningContent += reasoning
+	if m.ReasoningContent == "" {
+		m.ReasoningContent = unsignedReasoningDetails(fields.ReasoningDetails)
+	}
 	return nil
 }
 
@@ -33,7 +37,8 @@ func (m *chatMessageOut) UnmarshalJSON(data []byte) error {
 	type alias chatMessageOut
 	var fields struct {
 		*alias
-		Content json.RawMessage `json:"content"`
+		Content          json.RawMessage `json:"content"`
+		ReasoningDetails json.RawMessage `json:"reasoning_details"`
 	}
 	*m = chatMessageOut{}
 	fields.alias = (*alias)(m)
@@ -47,6 +52,9 @@ func (m *chatMessageOut) UnmarshalJSON(data []byte) error {
 	m.Content = content
 	m.ContentPresent = present
 	m.ReasoningContent += reasoning
+	if m.ReasoningContent == "" {
+		m.ReasoningContent = unsignedReasoningDetails(fields.ReasoningDetails)
+	}
 	return nil
 }
 
@@ -70,6 +78,46 @@ func (d *chatDeltaOut) UnmarshalJSON(data []byte) error {
 	}
 	d.ReasoningContent += reasoning
 	return nil
+}
+
+// reasoningDetail is one OpenRouter-style reasoning_details entry, as sent by
+// gateways such as Open Design in place of reasoning_content.
+type reasoningDetail struct {
+	Type    string `json:"type"`
+	Summary string `json:"summary"`
+	Text    string `json:"text"`
+}
+
+// plainReasoningDetails reports whether raw holds only plain-text
+// reasoning_details entries (reasoning.summary / reasoning.text), which carry
+// the same unsigned trace as reasoning_content. Encrypted or unknown entries
+// make the details opaque state that cannot be translated.
+func plainReasoningDetails(raw json.RawMessage) ([]reasoningDetail, bool) {
+	var details []reasoningDetail
+	if json.Unmarshal(raw, &details) != nil {
+		return nil, false
+	}
+	for _, detail := range details {
+		if detail.Type != "reasoning.summary" && detail.Type != "reasoning.text" {
+			return nil, false
+		}
+	}
+	return details, true
+}
+
+// unsignedReasoningDetails joins plain-text reasoning_details into the
+// reasoning_content they stand for; anything else yields "" (the validator
+// rejects it before decoding).
+func unsignedReasoningDetails(raw json.RawMessage) string {
+	details, ok := plainReasoningDetails(raw)
+	if !ok {
+		return ""
+	}
+	var reasoning string
+	for _, detail := range details {
+		reasoning += detail.Summary + detail.Text
+	}
+	return reasoning
 }
 
 // decodeChatContent distinguishes omitted/null content from an explicit empty

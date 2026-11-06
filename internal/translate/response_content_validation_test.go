@@ -2,6 +2,7 @@ package translate
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -106,5 +107,28 @@ func TestBufferedEmptyAndPlainReasoningOutput(t *testing.T) {
 	}
 	if _, err := ChatFromResponses(out, "m"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Open Design (and other OpenRouter-style gateways) send the unsigned trace
+// as plain-text reasoning_details instead of reasoning_content. It must decode
+// like reasoning_content — suppressed on Messages, a summary on Responses —
+// rather than fail the response.
+func TestPlainReasoningDetailsDecodeAsReasoning(t *testing.T) {
+	body := []byte(`{"id":"c","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"No: 17*23.",` +
+		`"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":"check 17"},{"type":"reasoning.text","text":" and 23"}]}}]}`)
+	out, err := FromOpenAI(body, "m", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "check 17") || !strings.Contains(string(out), "No: 17*23.") {
+		t.Fatalf("messages output = %s", out)
+	}
+	out, err = ResponsesFromChat(body, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"check 17 and 23"`) {
+		t.Fatalf("responses output lost reasoning: %s", out)
 	}
 }

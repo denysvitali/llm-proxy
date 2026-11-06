@@ -209,9 +209,17 @@ func validateChatOutput(body []byte) error {
 		return err
 	}
 	for _, choice := range response.Choices {
-		for _, key := range []string{"audio", "function_call", "reasoning_details"} {
+		for _, key := range []string{"audio", "function_call"} {
 			if nonNullJSON(choice.Message[key]) {
 				return fmt.Errorf("upstream Chat %s requires a native route", key)
+			}
+		}
+		// Plain-text reasoning_details are the unsigned trace also sent as
+		// reasoning_content and decode as such; encrypted entries are opaque
+		// state no other API can carry.
+		if raw := choice.Message["reasoning_details"]; nonNullJSON(raw) {
+			if _, ok := plainReasoningDetails(raw); !ok {
+				return fmt.Errorf("upstream Chat reasoning_details requires a native route")
 			}
 		}
 		if raw := choice.Message["annotations"]; nonNullJSON(raw) {
