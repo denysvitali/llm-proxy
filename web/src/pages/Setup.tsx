@@ -15,11 +15,18 @@ import { Fade } from '../App'
 import { PageHeader } from '../components/PageHeader'
 import { ACCOUNT_AUTH } from '../lib/accounts'
 import { Snippet } from '../components/setup/Snippet'
+import { Reveal } from '../components/setup/Reveal'
 import './setup.css'
 
 const accountProviders = Object.entries(ACCOUNT_AUTH).map(([name, { label, account, login }]) => ({
   name, label, account, href: login,
 }))
+
+const STEPS: { href: string; figure: string; title: string; caption: string }[] = [
+  { href: '#setup-client', figure: '01', title: 'Choose a client', caption: 'Copy a configuration' },
+  { href: '#setup-auth', figure: '02', title: 'Set authentication', caption: 'Use your gateway key' },
+  { href: '#setup-verify', figure: '03', title: 'Verify connection', caption: 'Check your first request' },
+]
 
 export default function SetupPage() {
   const q = useQuery(dashboardQueries.overview())
@@ -33,7 +40,11 @@ export default function SetupPage() {
   return (
     <Fade pending={q.isPending}>
       <Stack gap="lg" miw={0} className="setup-page">
-        <PageHeader title="Setup" subtitle="Connect a coding client to your gateway in three steps." />
+        <PageHeader
+          title="Setup"
+          eyebrow="Gateway onboarding"
+          subtitle="Connect a coding client to your gateway in three steps."
+        />
         {q.isError && (
           <Alert color="red" variant="light" icon={<IconInfoCircle size={16} />} title={ov ? 'Setup details could not be refreshed' : 'Setup details unavailable'}>
             <Stack gap="sm">
@@ -46,71 +57,89 @@ export default function SetupPage() {
         )}
         {!ov && q.isPending && (
           <Stack role="status" aria-label="Loading setup details" gap="md">
-            <Skeleton h={74} />
-            <Skeleton h={330} />
+            <Skeleton h={72} radius="lg" />
+            <div className="setup-workspace-skeleton">
+              <Skeleton h={330} radius="lg" />
+              <Skeleton h={200} radius="lg" />
+            </div>
           </Stack>
         )}
         {ov && (
           <>
-            <nav className="setup-sequence" aria-label="Connection steps">
-              <a href="#setup-client"><span>01</span><div><strong>Choose a client</strong><small>Copy a configuration</small></div></a>
-              <a href="#setup-auth"><span>02</span><div><strong>Set authentication</strong><small>Use your gateway key</small></div></a>
-              <a href="#setup-verify"><span>03</span><div><strong>Verify connection</strong><small>Check your first request</small></div></a>
-            </nav>
+            <StepSequence />
             <div className="setup-layout">
-              <Stack gap="lg" miw={0}>
-                <Card className="setup-client-card" id="setup-client" p={0}>
-                  <Box className="setup-section-heading">
-                    <Group gap="sm" align="flex-start" wrap="nowrap">
+              <Stack gap="md" miw={0} className="setup-main">
+                <Reveal>
+                  <Card className="setup-card" id="setup-client" p={0}>
+                    <Box className="setup-card-head">
                       <span className="setup-step-number" aria-hidden="true">1</span>
-                      <Box>
-                        <Text size="xs" c="dimmed" fw={600} mb={5}>STEP 1 · CLIENT</Text>
-                        <Title order={2} size="h3">Choose your client</Title>
-                        <Text size="xs" c="dimmed" mt={5}>Each tab has a ready-to-copy setup for that client.</Text>
+                      <Box miw={0}>
+                        <span className="setup-step-label">Step 01 · Client</span>
+                        <Title order={2} size="h2" className="setup-card-title">Choose your client</Title>
+                        <Text size="xs" c="dimmed" mt={3}>Each tab has a ready-to-copy setup for that client.</Text>
                       </Box>
-                    </Group>
-                  </Box>
-                  <Tabs defaultValue="claude" keepMounted={false}>
-                    <Tabs.List px="md" aria-label="Coding agent" className="setup-client-tabs">
-                      <Tabs.Tab value="claude">Claude Code</Tabs.Tab>
-                      <Tabs.Tab value="codex">Codex CLI</Tabs.Tab>
-                      <Tabs.Tab value="curl">HTTP / curl</Tabs.Tab>
-                    </Tabs.List>
-                    <Tabs.Panel value="claude">
-                      <Snippet title="Claude Code" description="Replace the placeholders, then run this command in your terminal." snippet={ov.claudeSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
-                    </Tabs.Panel>
-                    <Tabs.Panel value="codex">
-                      <Snippet title="Codex CLI" description="Merge this provider section into ~/.codex/config.toml, preserving your other settings. Then run the launch command in the comment." snippet={ov.codexSnippet} language="toml" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
-                    </Tabs.Panel>
-                    <Tabs.Panel value="curl">
-                      <Snippet title="Other / curl" description="Replace the placeholders, then run from a terminal that can reach this address." snippet={curlSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
-                    </Tabs.Panel>
-                  </Tabs>
-                  <Box className="setup-key-note" id="setup-auth" p="lg">
-                    <Group gap="sm" align="flex-start" wrap="nowrap" mb="sm">
-                      <span className="setup-step-number setup-step-number-small" aria-hidden="true">2</span>
-                      <Box>
-                        <Text size="xs" c="dimmed" fw={600} mb={4}>STEP 2 · AUTHENTICATION</Text>
-                        <Text size="sm" fw={600}>Use the correct key value for this gateway</Text>
+                    </Box>
+                    <Tabs defaultValue="claude" keepMounted={false}>
+                      <Tabs.List aria-label="Coding agent" className="setup-client-tabs">
+                        <Tabs.Tab value="claude">Claude Code</Tabs.Tab>
+                        <Tabs.Tab value="codex">Codex CLI</Tabs.Tab>
+                        <Tabs.Tab value="curl">HTTP / curl</Tabs.Tab>
+                      </Tabs.List>
+                      <Tabs.Panel value="claude">
+                        <Snippet title="Claude Code" description="Replace the placeholders, then run this command in your terminal." snippet={ov.claudeSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
+                      </Tabs.Panel>
+                      <Tabs.Panel value="codex">
+                        <Snippet title="Codex CLI" description="Merge this provider section into ~/.codex/config.toml, preserving your other settings. Then run the launch command in the comment." snippet={ov.codexSnippet} language="toml" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
+                      </Tabs.Panel>
+                      <Tabs.Panel value="curl">
+                        <Snippet title="Other / curl" description="Replace the placeholders, then run from a terminal that can reach this address." snippet={curlSnippet} language="shell" wrapLines={wrapLines} onWrapLinesChange={setWrapLines} />
+                      </Tabs.Panel>
+                    </Tabs>
+                  </Card>
+                </Reveal>
+
+                <Reveal delay={0.04}>
+                  <Card component="section" className="setup-card setup-auth-card" id="setup-auth" p={0} aria-labelledby="setup-auth-heading">
+                    <Box className="setup-card-head">
+                      <span className="setup-step-number" aria-hidden="true">2</span>
+                      <Box miw={0}>
+                        <span className="setup-step-label">Step 02 · Authentication</span>
+                        <Title order={2} size="h2" id="setup-auth-heading" className="setup-card-title">Use the correct key value</Title>
                       </Box>
-                    </Group>
-                    <Group gap="xs" mb={6} wrap="nowrap"><IconShieldLock size={16} aria-hidden /><Text size="sm" fw={600}>{ov.authEnabled ? 'Use your proxy API key' : 'No proxy key required'}</Text></Group>
-                    <Text size="xs" c="dimmed" lh={1.6}>{ov.authEnabled
-                      ? 'Replace <key> with an llx_ proxy key. For Codex CLI, set LLM_PROXY_API_KEY in your terminal before launching. Manage keys with ./llm-proxy keys.'
-                      : 'Use a non-empty placeholder such as unused for <key>. For Codex CLI, set LLM_PROXY_API_KEY to that placeholder before launching.'}</Text>
-                  </Box>
-                </Card>
+                    </Box>
+                    <Box className="setup-auth-panel">
+                      <Group gap="xs" wrap="nowrap" align="flex-start" mb={4}>
+                        <IconShieldLock size={16} aria-hidden className="setup-auth-icon" />
+                        <Text size="sm" fw={650} className="setup-auth-lead">
+                          {ov.authEnabled ? 'Use your proxy API key' : 'No proxy key required'}
+                        </Text>
+                      </Group>
+                      <Text size="xs" c="dimmed" lh={1.6} className="setup-auth-copy">{ov.authEnabled
+                        ? 'Replace <key> with an llx_ proxy key. For Codex CLI, set LLM_PROXY_API_KEY in your terminal before launching. Manage keys with ./llm-proxy keys.'
+                        : 'Use a non-empty placeholder such as unused for <key>. For Codex CLI, set LLM_PROXY_API_KEY to that placeholder before launching.'}</Text>
+                    </Box>
+                  </Card>
+                </Reveal>
+
                 {ov.exampleModel === '<model>' && (
                   <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />} title="Choose a model before launching">
                     Replace <Code>{'<model>'}</Code> with a configured model or route from the <Anchor component={Link} to="/models">model catalog</Anchor>.
                   </Alert>
                 )}
-                <ConnectionCheck />
+
+                <Reveal delay={0.08}>
+                  <ConnectionCheck />
+                </Reveal>
               </Stack>
-              <Stack gap="md" miw={0}>
-                <GatewayDetails overview={ov} endpoint={endpoint} />
-                <AccountConnections overview={ov} />
-              </Stack>
+
+              <aside className="setup-rail" aria-label="Gateway reference">
+                <Reveal delay={0.04}>
+                  <GatewayDetails overview={ov} endpoint={endpoint} />
+                </Reveal>
+                <Reveal delay={0.08}>
+                  <AccountConnections overview={ov} />
+                </Reveal>
+              </aside>
             </div>
           </>
         )}
@@ -119,25 +148,61 @@ export default function SetupPage() {
   )
 }
 
+// A progress indicator, not a tab bar: mono figures in numbered nodes, joined
+// by a hairline rule, each linking to the step it describes. Collapses to a
+// compact three-up strip below 48em so it stays out of the way on a phone.
+function StepSequence() {
+  return (
+    <nav className="setup-sequence" aria-label="Connection steps">
+      {STEPS.map((step) => (
+        <a href={step.href} key={step.href}>
+          <span className="setup-seq-node" aria-hidden="true">{step.figure}</span>
+          <div className="setup-seq-copy">
+            <strong>{step.title}</strong>
+            <small>{step.caption}</small>
+          </div>
+        </a>
+      ))}
+    </nav>
+  )
+}
+
 function GatewayDetails({ overview: ov, endpoint }: { overview: Overview; endpoint: string }) {
   return (
-    <Card p="lg" className="setup-gateway-card">
-      <Group gap="xs" mb="md"><IconTerminal2 size={17} aria-hidden /><Title order={2} size="h3">Gateway details</Title></Group>
-      <Stack gap="sm">
+    <Card p={0} className="setup-card">
+      <Box className="setup-rail-head">
+        <Group gap={7} wrap="nowrap" align="center">
+          <IconTerminal2 size={15} aria-hidden />
+          <span className="setup-rail-label">Gateway details</span>
+        </Group>
+      </Box>
+      <Box className="setup-rail-body">
         <div className="setup-endpoint-block">
-          <Text size="xs" c="dimmed" mb={6}>Messages endpoint</Text>
+          <Text size="xs" className="setup-field-label">Messages endpoint</Text>
           <Code className="setup-identifier setup-endpoint">{endpoint}</Code>
         </div>
-        <div className="setup-context-row">
-          <Text size="xs" c="dimmed">Authentication</Text>
-          <Badge variant="light" color={ov.authEnabled ? 'teal' : 'gray'} tt="none">{ov.authEnabled ? 'Proxy key required' : 'Disabled'}</Badge>
-        </div>
-        <div className="setup-context-row setup-model-row">
-          <Text size="xs" c="dimmed">Example model</Text>
-          <Code className="setup-identifier">{ov.exampleModel}</Code>
-        </div>
-        <Anchor component={Link} to="/models" size="sm" className="setup-inline-link">Browse model catalog <IconArrowUpRight size={15} /></Anchor>
-      </Stack>
+        <Stack gap={0} className="setup-fact-list">
+          <div className="setup-context-row">
+            <Text size="xs" c="dimmed">Authentication</Text>
+            <Badge
+              variant="light"
+              color={ov.authEnabled ? 'zinc' : 'gray'}
+              tt="none"
+              className="setup-fact-badge"
+              data-state={ov.authEnabled ? 'on' : 'off'}
+            >
+              {ov.authEnabled ? 'Proxy key required' : 'Disabled'}
+            </Badge>
+          </div>
+          <div className="setup-context-row setup-model-row">
+            <Text size="xs" c="dimmed">Example model</Text>
+            <Code className="setup-identifier setup-model-value">{ov.exampleModel}</Code>
+          </div>
+        </Stack>
+        <Anchor component={Link} to="/models" size="sm" className="setup-inline-link">
+          Browse model catalog <IconArrowUpRight size={14} aria-hidden />
+        </Anchor>
+      </Box>
     </Card>
   )
 }
@@ -149,22 +214,32 @@ function AccountConnections({ overview }: { overview: Overview }) {
   })
   if (accounts.length === 0) return null
   return (
-    <Card p="lg" className="setup-accounts-card">
-      <Group gap="xs" mb={5}><IconShieldLock size={16} aria-hidden /><Title order={2} size="h3">Account connections</Title></Group>
-      <Text size="xs" c="dimmed" mb="md">Account-backed providers enabled on this gateway.</Text>
-      <Stack gap={0}>
-        {accounts.map((provider) => (
-          <div className="setup-account" key={provider.name}>
-            <Group justify="space-between" gap="xs" wrap="wrap">
-              <Text size="sm" fw={600}>{provider.label}</Text>
-              <Badge variant="dot" size="sm" color={provider.signedIn ? 'teal' : 'orange'} tt="none">{provider.signedIn ? 'Connected' : 'Sign-in needed'}</Badge>
-            </Group>
-            <Anchor href={provider.href} size="xs" className="setup-inline-link" mt={6} aria-label={`${provider.signedIn ? 'Manage' : 'Connect'} ${provider.account}`}>
-              {provider.signedIn ? provider.account : `Connect ${provider.account}`} <IconArrowUpRight size={13} />
-            </Anchor>
-          </div>
-        ))}
-      </Stack>
+    <Card p={0} className="setup-card">
+      <Box className="setup-rail-head">
+        <Group gap={7} wrap="nowrap" align="center">
+          <IconShieldLock size={15} aria-hidden />
+          <span className="setup-rail-label">Account connections</span>
+        </Group>
+      </Box>
+      <Box className="setup-rail-body">
+        <Text size="xs" c="dimmed" mb={8}>Account-backed providers enabled on this gateway.</Text>
+        <Stack gap={0}>
+          {accounts.map((provider) => (
+            <div className="setup-account" key={provider.name}>
+              <Group justify="space-between" gap="xs" wrap="wrap">
+                <Text size="sm" fw={600}>{provider.label}</Text>
+                <span className="setup-conn-state" data-connected={provider.signedIn}>
+                  <span className="setup-conn-dot" aria-hidden />
+                  {provider.signedIn ? 'Connected' : 'Sign-in needed'}
+                </span>
+              </Group>
+              <Anchor href={provider.href} size="xs" className="setup-inline-link" aria-label={`${provider.signedIn ? 'Manage' : 'Connect'} ${provider.account}`}>
+                {provider.signedIn ? provider.account : `Connect ${provider.account}`} <IconArrowUpRight size={13} aria-hidden />
+              </Anchor>
+            </div>
+          ))}
+        </Stack>
+      </Box>
     </Card>
   )
 }
@@ -185,24 +260,44 @@ function ConnectionCheck() {
     }
   }
   return (
-    <Card className="setup-connection-check" id="setup-verify" p="lg">
-      <Group gap="sm" align="flex-start" wrap="nowrap" mb="sm">
-        <span className="setup-step-number setup-step-number-small" aria-hidden="true">3</span>
-        <Box>
-          <Text size="xs" c="dimmed" fw={600} mb={4}>STEP 3 · VERIFY</Text>
-          <Title order={2} size="h3">Check your connection</Title>
+    <Card component="section" className="setup-card" id="setup-verify" p={0} aria-labelledby="setup-verify-heading">
+      <Box className="setup-card-head">
+        <span className="setup-step-number" aria-hidden="true">3</span>
+        <Box miw={0}>
+          <span className="setup-step-label">Step 03 · Verify</span>
+          <Title order={2} size="h2" id="setup-verify-heading" className="setup-card-title">Check your connection</Title>
         </Box>
-      </Group>
-      <Group justify="space-between" gap="md">
-        <Box style={{ flex: '1 1 15rem' }}>
-          <Group gap="xs" mb={5}><IconHeartbeat size={18} aria-hidden /><Text size="sm" fw={600}>Browser reachability</Text></Group>
-          <Text size="sm" c="dimmed">This checks that the gateway responds from this browser. Launch your client to verify its key and model.</Text>
-        </Box>
-        <Button variant="light" loading={testing} onClick={() => void checkConnection()} leftSection={<IconPlugConnected size={16} />}>Check connection</Button>
-      </Group>
-      <div role="status" aria-live="polite">
-        {result && <Group gap="xs" mt="md" align="flex-start" wrap="nowrap"><Box style={{ color: result.ok ? 'var(--data-good)' : 'var(--data-critical)' }}>{result.ok ? <IconCheck size={16} /> : <IconInfoCircle size={16} />}</Box><Text size="sm" style={{ color: result.ok ? 'var(--data-good)' : 'var(--data-critical)' }}>{result.message}</Text></Group>}
-      </div>
+      </Box>
+      <Box className="setup-check-body">
+        <div className="setup-check-row">
+          <Box miw={0} className="setup-check-copy">
+            <Group gap="xs" mb={4} wrap="nowrap">
+              <IconHeartbeat size={17} aria-hidden className="setup-check-glyph" />
+              <Text size="sm" fw={650}>Browser reachability</Text>
+            </Group>
+            <Text size="sm" c="dimmed" lh={1.55}>This checks that the gateway responds from this browser. Launch your client to verify its key and model.</Text>
+          </Box>
+          <Button
+            variant="default"
+            className="setup-check-button press"
+            loading={testing}
+            onClick={() => void checkConnection()}
+            leftSection={<IconPlugConnected size={15} aria-hidden />}
+          >
+            Check connection
+          </Button>
+        </div>
+        <div role="status" aria-live="polite" className="setup-check-result-slot">
+          {result && (
+            <div className="setup-check-result" data-ok={result.ok}>
+              <span className="setup-check-result-icon" aria-hidden>
+                {result.ok ? <IconCheck size={15} /> : <IconInfoCircle size={15} />}
+              </span>
+              <Text size="sm" component="div">{result.message}</Text>
+            </div>
+          )}
+        </div>
+      </Box>
     </Card>
   )
 }

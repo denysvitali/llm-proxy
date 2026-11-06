@@ -6,8 +6,9 @@ import {
 import { useMediaQuery } from '@mantine/hooks'
 import {
   IconActivity, IconBook, IconChartBar, IconDeviceDesktop, IconKeyboard,
-  IconMoonStars, IconPlugConnected, IconSun, IconTerminal2,
+  IconMoonStars, IconPlugConnected, IconSearch, IconSun,
 } from '@tabler/icons-react'
+import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -16,6 +17,10 @@ import { useLiveStatsUpdates } from './useLiveUpdates'
 import { NAV, isActiveNavPath } from './nav'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
 import Fade from './components/Fade'
+import RouteProgress from './components/RouteProgress'
+import CommandPalette, { CommandPaletteButton } from './components/CommandPalette'
+import { springGentle, useMotionPreset } from './motion/tokens'
+import './app-shell.css'
 
 export { Fade }
 
@@ -35,6 +40,7 @@ const SHORTCUTS = [
   { keys: 'g then m', action: 'Go to Models' },
   { keys: 'g then p', action: 'Go to Providers' },
   { keys: 'g then s', action: 'Go to Setup' },
+  { keys: '⌘K', action: 'Open the command menu' },
   { keys: '?', action: 'Show this help' },
 ]
 
@@ -44,6 +50,8 @@ export default function App() {
   const navigate = useNavigate()
   const pageName = NAV.find((item) => isActiveNavPath(pathname, item.path))?.label ?? 'Overview'
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const { reduced } = useMotionPreset()
 
   // Focus main content on route change
   useEffect(() => {
@@ -55,25 +63,33 @@ export default function App() {
     let lastGPress = 0
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target instanceof HTMLElement ? e.target : null
-      if (e.defaultPrevented || e.isComposing || e.repeat || e.ctrlKey || e.metaKey || e.altKey
-        || shortcutsOpen || target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="dialog"]')) {
+      if (e.defaultPrevented || e.isComposing || e.repeat || e.altKey
+        || shortcutsOpen || paletteOpen || target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="dialog"]')) {
         lastGPress = 0
         return
       }
 
-      if (e.key === 'g') {
+      // ⌘K / Ctrl+K opens the command menu from anywhere in the shell.
+      if (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        lastGPress = 0
+        setPaletteOpen(true)
+        return
+      }
+
+      if (e.key === 'g' && !e.metaKey && !e.ctrlKey) {
         lastGPress = Date.now()
         return
       }
 
-      if (e.key === '?') {
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         lastGPress = 0
         setShortcutsOpen(true)
         return
       }
 
-      const isNavigationSequence = Date.now() - lastGPress < 1000
+      const isNavigationSequence = Date.now() - lastGPress < 1000 && !e.metaKey && !e.ctrlKey
       lastGPress = 0
       if (!isNavigationSequence) return
 
@@ -89,24 +105,31 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [navigate, shortcutsOpen])
+  }, [navigate, shortcutsOpen, paletteOpen])
 
   return (
     <AppShell
       layout="alt"
-      header={{ height: isMobile ? 50 : 58 }}
-      navbar={isMobile ? undefined : { width: 248, breakpoint: 'sm' }}
-      footer={isMobile ? { height: 'calc(62px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
+      header={{ height: isMobile ? 52 : 60 }}
+      navbar={isMobile ? undefined : { width: 244, breakpoint: 'sm' }}
+      footer={isMobile ? { height: 'calc(66px + env(safe-area-inset-bottom, 0px))' } : { height: 0, collapsed: true }}
       padding={0}
     >
       <Anchor href="#main" className="app-skip-link">Skip to content</Anchor>
+      <RouteProgress routeKey={pathname} />
       <AppShell.Header className="app-topbar" withBorder={false}>
         <div className="topbar-inner">
           <HeaderBrand subtitle={isMobile ? pageName : undefined} />
           <div className="topbar-actions">
+            {!isMobile && <CommandPaletteButton onClick={() => setPaletteOpen(true)} />}
             <LiveStatusBadge />
+            {isMobile && (
+              <ActionIcon variant="subtle" size={34} aria-label="Open command menu" onClick={() => setPaletteOpen(true)}>
+                <IconSearch size={17} aria-hidden />
+              </ActionIcon>
+            )}
             <Tooltip label="Keyboard shortcuts">
-              <ActionIcon variant="default" size={34} aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
+              <ActionIcon variant="subtle" size={34} aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
                 <IconKeyboard size={17} aria-hidden />
               </ActionIcon>
             </Tooltip>
@@ -123,17 +146,25 @@ export default function App() {
 
       <AppShell.Main id="main" tabIndex={-1}>
         <div className="page-container">
-          <Suspense fallback={<PageLoading name={pageName} />}>
-            <PageErrorBoundary key={pathname}>
-              <Routes>
-                <Route path="/" element={<OverviewPage />} />
-                <Route path="/models" element={<ModelsPage />} />
-                <Route path="/providers" element={<ProvidersPage />} />
-                <Route path="/setup" element={<SetupPage />} />
-                <Route path="*" element={<OverviewPage />} />
-              </Routes>
-            </PageErrorBoundary>
-          </Suspense>
+          <motion.div
+            key={pathname}
+            initial={reduced ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={reduced ? { duration: 0 } : springGentle}
+            className="page-transition"
+          >
+              <Suspense fallback={<PageLoading name={pageName} />}>
+                <PageErrorBoundary key={pathname}>
+                  <Routes>
+                    <Route path="/" element={<OverviewPage />} />
+                    <Route path="/models" element={<ModelsPage />} />
+                    <Route path="/providers" element={<ProvidersPage />} />
+                    <Route path="/setup" element={<SetupPage />} />
+                    <Route path="*" element={<OverviewPage />} />
+                  </Routes>
+                </PageErrorBoundary>
+              </Suspense>
+            </motion.div>
           <Group className="app-footer" justify="space-between" gap="sm" mt="xl">
             <Text size="xs" c="dimmed">llm-proxy · model gateway</Text>
             <Group gap="md">
@@ -150,11 +181,17 @@ export default function App() {
         </AppShell.Footer>
       )}
 
-      <Modal opened={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" centered>
+      <CommandPalette
+        opened={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onShowShortcuts={() => setShortcutsOpen(true)}
+      />
+
+      <Modal opened={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" centered radius="lg">
         <Text size="sm" c="dimmed" mb="lg">Move around your workspace without leaving the keyboard.</Text>
-        <Stack gap="sm">
+        <Stack gap={2}>
           {SHORTCUTS.map(({ keys, action }) => (
-            <Group key={keys} justify="space-between" gap="md">
+            <Group key={keys} justify="space-between" gap="md" className="shortcut-row">
               <Group gap={5}>{keys.split(' then ').map((key, index) => <span key={key}>{index > 0 && <Text component="span" size="xs" c="dimmed" mr={5}>then</Text>}<Kbd>{key}</Kbd></span>)}</Group>
               <Text size="sm" c="dimmed">{action}</Text>
             </Group>
@@ -207,16 +244,21 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   const { pathname } = useLocation()
   return (
     <Box component="nav" aria-label="Main navigation" className={mobile ? 'bottom-navigation' : 'sidebar-nav'}>
-      {NAV.map(({ path, label, icon: Icon }) => (
-        <UnstyledButton key={path} component={NavLink} to={path}
-          className={mobile ? 'bottom-nav-link' : 'sidebar-nav-link'}
-          data-active={isActiveNavPath(pathname, path) || undefined}
-          aria-label={label}
-          aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}>
-          <Icon size={mobile ? 20 : 18} stroke={1.75} aria-hidden />
-          <span className="nav-label">{label}</span>
-        </UnstyledButton>
-      ))}
+      {NAV.map(({ path, label, icon: Icon }) => {
+        const active = isActiveNavPath(pathname, path)
+        return (
+          <UnstyledButton key={path} component={NavLink} to={path}
+            className={mobile ? 'bottom-nav-link' : 'sidebar-nav-link'}
+            data-active={active || undefined}
+            aria-label={label}
+            aria-current={active ? 'page' : undefined}>
+            <span className="nav-icon-wrap">
+              <Icon size={mobile ? 19 : 18} stroke={1.75} aria-hidden />
+            </span>
+            <span className="nav-label">{label}</span>
+          </UnstyledButton>
+        )
+      })}
     </Box>
   )
 }
@@ -226,7 +268,7 @@ function SidebarNavigation() {
   const { data } = useQuery(dashboardQueries.overview())
   return (
     <Box component="nav" aria-label="Main navigation" className="sidebar-nav">
-      <Box className="sidebar-caption" aria-hidden="true">Gateway</Box>
+      <Box className="sidebar-caption" aria-hidden="true">Workspace</Box>
       {NAV.map(({ path, label, description, icon: Icon }) => (
         <MantineNavLink
           key={path}
@@ -238,20 +280,19 @@ function SidebarNavigation() {
           active={isActiveNavPath(pathname, path)}
           aria-label={label}
           aria-current={isActiveNavPath(pathname, path) ? 'page' : undefined}
+          className="sidebar-nav-link"
         />
       ))}
       <Box className="sidebar-caption" aria-hidden="true">Resources</Box>
-      <MantineNavLink component="a" href="/stats" label="Statistics JSON" leftSection={<IconChartBar size={17} stroke={1.75} aria-hidden />} />
-      <MantineNavLink component="a" href="/metrics" label="Prometheus metrics" leftSection={<IconBook size={17} stroke={1.75} aria-hidden />} />
-      <MantineNavLink component={NavLink} to="/setup" label="Connect a client" leftSection={<IconPlugConnected size={17} stroke={1.75} aria-hidden />} />
+      <MantineNavLink component="a" href="/stats" label="Statistics JSON" leftSection={<IconChartBar size={17} stroke={1.75} aria-hidden />} className="sidebar-nav-link" />
+      <MantineNavLink component="a" href="/metrics" label="Prometheus metrics" leftSection={<IconBook size={17} stroke={1.75} aria-hidden />} className="sidebar-nav-link" />
+      <MantineNavLink component={NavLink} to="/setup" label="Connect a client" leftSection={<IconPlugConnected size={17} stroke={1.75} aria-hidden />} className="sidebar-nav-link" />
       <Box className="sidebar-footer">
-        <Group gap={7} wrap="nowrap">
-          <IconTerminal2 size={13} aria-hidden style={{ color: 'var(--muted)', flex: 'none' }} />
-          <Text size="xs" c="dimmed" truncate>
-            {data?.version ? `llm-proxy v${data.version}` : 'llm-proxy'}
-            {data?.authEnabled ? ' · auth on' : ' · auth off'}
-          </Text>
-        </Group>
+        <span className="sidebar-health" aria-hidden data-on={data ? 'true' : 'false'} />
+        <Text size="xs" c="dimmed" truncate>
+          {data?.version ? `v${data.version}` : 'llm-proxy'}
+          {data?.authEnabled ? ' · auth on' : ' · auth off'}
+        </Text>
       </Box>
     </Box>
   )

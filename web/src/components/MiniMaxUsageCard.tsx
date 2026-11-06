@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Button, Divider, Group, Progress, SimpleGrid, Stack, Text, Title } from '@mantine/core'
+import { Alert, Badge, Box, Button, Divider, Group, Progress, Stack, Text, Title } from '@mantine/core'
 import { useIsMutating, useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { claimMiniMaxCheckin, type MiniMaxCheckinPanel, type MiniMaxQuotaWindow, type MiniMaxUsage, type MiniMaxVideoQuota } from '../api'
 import UsageCardShell from './UsageCardShell'
@@ -61,17 +61,21 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
             {checkin.data.claim_result === 2 ? 'Already checked in today.' : `Checked in! +${checkin.data.points.toLocaleString()} credits.`}
             {checkin.data.claim_result === 1 && dateLabel(checkin.data.expire_at_ms) ? ` Credits expire ${dateLabel(checkin.data.expire_at_ms)}.` : ''}
           </Text>}
-          {panel?.days.length ? <SimpleGrid type="container" cols={{ base: 3, '420px': 4, '640px': 7 }} spacing={5} verticalSpacing={5}>
-            {[...panel.days].sort((a, b) => a.day_no - b.day_no).map((day) => (
-              <Box key={day.day_no} p={8} className="usage-checkin-day" data-today={day.is_today} data-claimed={day.status === 3}>
-                <Text size="xs" fw={day.is_today ? 700 : 500}>Day {day.day_no}</Text>
-                <Text fz={12} fw={600} mt={4}>{Number.isFinite(day.points) ? day.points.toLocaleString() : '—'} credits</Text>
-                {day.bonus_points != null && day.bonus_points > 0 && <Text fz={11} c="dimmed">Includes {day.bonus_points.toLocaleString()} bonus</Text>}
-                <Text fz={11} mt={4} style={{ color: day.status === 3 ? 'var(--data-good)' : undefined }} c={day.status === 3 ? undefined : 'dimmed'}>{day.status === 3 ? 'Claimed' : day.status === 2 ? 'Available' : day.status === 4 ? 'Unavailable' : 'Upcoming'}</Text>
-                {day.is_today && <Text fz={11} fw={700}>Today</Text>}
-              </Box>
-            ))}
-          </SimpleGrid> : <Text size="sm" c="dimmed">Check-in schedule is unavailable.</Text>}
+          {panel?.days.length ? (
+            <div className="usage-checkin-strip">
+              {[...panel.days].sort((a, b) => a.day_no - b.day_no).map((day) => (
+                <div key={day.day_no} className="usage-checkin-day" data-today={day.is_today} data-claimed={day.status === 3}>
+                  <Group gap={4} justify="space-between" wrap="nowrap" className="usage-checkin-top">
+                    <Text size="xs" fw={day.is_today ? 700 : 500} className="usage-checkin-dayno">Day {day.day_no}</Text>
+                    {day.is_today && <span className="usage-checkin-today">Today</span>}
+                  </Group>
+                  <Text fz={12} fw={600} className="usage-checkin-points">{Number.isFinite(day.points) ? day.points.toLocaleString() : '—'} credits</Text>
+                  {day.bonus_points != null && day.bonus_points > 0 && <Text fz={11} c="dimmed" className="usage-checkin-bonus">Includes {day.bonus_points.toLocaleString()} bonus</Text>}
+                  <Text fz={11} mt={4} className="usage-checkin-status" style={{ color: day.status === 3 ? 'var(--data-good)' : undefined }} c={day.status === 3 ? undefined : 'dimmed'}>{day.status === 3 ? 'Claimed' : day.status === 2 ? 'Available' : day.status === 4 ? 'Unavailable' : 'Upcoming'}</Text>
+                </div>
+              ))}
+            </div>
+          ) : <Text size="sm" c="dimmed">Check-in schedule is unavailable.</Text>}
           {!claimable && !claimed && !!panel?.days.length && !usage.checkinError && <Text size="xs" c="dimmed">Daily check-in is unavailable right now.</Text>}
         </> : null}
       </Stack>

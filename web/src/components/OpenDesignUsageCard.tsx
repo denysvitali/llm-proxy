@@ -15,7 +15,7 @@ export default function OpenDesignUsageCard({ query }: { query: UseQueryResult<O
           {usage.funding && <Text size="xs" c="dimmed">Requests funded by {fundingLabel(usage.funding)}</Text>}
         </Box>
         {usage.windows.length ? usage.windows.map((window) => <PlanWindow key={`${window.label}-${window.durationSeconds}`} window={window} />)
-          : <Text size="sm" c="dimmed">{usage.eligible ? 'No Coding Plan windows reported.' : 'No Coding Plan on this workspace.'}</Text>}
+          : <Text size="sm" component="div" className="usage-card-empty">{usage.eligible ? 'No Coding Plan windows reported.' : 'No Coding Plan on this workspace.'}</Text>}
       </Stack> : null}
     </UsageCardShell>
   )

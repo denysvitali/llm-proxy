@@ -1,38 +1,42 @@
 import { Stack, Text, Title } from '@mantine/core'
 import type { ReactNode } from 'react'
+import './primitives.css'
 
-// Empty states explain the next step while keeping the surrounding layout stable.
+// Empty states explain the next step while keeping the surrounding layout
+// stable. `action` is optional so every existing caller keeps compiling; the
+// icon tile is decorative and aria-hidden, so the accessible signal stays the
+// role="status" text.
 export function EmptyState({
   icon,
   title,
   hint,
+  action,
 }: {
   icon: ReactNode
   title: string
   hint?: string
+  action?: ReactNode
 }) {
   return (
     <Stack
       role="status"
       aria-atomic="true"
       align="center"
-      py="lg"
-      px="sm"
-      gap={8}
-      miw={0}
-      style={{ overflowWrap: 'anywhere' }}
+      className="empty-state"
+      gap={0}
     >
-      <span aria-hidden="true" className="empty-state-icon">
+      <span aria-hidden="true" className="empty-state-mark">
         {icon}
       </span>
-      <Title order={5} fz={14} ta="center" maw="100%">
+      <Title order={5} className="empty-state-title">
         {title}
       </Title>
       {hint && (
-        <Text size="xs" c="dimmed" ta="center" lh={1.45} w="100%" maw={380}>
+        <Text size="xs" c="dimmed" className="empty-state-hint">
           {hint}
         </Text>
       )}
+      {action != null && <div className="empty-state-action">{action}</div>}
     </Stack>
   )
 }

@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="llm-proxy gateway console: live traffic, model performance, provider health, and client setup." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)" />
+    <link rel="preload" href="/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/Geist-SemiBold.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin />
     <title>llm-proxy</title>
     <script>
       try {
@@ -12,15 +19,20 @@
           ? storedColorScheme
           : 'auto'
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-        document.documentElement.setAttribute(
-          'data-mantine-color-scheme',
-          colorScheme === 'auto' ? (prefersDark ? 'dark' : 'light') : colorScheme,
-        )
+        const resolved = colorScheme === 'auto' ? (prefersDark ? 'dark' : 'light') : colorScheme
+        document.documentElement.setAttribute('data-mantine-color-scheme', resolved)
+        // Paint the canvas before the bundle loads so the first frame is not
+        // a white flash on a dark session.
+        document.documentElement.style.backgroundColor = resolved === 'dark' ? '#111113' : '#fafafa'
       } catch {}
     </script>
-    <script type="module" crossorigin src="/assets/index-Cqkpq2_i.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/IconAlertTriangle-0nagr4LI.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-C5JHzYlW.css">
+    <script type="module" crossorigin src="/assets/index-jozHzjM6.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/primitives-Cdj6wi6B.js">
+    <link rel="modulepreload" crossorigin href="/assets/queries-CmK0zZEy.js">
+    <link rel="modulepreload" crossorigin href="/assets/use-reduced-motion-AScok69u.js">
+    <link rel="modulepreload" crossorigin href="/assets/Fade-DLAae0yl.js">
+    <link rel="stylesheet" crossorigin href="/assets/primitives-BL0tWo8D.css">
+    <link rel="stylesheet" crossorigin href="/assets/index-B6rF6oJN.css">
   </head>
   <body>
     <div id="root"></div>

@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
-import { Box, Button, Divider, Group, Stack, Switch, Text } from '@mantine/core'
+import { Box, Button, Group, Switch, Text } from '@mantine/core'
 import { useClipboard } from '@mantine/hooks'
+import { motion } from 'framer-motion'
 import { IconCheck, IconCopy, IconExclamationCircle } from '@tabler/icons-react'
+import { springSnappy, useMotionPreset } from '../../motion/tokens'
 
 type TokenType = 'comment' | 'string' | 'keyword' | 'flag' | 'variable' | 'number' | 'key' | 'section' | 'boolean' | 'plain'
 
@@ -10,18 +12,24 @@ interface Token {
   value: string
 }
 
+// The snippet pane is a terminal surface in BOTH schemes — a code pane that
+// turns white in light mode stops reading as code. These hues are tuned for
+// the near-black pane, so they do not come from the Mantine light ramp (which
+// would leave strings and keys illegible here).
 const tokenColors: Record<TokenType, string> = {
-  comment: 'var(--mantine-color-dimmed)',
-  string: 'var(--mantine-color-teal-6)',
-  keyword: 'var(--mantine-color-blue-6)',
-  flag: 'var(--mantine-color-cyan-6)',
-  variable: 'var(--mantine-color-orange-6)',
-  number: 'var(--mantine-color-violet-6)',
-  key: 'var(--mantine-color-blue-6)',
-  section: 'var(--mantine-color-blue-7)',
-  boolean: 'var(--mantine-color-violet-6)',
-  plain: 'inherit',
+  comment: '#6f6f75',
+  string: '#7ee2b8',
+  keyword: '#8ab4ff',
+  flag: '#8ab4ff',
+  variable: '#ffb07c',
+  number: '#f0c674',
+  key: '#8ab4ff',
+  section: '#8ab4ff',
+  boolean: '#f0c674',
+  plain: '#e6edf3',
 }
+
+const LANGUAGE_LABEL: Record<'shell' | 'toml', string> = { shell: 'shell', toml: 'toml' }
 
 function tokenize(code: string, language: 'shell' | 'toml'): Token[] {
   if (language === 'toml') return tokenizeToml(code)
@@ -128,26 +136,43 @@ export function Snippet({
   const clipboard = useClipboard({ timeout: 2000 })
   const copied = clipboard.copied
   const tokens = useMemo(() => tokenize(snippet, language), [snippet, language])
+  const { reduced } = useMotionPreset()
 
   return (
-    <Box miw={0}>
-      <Stack gap="sm" p="lg" className="setup-snippet-content">
-        <Text size="sm" fw={600}>{title} configuration</Text>
-        <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{description}</Text>
-        <Group justify="space-between" gap="sm" wrap="wrap" className="setup-snippet-toolbar">
+    <Box miw={0} className="snippet-panel">
+      <div className="snippet-intro">
+        <Text size="sm" fw={650} className="snippet-title">{title} configuration</Text>
+        <Text size="xs" c="dimmed" className="snippet-description">{description}</Text>
+      </div>
+      <div className="snippet-chrome">
+        <div className="snippet-chrome-identity">
+          <span className="snippet-dots" aria-hidden="true">
+            <span /><span /><span />
+          </span>
+          <span className="snippet-lang">{LANGUAGE_LABEL[language]}</span>
+        </div>
+        <div className="snippet-chrome-actions">
           <Switch
-            size="sm"
+            size="xs"
             label="Wrap lines"
             checked={wrapLines}
             onChange={(event) => onWrapLinesChange(event.currentTarget.checked)}
             aria-label={`Wrap ${title} snippet lines`}
+            className="snippet-wrap-switch"
           />
           <Button
-            size="sm"
-            variant={copied ? 'light' : 'filled'}
-            color={copied ? 'teal' : undefined}
-            style={{ minHeight: 44 }}
-            leftSection={copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
+            size="xs"
+            variant={copied ? 'light' : 'default'}
+            className="snippet-copy press"
+            leftSection={copied
+              ? <motion.span
+                  key="check"
+                  className="snippet-copy-check"
+                  initial={reduced ? false : { scale: 0.5, rotate: -18, opacity: 0 }}
+                  animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                  transition={reduced ? { duration: 0 } : springSnappy}
+                ><IconCheck size={14} /></motion.span>
+              : <IconCopy size={14} />}
             onClick={() => clipboard.copy(snippet)}
             aria-label={`Copy ${title} snippet`}
             disabled={snippet.length === 0}
@@ -155,23 +180,14 @@ export function Snippet({
             {/* live region announces the idle→copied flip without moving focus */}
             <span aria-live="polite">{copied ? 'Copied' : 'Copy snippet'}</span>
           </Button>
-        </Group>
-        {clipboard.error && (
-          <Group gap="xs" role="alert">
-            <IconExclamationCircle size={16} style={{ flexShrink: 0 }} />
-            <Text size="sm" style={{ color: 'var(--data-warning)' }}>
-              Clipboard access is unavailable. Select the snippet below and copy it manually.
-            </Text>
-          </Group>
-        )}
-      </Stack>
-      <Divider />
+        </div>
+      </div>
       <pre
         className="snippet-block"
         tabIndex={0}
         role="region"
         aria-label={`${title} setup snippet`}
-        style={{ maxWidth: '100%', whiteSpace: wrapLines ? 'pre-wrap' : 'pre', overflowWrap: wrapLines ? 'anywhere' : 'normal' }}
+        style={{ whiteSpace: wrapLines ? 'pre-wrap' : 'pre', overflowWrap: wrapLines ? 'anywhere' : 'normal' }}
       >
         <code>
           {tokens.map((token, i) => (
@@ -181,6 +197,14 @@ export function Snippet({
           ))}
         </code>
       </pre>
+      {clipboard.error && (
+        <Group gap="xs" role="alert" className="snippet-error" wrap="nowrap" align="flex-start">
+          <IconExclamationCircle size={16} style={{ flexShrink: 0 }} aria-hidden />
+          <Text size="sm">
+            Clipboard access is unavailable. Select the snippet below and copy it manually.
+          </Text>
+        </Group>
+      )}
     </Box>
   )
 }

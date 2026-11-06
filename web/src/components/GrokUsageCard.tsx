@@ -79,7 +79,7 @@ export default function GrokUsageCard({ query }: { query: UseQueryResult<GrokUsa
           )}
         </>
       ) : !error ? (
-        <Text size="sm" c="dimmed">No billing data is available for this account.</Text>
+        <Text size="sm" component="div" className="usage-card-empty">No billing data is available for this account.</Text>
       ) : null}
     </UsageCardShell>
   )

@@ -42,7 +42,7 @@ export default function ZcodeUsageCard({ query }: { query: UseQueryResult<ZcodeQ
           {usage.balances.length === 0 && <Text size="sm" c="dimmed">No quota balances are available for this account.</Text>}
         </Stack>
       ) : usage || !error ? (
-        <Text size="sm" c="dimmed">No plan usage is available for this account.</Text>
+        <Text size="sm" component="div" className="usage-card-empty">No plan usage is available for this account.</Text>
       ) : null}
       <Box mt="md"><ZcodeOffers /></Box>
     </UsageCardShell>

@@ -26,15 +26,27 @@ export function TimeRangeControl({
       value={value}
       onChange={onChange}
       disabled={disabled}
+      transitionDuration={reduceMotion ? 0 : 220}
+      radius="md"
       styles={{
-        root: { maxWidth: '100%', flexShrink: 0 },
+        root: {
+          maxWidth: '100%',
+          flexShrink: 0,
+          background: 'var(--surface-3, var(--sunken))',
+          padding: 3,
+          border: '1px solid var(--hairline)',
+        },
+        indicator: { boxShadow: 'var(--shadow-subtle)', border: '1px solid var(--hairline-subtle, var(--hairline))' },
         label: {
-          minHeight: 44,
+          minHeight: 38,
           minWidth: 44,
+          paddingInline: 12,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          transitionDuration: reduceMotion ? '0ms' : undefined,
+          fontWeight: 600,
+          fontSize: 12,
+          letterSpacing: '-0.01em',
         },
       }}
       data={ranges.map(({ value, description }) => ({

@@ -183,12 +183,12 @@ export default function ProvidersPage() {
                   ]}
                 />
               </div>
-              <Group justify="space-between" gap="xs">
-                <Text size="xs" c="dimmed" aria-live="polite">
+              <Group justify="space-between" gap="xs" className="catalog-provider-count">
+                <Text size="xs" c="dimmed" aria-live="polite" className="tabular">
                   {visible.length} of {configured} providers
                 </Text>
                 <Text size="xs" c="dimmed" className="catalog-health-note">
-                  <IconCircleCheck size={13} />
+                  <IconCircleCheck size={13} aria-hidden />
                   Health from recorded requests
                 </Text>
               </Group>
@@ -240,7 +240,7 @@ export default function ProvidersPage() {
         opened={!!selected}
         onClose={() => setSelectedName(null)}
         position="right"
-        size={mobile ? '100%' : 'lg'}
+        size={mobile ? '100%' : 680}
         className="catalog-detail-drawer"
         closeButtonProps={{ ...{ 'data-autofocus': true }, 'aria-label': 'Close provider details', size: 44 }}
         styles={{ title: { minWidth: 0, flex: 1 }, close: { flexShrink: 0 } }}

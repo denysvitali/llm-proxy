@@ -1,18 +1,60 @@
-/* Console tokens — one slim sheet replacing the old per-page stylesheets.
-   Components lean on Mantine primitives; this file only carries scheme
-   tokens, a few harness-stable hooks (.page-container, .bottom-navigation,
-   .catalog-model-entry, .models-table, .setup-sequence), and effects Mantine
-   has no primitive for (the live LED pulse). */
+/* EasyUI console tokens — the single source of surface, type and motion truth.
+
+   Light is easyui.site's :root palette; dark is its .dark palette, with the
+   dark card kept at #171a21 because web/src/palette.ts chart series were
+   validated against exactly that surface (light cards are #ffffff). The one
+   blue (#3B82F6) is the live indicator; everything interactive speaks in ink.
+
+   Layers: --surface-1 is a card, --surface-2 a raised block inside it, and
+   --surface-3 the sunken input/track. Shadows are named by elevation, never
+   by component, so a drawer and a dropdown agree on what "floating" means. */
+
+/* Scheme-independent tokens: motion, easing, radii and the numeric stack are
+   identical in light and dark, so they live on bare :root. Declaring them
+   inside one scheme block leaves them unresolved in the other scheme. */
+:root {
+  /* Motion vocabulary mirrors src/motion/tokens.ts. */
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --motion-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.2, 0, 0, 1);
+
+  --radius-control: 8px;
+  --radius-card: 14px;
+  --radius-pill: 999px;
+  --numeric-font: 'JetBrains Mono', ui-monospace, monospace;
+}
 
 :root[data-mantine-color-scheme='light'] {
   /* EasyUI light palette (easyui.site tokens.css :root) */
   --canvas: #fafafa;
   --card: #ffffff;
-  --header: rgba(255, 255, 255, 0.85);
+  --header: rgba(255, 255, 255, 0.78);
   --sunken: #f4f4f5;
   --hairline: #e4e4e7;
+  --hairline-strong: #d4d4d8;
+  --hairline-subtle: #ededef;
   --ink: #0a0a0a;
+  --ink-2: #52525b;
   --muted: #71717a;
+  --subtle: #a1a1aa;
+
+  --surface-1: #ffffff;
+  --surface-2: #f7f7f8;
+  --surface-3: #f4f4f5;
+  --accent: #0a0a0a;
+  --accent-brand: #0a0a0a;
+  --accent-soft: rgba(10, 10, 10, 0.05);
+  --accent-contrast: #ffffff;
+  --accent-ring: rgba(10, 10, 10, 0.16);
+  --interactive-card-hover: #f7f7f8;
+  --indicator-active: #3b82f6;
+
+  --shadow-subtle: 0 1px 2px 0 rgba(15, 15, 20, 0.05), 0 0 0 1px rgba(15, 15, 20, 0.03);
+  --shadow-raised: 0 1px 2px rgba(15, 15, 20, 0.05), 0 10px 24px -18px rgba(15, 15, 20, 0.16), 0 0 0 1px rgba(15, 15, 20, 0.035);
+  --shadow-lift: 0 2px 4px rgba(15, 15, 20, 0.05), 0 18px 32px -20px rgba(15, 15, 20, 0.22), 0 0 0 1px rgba(15, 15, 20, 0.05);
+  --shadow-overlay: 0 24px 56px -24px rgba(15, 15, 20, 0.28), 0 0 0 1px rgba(15, 15, 20, 0.05);
 
   --data-good: #157748;
   --data-warning: #946200;
@@ -26,8 +68,10 @@
   --mantine-color-text: var(--ink);
   --mantine-color-dimmed: var(--muted);
   --mantine-color-default-border: var(--hairline);
-  --mantine-color-default-hover: #f1f3f6;
+  --mantine-color-default-hover: #f2f2f3;
   --mantine-color-default-color: var(--ink);
+  --mantine-color-anchor: var(--ink);
+  --mantine-color-placeholder: var(--muted);
 }
 
 :root[data-mantine-color-scheme='dark'] {
@@ -35,11 +79,31 @@
      validated against exactly that surface. */
   --canvas: #111113;
   --card: #171a21;
-  --header: rgba(17, 17, 19, 0.85);
-  --sunken: #18181a;
-  --hairline: #29292c;
+  --header: rgba(17, 17, 19, 0.78);
+  --sunken: #1a1a1d;
+  --hairline: #2a2a2e;
+  --hairline-strong: #38383d;
+  --hairline-subtle: #232327;
   --ink: #f2f2f3;
+  --ink-2: #c4c4c9;
   --muted: #a1a1a6;
+  --subtle: #6f6f75;
+
+  --surface-1: #171a21;
+  --surface-2: #1c1c1f;
+  --surface-3: #202023;
+  --accent: #f2f2f3;
+  --accent-brand: #f2f2f3;
+  --accent-soft: rgba(242, 242, 243, 0.07);
+  --accent-contrast: #111113;
+  --accent-ring: rgba(242, 242, 243, 0.22);
+  --interactive-card-hover: #1c1c1f;
+  --indicator-active: #3b82f6;
+
+  --shadow-subtle: 0 1px 2px 0 rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(242, 242, 243, 0.025);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.24), 0 12px 26px -18px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(242, 242, 243, 0.035);
+  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.26), 0 20px 34px -20px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(242, 242, 243, 0.06);
+  --shadow-overlay: 0 28px 60px -26px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(242, 242, 243, 0.06);
 
   --data-good: #59d99a;
   --data-warning: #e7bc58;
@@ -55,6 +119,35 @@
   --mantine-color-default-border: var(--hairline);
   --mantine-color-default-hover: #202023;
   --mantine-color-default-color: var(--ink);
+  --mantine-color-anchor: var(--ink);
+  --mantine-color-placeholder: var(--muted);
+}
+
+/* ---------- Mantine variable guard ----------
+   Mantine renders its generated variable sheet into <head> at runtime, after
+   this stylesheet. Same specificity means insertion order decides, so the
+   neutral overrides above could be silently replaced (dark body would fall
+   back to dark-7 rather than the validated card surface). One extra :root
+   raises specificity, so these tokens always win regardless of order. */
+:root:root[data-mantine-color-scheme='light'] {
+  --mantine-color-body: var(--card);
+  --mantine-color-text: var(--ink);
+  --mantine-color-dimmed: var(--muted);
+  --mantine-color-default-border: var(--hairline);
+  --mantine-color-default-hover: #f2f2f3;
+  --mantine-color-default-color: var(--ink);
+  --mantine-color-anchor: var(--ink);
+  --mantine-color-placeholder: var(--muted);
+}
+:root:root[data-mantine-color-scheme='dark'] {
+  --mantine-color-body: var(--card);
+  --mantine-color-text: var(--ink);
+  --mantine-color-dimmed: var(--muted);
+  --mantine-color-default-border: var(--hairline);
+  --mantine-color-default-hover: #202023;
+  --mantine-color-default-color: var(--ink);
+  --mantine-color-anchor: var(--ink);
+  --mantine-color-placeholder: var(--muted);
 }
 
 /* Vendored from vercel/geist-font (OFL-1.1) and JetBrainsMono (OFL-1.1). */
@@ -101,7 +194,13 @@
   font-display: swap;
 }
 
-html { scroll-behavior: smooth; }
+html {
+  scroll-behavior: smooth;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
@@ -110,6 +209,20 @@ body {
   background: var(--canvas);
   color: var(--ink);
   min-height: 100vh;
+  letter-spacing: -0.011em;
+}
+
+/* Custom scrollbar, matching EasyUI's thin track. */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ---------- light color scheme transition ---------- */
+:root[data-mantine-color-scheme] body,
+:root[data-mantine-color-scheme] .mantine-AppShell-header,
+:root[data-mantine-color-scheme] .mantine-AppShell-navbar {
+  transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out);
 }
 
 /* ---------- utilities ---------- */
@@ -128,6 +241,56 @@ body {
   border: 0;
 }
 
+/* Hover lift for cards that open something. Disabled for reduced motion. */
+.lift {
+  transition: transform var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .lift:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+}
+.press { transition: transform var(--motion-fast) var(--ease-out); }
+.press:active { transform: scale(0.985); }
+@media (prefers-reduced-motion: reduce) {
+  .lift, .press { transition: none; }
+  .press:active { transform: none; }
+  .lift:hover { transform: none; }
+}
+
+/* Keyboard focus: a 2px accent ring with a 2px offset, never a browser glow. */
+.focus-ring:focus-visible,
+.focus-ring *:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* Raised translucent rail used by the top bar and mobile bottom bar. */
+.glass {
+  background: var(--header);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+}
+
+/* Table rows: a tinted hover band with the shared motion token. Apply to the
+   Table root; cells carry the paint so <tr> stays layout-only. */
+.row-hover tbody tr { transition: background-color var(--motion-fast) var(--ease-out); }
+@media (hover: hover) {
+  .row-hover tbody tr:hover > * { background: var(--interactive-card-hover); }
+}
+
+/* Section micro-label (DESIGN.md): 11px/650/+0.08em uppercase muted. Pages
+   that do not use PageSection can label a block with this directly. */
+.page-section-title,
+.micro-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.page-section-title { margin: 0; }
+
 .app-skip-link {
   position: absolute;
   left: -9999px;
@@ -141,7 +304,7 @@ body {
   font-size: 13px;
   text-decoration: none;
 }
-.app-skip-link:focus { left: 0; }
+.app-skip-link:focus { left: 0; outline: 2px solid var(--accent-ring); }
 
 /* ---------- shell ---------- */
 
@@ -149,19 +312,26 @@ body {
   width: 100%;
   max-width: 1480px;
   margin: 0 auto;
-  padding: 22px clamp(16px, 3vw, 32px) 48px;
+  padding: 26px clamp(16px, 3vw, 34px) 56px;
 }
 
+/* Floating glass rail. Mantine paints the header from --mantine-color-body;
+   the hairline here is intentionally lighter than the old rule so it reads as
+   an edge of light rather than a box outline. Both selectors are kept: the
+   static class is the reliable one, the shorthand covers portalled headers. */
+.app-topbar,
+.app-topbar .mantine-AppShell-header,
 .app-topbar .mantine-AppShell-section {
   background: var(--header);
-  border-bottom: 1px solid var(--hairline);
-  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--hairline-subtle);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
 }
 
 .topbar-inner {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
   height: 100%;
   padding: 0 clamp(12px, 2vw, 20px);
   min-width: 0;
@@ -175,7 +345,9 @@ body {
   color: inherit;
   border-radius: 10px;
   padding: 4px 6px;
+  transition: background-color var(--motion-fast) ease;
 }
+.brand-link:hover { background: var(--sunken); }
 .brand-mark {
   width: 30px;
   height: 30px;
@@ -185,9 +357,10 @@ body {
   color: var(--card);
   display: grid;
   place-items: center;
+  box-shadow: var(--shadow-subtle);
 }
 .brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
-.brand-text strong { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+.brand-text strong { font-size: 14px; font-weight: 700; letter-spacing: -0.02em; }
 .brand-text small {
   font-size: 11px;
   color: var(--muted);
@@ -200,60 +373,108 @@ body {
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
   flex: none;
 }
+/* Segmented color-scheme control: one rounded track, no slab edges. */
+.color-scheme-control { border-radius: 9px; }
 
-/* Live traffic indicator */
-.live-status { cursor: default; gap: 7px; }
+/* Live traffic indicator: the one reserved blue, ink otherwise. */
+.live-status {
+  cursor: default;
+  gap: 7px;
+  border-radius: 999px;
+  padding-inline: 9px;
+  font-variant-numeric: tabular-nums;
+}
 .live-status[data-connected='true'] {
-  border-color: color-mix(in srgb, var(--data-good) 45%, var(--hairline));
-  color: var(--data-good);
+  color: var(--indicator-active);
+  background: color-mix(in srgb, var(--indicator-active) 9%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--indicator-active) 26%, var(--hairline));
 }
 .live-status[data-connected='false'] { color: var(--muted); }
-.live-led {
+.live-status-text { font-weight: 600; letter-spacing: 0.01em; }
+.live-status .live-led {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--muted);
   flex: none;
 }
-.live-status[data-connected='true'] .live-led { background: var(--data-good); }
+.live-status[data-connected='true'] .live-led {
+  background: var(--indicator-active);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--indicator-active) 18%, transparent);
+}
 .live-status[data-connected='true'] .live-led[data-pulse='on'] { animation: live-blip 900ms ease-out; }
 @keyframes live-blip {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--data-good) 55%, transparent); transform: scale(1); }
-  35% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--data-good) 22%, transparent); transform: scale(1.3); }
-  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--data-good) 0%, transparent); transform: scale(1); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--indicator-active) 55%, transparent); transform: scale(1); }
+  35% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--indicator-active) 16%, transparent); transform: scale(1.25); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--indicator-active) 0%, transparent); transform: scale(1); }
 }
 
-/* Fresh rows in the activity feed: a recently landed attempt fades out */
+/* Fresh rows in the activity feed: a recently landed attempt washes in. */
 [data-fresh] { animation: fresh-land 1.8s ease-out; }
 @keyframes fresh-land {
-  0% { background-color: color-mix(in srgb, var(--ink) 10%, var(--card)); }
+  0% { background-color: color-mix(in srgb, var(--indicator-active) 12%, var(--card)); }
   100% { background-color: transparent; }
 }
 
 /* Desktop sidebar nav (AppShell.Navbar) */
-.sidebar-nav { display: flex; flex-direction: column; height: 100%; padding: 12px; gap: 2px; }
-.sidebar-caption {
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding: 14px 12px 6px;
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 10px;
+  gap: 2px;
+  background: var(--canvas);
+  border-right: 1px solid var(--hairline-subtle);
 }
-.sidebar-footer { margin-top: auto; padding: 10px 12px 4px; }
+.sidebar-caption {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--subtle);
+  padding: 16px 12px 6px;
+}
+.sidebar-footer {
+  margin-top: auto;
+  padding: 12px 12px 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-top: 1px solid var(--hairline-subtle);
+}
+.sidebar-nav .mantine-NavLink-root {
+  position: relative;
+  border-radius: 9px;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav .mantine-NavLink-root[data-active] {
+  background: var(--surface-2);
+  box-shadow: var(--shadow-subtle);
+}
+.sidebar-nav .mantine-NavLink-root[data-active]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent-brand);
+}
 
-/* Mobile bottom navigation — must stay a real <nav> with visible links */
+/* Mobile bottom navigation — must stay a real <nav> with visible links. */
 .bottom-navigation {
   display: flex;
   height: 100%;
   align-items: stretch;
   background: var(--header);
   border-top: 1px solid var(--hairline);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .bottom-nav-link {
@@ -264,9 +485,11 @@ body {
   justify-content: center;
   gap: 3px;
   min-width: 0;
+  min-height: 44px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 550;
+  letter-spacing: 0.01em;
   text-decoration: none;
   padding: 8px 4px;
 }
@@ -279,37 +502,53 @@ body {
   align-items: flex-end;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px 16px;
+  gap: 12px 16px;
 }
 .page-header-copy { min-width: 0; }
-.page-title { font-size: clamp(20px, 2.4vw, 24px); letter-spacing: -0.015em; }
-.page-subtitle { color: var(--muted); font-size: 13px; margin-top: 3px; }
+.page-title {
+  font-size: clamp(22px, 2.4vw, 26px);
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+}
+.page-subtitle { color: var(--muted); font-size: 13px; margin-top: 5px; letter-spacing: -0.005em; }
 
 .empty-state-icon {
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 14px;
   color: var(--muted);
-  background: var(--sunken);
+  background: var(--surface-2);
   border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-subtle);
 }
 
+.stat-tile {
+  box-shadow: var(--shadow-raised);
+  border: 1px solid var(--hairline);
+}
 .stat-tile-icon {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  background: var(--sunken);
+  border-radius: 9px;
+  background: var(--surface-2);
   color: var(--ink);
   border: 1px solid var(--hairline);
 }
 .stat-tile[data-accent='orange'] .stat-tile-icon {
-  background: color-mix(in srgb, var(--data-warning) 13%, var(--card));
+  background: color-mix(in srgb, var(--data-warning) 12%, var(--card));
   color: var(--data-warning);
+  border-color: color-mix(in srgb, var(--data-warning) 22%, var(--hairline));
+}
+.stat-tile[data-attention='true'] .stat-tile-value { color: var(--data-warning); }
+.stat-tile[data-accent='red'] .stat-tile-icon {
+  background: color-mix(in srgb, var(--data-critical) 12%, var(--card));
+  color: var(--data-critical);
+  border-color: color-mix(in srgb, var(--data-critical) 22%, var(--hairline));
 }
 
 /* Model catalog rows */
@@ -323,8 +562,9 @@ body {
   padding: 10px 12px;
   background: var(--card);
   min-width: 0;
+  box-shadow: var(--shadow-subtle);
 }
-.catalog-model-entry:hover { border-color: var(--ink); }
+.catalog-model-entry:hover { border-color: var(--hairline-strong); }
 .catalog-model-id {
   font-family: var(--mantine-font-family-monospace);
   font-size: 12.5px;
@@ -333,9 +573,9 @@ body {
 }
 
 .models-table thead th {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 650;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
   white-space: nowrap;
@@ -361,6 +601,7 @@ body {
   border-radius: 12px;
   background: var(--card);
   overflow: hidden;
+  box-shadow: var(--shadow-subtle);
 }
 .setup-sequence a {
   flex: 1 1 0;
@@ -380,11 +621,13 @@ body {
   height: 24px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 7px;
+  font-family: var(--numeric-font);
   font-size: 11px;
   font-weight: 700;
   color: var(--card);
   background: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 .setup-sequence strong { display: block; font-size: 13px; font-weight: 600; line-height: 1.3; }
 .setup-sequence small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
@@ -402,7 +645,7 @@ body {
   max-width: 100%;
   font-family: var(--mantine-font-family-monospace);
   font-size: 12.5px;
-  line-height: 1.6;
+  line-height: 1.65;
   background: var(--sunken);
   color: var(--ink);
 }
@@ -413,25 +656,41 @@ body {
   height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 700;
   color: var(--card);
   background: var(--ink);
+  font-family: var(--numeric-font);
+  font-variant-numeric: tabular-nums;
+}
+/* Compact variant used for steps 2 and 3 inside the Setup cards. */
+.setup-step-number-small {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+  font-size: 12px;
 }
 
-/* Overview: keep the key numbers prominent without crowding narrow screens. */
+/* Overview: cards carry elevation; the shell owns the rest. */
 .overview-stat-grid .stat-tile {
-  box-shadow: 0 1px 3px rgba(20, 25, 40, 0.04);
+  box-shadow: var(--shadow-raised);
 }
 .overview-summary-footer {
   padding: 0 2px;
 }
 .overview-chart-card {
-  box-shadow: 0 1px 3px rgba(20, 25, 40, 0.04);
+  box-shadow: var(--shadow-raised);
 }
+
+.app-footer {
+  padding-top: 22px;
+  border-top: 1px solid var(--hairline-subtle);
+  margin-top: 34px !important;
+}
+
 @media (max-width: 48em) {
-  .page-container { padding-top: 14px; }
+  .page-container { padding-top: 16px; padding-bottom: 28px; }
   .topbar-inner { gap: 8px; padding-inline: 10px; }
   .brand-link { gap: 7px; padding: 2px; }
   .brand-mark { width: 28px; height: 28px; }
@@ -447,10 +706,12 @@ body {
   .overview-stat-grid .stat-tile { padding: 12px; }
   .overview-stat-grid .stat-tile > .mantine-Group-root { margin-bottom: 6px; }
   .overview-summary-footer { justify-content: flex-start; column-gap: 16px; row-gap: 4px; margin-top: 8px; }
+  .app-footer { margin-top: 22px !important; }
 }
 
 .page-loading { padding-top: 8px; }
 
 @media (prefers-reduced-motion: reduce) {
   [data-fresh], .live-status .live-led[data-pulse='on'] { animation: none; }
+  .lift:hover { transform: none; }
 }

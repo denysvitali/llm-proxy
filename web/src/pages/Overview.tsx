@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react'
-import { Accordion, Badge, Box, Button, Card, Group, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
-import { IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff, IconShieldCheck, IconWallet } from '@tabler/icons-react'
+import { Badge, Button, Card, Group, Skeleton, Stack, Text } from '@mantine/core'
+import {
+  IconActivity, IconArrowUpRight, IconBolt, IconCoins, IconInboxOff,
+  IconPlugConnected, IconShieldCheck,
+} from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { dashboardQueries } from '../queries'
-import type { ModelStat, Overview } from '../api'
+import type { ModelStat, Overview, OverviewBackend } from '../api'
 import GrokUsageCard from '../components/GrokUsageCard'
 import ZcodeUsageCard from '../components/ZcodeUsageCard'
 import MiniMaxUsageCard from '../components/MiniMaxUsageCard'
@@ -12,12 +15,14 @@ import OpenDesignUsageCard from '../components/OpenDesignUsageCard'
 import { PageHeader } from '../components/PageHeader'
 import { PageSection } from '../components/PageSection'
 import { clampRate, fmtInt, fmtTps } from '../format'
-import StatTile from '../components/StatTile'
 import { EmptyState } from '../components/EmptyState'
 import Fade from '../components/Fade'
 import ErrorRetryCard from '../components/ErrorRetryCard'
 import OverviewHistory from '../components/overview/OverviewHistory'
 import OverviewTraffic from '../components/overview/OverviewTraffic'
+import OverviewHeroBand, { HeroStat, OverviewSummaryMeta, RequestSparkline } from '../components/overview/OverviewHero'
+import OverviewReveal from '../components/overview/OverviewReveal'
+import { OverviewSubscriptions } from '../components/overview/OverviewSubscriptions'
 import { RecentRequestsCard, UpstreamErrorsCard } from '../components/overview/OverviewActivity'
 import './overview.css'
 
@@ -53,9 +58,11 @@ export default function OverviewPage() {
       speed: speeds.length ? (speeds.length % 2 ? speeds[middle] : (speeds[middle - 1] + speeds[middle]) / 2) : Number.NaN,
     }
   }, [models])
-  const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax', openDesignUsageEnabled && 'Open Design'].filter(Boolean)
-  // In the two-column grid, an odd last card spans the row instead of leaving a hole.
-  const usageSpan = (name: string) => usageNames.length > 1 && usageNames.length % 2 === 1 && usageNames[usageNames.length - 1] === name ? { gridColumn: '1 / -1' } : undefined
+  const modelsWithTraffic = models.filter((model) => model.requests > 0).length
+  const successRatio = totals.requests ? totals.successes / totals.requests : Number.NaN
+  const successPercent = totals.requests ? `${(100 * clampRate(successRatio)).toFixed(1)}%` : '—'
+
+  const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax', openDesignUsageEnabled && 'Open Design'].filter((name): name is string => Boolean(name))
 
   const coreFailed = statsQ.isError && ovQ.isError && seriesQ.isError && errorsQ.isError && requestsQ.isError
   return (
@@ -80,98 +87,156 @@ export default function OverviewPage() {
             onRetry={() => ovQ.refetch({ cancelRefetch: false })} retrying={ovQ.isFetching} />
         ) : null}
 
-        <section aria-label="Traffic summary">
-          {statsQ.data ? <>
-            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md" className="overview-stat-grid">
-              <StatTile label="Requests" value={fmtInt(totals.requests)} hint={`${fmtInt(totals.successes)} succeeded`} icon={<IconActivity size={16} />} />
-              <StatTile label="Success rate" value={totals.requests ? `${(100 * totals.successes / totals.requests).toFixed(1)}%` : '—'}
-                hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'} icon={<IconShieldCheck size={16} />} accent={totals.requests && totals.successes / totals.requests < 0.99 ? 'orange' : undefined} />
-              <StatTile label="Tokens served" value={fmtInt(totals.input + totals.output)} hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`} icon={<IconCoins size={16} />} />
-              <StatTile label="Median tok/s" value={fmtTps(totals.speed)} hint="Median of active model p50s" icon={<IconBolt size={16} />} />
-            </SimpleGrid>
-            <Group className="overview-summary-footer" justify="space-between" gap="xs" mt="sm" wrap="wrap">
-              <Text size="xs" c="dimmed">{models.filter((model) => model.requests > 0).length} {models.filter((model) => model.requests > 0).length === 1 ? 'model' : 'models'} with traffic</Text>
-              <Group gap="md"><Text size="xs" c="dimmed"><Text span inherit fw={600}>{fmtInt(totals.toolCalls)}</Text> tool calls</Text><Text size="xs" c={totals.toolErrors ? 'red' : 'dimmed'}><Text span inherit fw={600}>{fmtInt(totals.toolErrors)}</Text> tool errors{totals.toolCalls > 0 ? ` · ${(100 * clampRate(totals.toolErrors / totals.toolCalls)).toFixed(1)}%` : ''}</Text></Group>
-            </Group>
-          </> : statsQ.isPending ? (
-            <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md" className="overview-stat-grid">
-              {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={118} radius="lg" />)}
-            </SimpleGrid>
-          ) : null}
-          {!coreFailed && statsQ.isError ? (
-            <ErrorRetryCard title="Couldn't load proxy statistics" message={statsQ.error instanceof Error ? `Model statistics are temporarily unavailable. ${statsQ.error.message}` : 'Model statistics are temporarily unavailable.'}
-              onRetry={() => statsQ.refetch({ cancelRefetch: false })} retrying={statsQ.isFetching} />
-          ) : !coreFailed && models.length === 0 && !statsQ.isPending ? (
-            <EmptyState icon={<IconInboxOff size={20} />} title="No model traffic yet" hint="Send a request through the proxy and per-model stats will land here." />
-          ) : null}
-        </section>
+        <OverviewReveal index={0}>
+          <section aria-label="Traffic summary">
+            {statsQ.data ? <>
+              <OverviewHeroBand>
+                <HeroStat
+                  primary
+                  label="Requests"
+                  value={fmtInt(totals.requests)}
+                  hint={`${fmtInt(totals.successes)} succeeded`}
+                  icon={<IconActivity size={15} />}
+                >
+                  <RequestSparkline points={seriesQ.data?.series.requests} />
+                </HeroStat>
+                <HeroStat
+                  label="Success rate"
+                  value={successPercent}
+                  hint={totals.requests ? `${fmtInt(totals.requests - totals.successes)} unsuccessful` : 'No recorded attempts'}
+                  icon={<IconShieldCheck size={15} />}
+                  accent={totals.requests && successRatio < 0.99 ? 'warning' : undefined}
+                />
+                <HeroStat
+                  label="Tokens served"
+                  value={fmtInt(totals.input + totals.output)}
+                  hint={`${fmtInt(totals.input)} in · ${fmtInt(totals.output)} out`}
+                  icon={<IconCoins size={15} />}
+                />
+                <HeroStat
+                  label="Median tok/s"
+                  value={fmtTps(totals.speed)}
+                  hint="Median of active model p50s"
+                  icon={<IconBolt size={15} />}
+                />
+              </OverviewHeroBand>
+              <OverviewSummaryMeta modelsWithTraffic={modelsWithTraffic} toolCalls={totals.toolCalls} toolErrors={totals.toolErrors} />
+            </> : statsQ.isPending ? (
+              <OverviewHeroBand>
+                {Array.from({ length: 4 }, (_, i) => (
+                  <div key={i} className="stat-tile overview-hero-tile" aria-hidden>
+                    <Skeleton height={11} width={64} radius="sm" />
+                    <Skeleton height={28} width={96} radius="sm" mt={12} />
+                    <Skeleton height={12} width={72} radius="sm" mt={10} />
+                  </div>
+                ))}
+              </OverviewHeroBand>
+            ) : null}
+            {!coreFailed && statsQ.isError ? (
+              <ErrorRetryCard title="Couldn't load proxy statistics" message={statsQ.error instanceof Error ? `Model statistics are temporarily unavailable. ${statsQ.error.message}` : 'Model statistics are temporarily unavailable.'}
+                onRetry={() => statsQ.refetch({ cancelRefetch: false })} retrying={statsQ.isFetching} />
+            ) : !coreFailed && statsQ.data && models.length === 0 ? (
+              <EmptyState icon={<IconInboxOff size={20} />} title="No model traffic yet" hint="Send a request through the proxy and per-model stats will land here." />
+            ) : null}
+          </section>
+        </OverviewReveal>
 
-        {!coreFailed && <OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} />}
+        {!coreFailed && <OverviewReveal index={1}><OverviewHistory query={seriesQ} range={range} onRangeChange={setRange} /></OverviewReveal>}
 
-        {!coreFailed && usageNames.length > 0 && <Accordion variant="separated" radius="lg" className="overview-subscriptions" value="subscriptions" onChange={() => {}}>
-          <Accordion.Item value="subscriptions">
-            <Accordion.Control icon={<IconWallet size={18} stroke={1.6} />}>
-              <Group justify="space-between" gap="xs" pr="sm" miw={0}>
-                <Box><Text size="sm" fw={600}>Subscription usage</Text><Text size="xs" c="dimmed">{usageNames.join(' · ')} account quotas</Text></Box>
-                <Badge variant="light" color="gray" tt="none">{usageNames.length} accounts</Badge>
-              </Group>
-            </Accordion.Control>
-            <Accordion.Panel><SimpleGrid cols={{ base: 1, lg: Math.min(usageNames.length, 2) }} spacing="md" className="overview-usage-grid">
-              {grokUsageEnabled && <Box style={usageSpan('Grok')}><GrokUsageCard query={grokUsageQ} /></Box>}
-              {zcodeUsageEnabled && <Box style={usageSpan('ZCode')}><ZcodeUsageCard query={zcodeQuotaQ} /></Box>}
-              {minimaxUsageEnabled && <Box style={usageSpan('MiniMax')}><MiniMaxUsageCard query={minimaxUsageQ} /></Box>}
-              {openDesignUsageEnabled && <Box style={usageSpan('Open Design')}><OpenDesignUsageCard query={openDesignUsageQ} /></Box>}
-            </SimpleGrid></Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>}
-
-        {!coreFailed && (
-          <PageSection title="Recent activity" description="Retained upstream attempts and failures · updates live and every 30 seconds · independent of chart range">
-            <SimpleGrid cols={{ base: 1, '80em': 2 }} spacing="md" miw={0}>
-              <Stack gap="sm" miw={0}>
-                {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
-                  onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />}
-                {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} />}
-              </Stack>
-              <Stack gap="sm" miw={0}>
-                {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
-                  onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
-                {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={240} radius="lg" /> : null}
-              </Stack>
-            </SimpleGrid>
-          </PageSection>
+        {!coreFailed && usageNames.length > 0 && (
+          <OverviewReveal index={2}>
+            <OverviewSubscriptions accounts={usageNames}>
+              {grokUsageEnabled && <GrokUsageCard query={grokUsageQ} />}
+              {zcodeUsageEnabled && <ZcodeUsageCard query={zcodeQuotaQ} />}
+              {minimaxUsageEnabled && <MiniMaxUsageCard query={minimaxUsageQ} />}
+              {openDesignUsageEnabled && <OpenDesignUsageCard query={openDesignUsageQ} />}
+            </OverviewSubscriptions>
+          </OverviewReveal>
         )}
 
-        {!coreFailed && ov && <GatewaySnapshot overview={ov} />}
-        {!coreFailed && statsQ.data && <OverviewTraffic models={models} />}
+        {!coreFailed && (
+          <OverviewReveal index={3}>
+            <PageSection title="Recent activity" description="Retained upstream attempts and failures · updates live and every 30 seconds · independent of chart range">
+              <div className="overview-activity-grid">
+                <Stack gap="sm" miw={0}>
+                  {requestsQ.isError && <ErrorRetryCard title="Couldn't refresh recent requests" message={requestsQ.data ? 'Showing the last available attempts; this list may be out of date.' : 'Request history could not be loaded. Retry to check recent attempts.'}
+                    onRetry={() => requestsQ.refetch({ cancelRefetch: false })} retrying={requestsQ.isFetching} />}
+                  {(requestsQ.data || requestsQ.isPending) && <RecentRequestsCard requests={requestsQ.data?.requests ?? []} loading={requestsQ.isPending} />}
+                </Stack>
+                <Stack gap="sm" miw={0}>
+                  {errorsQ.isError && <ErrorRetryCard title="Couldn't refresh upstream errors" message={errorsQ.data ? 'Showing the last available errors; this list may be out of date.' : 'The error feed is unavailable. This does not mean there were no failures.'}
+                    onRetry={() => errorsQ.refetch({ cancelRefetch: false })} retrying={errorsQ.isFetching} />}
+                  {errorsQ.data ? <UpstreamErrorsCard errors={errorsQ.data.errors ?? []} /> : errorsQ.isPending ? <Skeleton height={352} radius="lg" /> : null}
+                </Stack>
+              </div>
+            </PageSection>
+          </OverviewReveal>
+        )}
+
+        {!coreFailed && ov && <OverviewReveal index={4}><GatewayReadiness overview={ov} /></OverviewReveal>}
+        {!coreFailed && statsQ.data && <OverviewReveal index={5}><OverviewTraffic models={models} /></OverviewReveal>}
       </Stack>
     </Fade>
   )
 }
 
-function GatewaySnapshot({ overview }: { overview: Overview }) {
-  const enabled = overview.backends.filter((backend) => backend?.enabled)
-  const needsAttention = (backend: Overview['backends'][number]) => (!backend.hasKey && !backend.authConfigured) || !backend.catalogOK
+// Gateway readiness as a compact status matrix: one row per enabled provider,
+// ordered attention-first, under a count summary. Every row names its state in
+// text beside the dot, so color is never the only signal.
+function GatewayReadiness({ overview }: { overview: Overview }) {
+  const enabled = (overview.backends ?? []).filter((backend): backend is OverviewBackend => Boolean(backend?.enabled))
+  const needsAttention = (backend: OverviewBackend) => (!backend.hasKey && !backend.authConfigured) || !backend.catalogOK
   const attention = enabled.filter(needsAttention)
   const ordered = [...attention, ...enabled.filter((backend) => !needsAttention(backend))]
+  const total = (overview.backends ?? []).filter(Boolean).length
+
   return (
     <PageSection title="Gateway readiness" description="Configuration state of every enabled provider">
-      <Card p="lg" miw={0}>
-        <Group justify="space-between" gap="xs" mb="sm" wrap="wrap">
-          <Badge color={attention.length ? 'yellow' : 'gray'} variant="light" tt="none">{attention.length ? `${attention.length} need attention` : enabled.length ? 'Catalogs ready' : 'No enabled providers'}</Badge>
-          <Text size="xs" c="dimmed">{enabled.length} / {overview.backends.length} enabled · client auth {overview.authEnabled ? 'on' : 'off'}</Text>
-        </Group>
-        {ordered.length === 0 ? <Text size="sm" c="dimmed">No enabled providers.</Text> : (
-          <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing={6} verticalSpacing={6}>
-            {ordered.slice(0, 8).map((backend) => <Group key={backend.name} justify="space-between" gap="xs" wrap="nowrap" px="xs" py={4} style={{ borderRadius: 8, background: 'var(--sunken)' }}>
-              <Text size="sm" fw={550} style={{ overflowWrap: 'anywhere' }}>{backend.name}</Text>
-              <Text size="xs" c={needsAttention(backend) ? 'orange' : 'dimmed'} style={{ flexShrink: 0 }}>{!backend.hasKey && !backend.authConfigured ? 'Auth needed' : !backend.catalogOK ? 'Catalog unavailable' : 'Catalog ready'}</Text>
-            </Group>)}
-          </SimpleGrid>
+      <Card p="md" miw={0} className="overview-readiness-card">
+        <div className="overview-readiness-summary">
+          <Group gap={6} wrap="wrap">
+            <Badge variant="light" color="gray" tt="none" size="sm">{enabled.length} of {total} enabled</Badge>
+            <Badge variant="light" color="gray" tt="none" size="sm">client auth {overview.authEnabled ? 'on' : 'off'}</Badge>
+            <Badge
+              variant="light"
+              tt="none"
+              size="sm"
+              color={attention.length ? 'yellow' : 'gray'}
+              styles={attention.length ? { root: { color: 'var(--data-warning)', background: 'color-mix(in srgb, var(--data-warning) 12%, var(--card))' } } : undefined}
+            >
+              {attention.length ? `${attention.length} need attention` : enabled.length ? 'All catalogs ready' : 'No enabled providers'}
+            </Badge>
+          </Group>
+          <Button component={Link} to="/providers" variant="default" size="compact-sm" rightSection={<IconArrowUpRight size={14} />}>
+            Manage providers{total > enabled.length ? ` (${total})` : ''}
+          </Button>
+        </div>
+
+        {ordered.length === 0 ? (
+          <Text size="sm" c="dimmed">No enabled providers.</Text>
+        ) : (
+          <div className="overview-readiness-grid" role="list" aria-label="Enabled providers">
+            {ordered.map((backend) => {
+              const state = !backend.hasKey && !backend.authConfigured
+                ? { key: 'auth', label: 'Auth needed', tone: 'var(--data-warning)' }
+                : !backend.catalogOK
+                  ? { key: 'catalog', label: 'Catalog unavailable', tone: 'var(--data-critical)' }
+                  : { key: 'ready', label: 'Catalog ready', tone: 'var(--data-good)' }
+              return (
+                <Link key={backend.name} to="/providers" className="overview-readiness-row" role="listitem" aria-label={`${backend.name}: ${state.label}`}>
+                  <span className="overview-state-dot" aria-hidden="true" style={{ background: state.tone }} data-state={state.key} />
+                  <span className="overview-ident overview-readiness-name">{backend.name}</span>
+                  <span className="overview-readiness-state" data-state={state.key}>{state.label}</span>
+                  <IconArrowUpRight aria-hidden="true" size={13} className="overview-readiness-chevron" />
+                </Link>
+              )
+            })}
+          </div>
         )}
-        <Group gap="sm" mt="md">
-          <Button component={Link} to="/providers" variant="default" size="compact-sm" rightSection={<IconArrowUpRight size={14} />}>Manage providers{ordered.length > 8 ? ` (${enabled.length})` : ''}</Button>
-          <Button component={Link} to="/setup" variant="subtle" size="compact-sm">Connect a client</Button>
+
+        <Group gap="sm" mt="sm" wrap="wrap">
+          <Text size="xs" c="dimmed">Providers are configured in the proxy config file; this dashboard only reports state.</Text>
+          <Button component={Link} to="/setup" variant="subtle" size="compact-xs" leftSection={<IconPlugConnected size={14} />}>Connect a client</Button>
         </Group>
       </Card>
     </PageSection>

@@ -44,8 +44,9 @@ export default function TokenMixBar({
         display: 'flex',
         gap: 2,
         height: Number.isFinite(height) && height > 0 ? height : 16,
-        borderRadius: 4,
+        borderRadius: Math.max(3, Math.min(999, (Number.isFinite(height) ? height : 16) / 2)),
         minWidth: 0,
+        overflow: 'hidden',
       }}
     >
       <span id={`token-mix-desc-${visible.map((s) => s.name).join('-')}`} style={{ display: 'none' }}>

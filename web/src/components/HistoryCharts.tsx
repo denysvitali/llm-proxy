@@ -1,6 +1,7 @@
 import { AreaChart, BarChart, LineChart } from '@mantine/charts'
 import { Box, Group, Paper, Stack, Table, Text } from '@mantine/core'
-import { memo, useMemo, useId, useState, type CSSProperties } from 'react'
+import { memo, useMemo, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { ReferenceDot } from 'recharts'
 import type { SeriesPoint } from '../api'
 import { fmtInt, fmtPct, fmtSec, fmtTps } from '../format'
 import { useChartPalette } from '../palette'
@@ -20,15 +21,22 @@ const linePatterns = ['', '6 4', '2 3', '8 3 2 3']
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 // Anything past 36h is the weekly view.
 const DATE_AXIS_SPAN_MS = 36 * 60 * 60 * 1000
+// Above this many samples a per-point dot turns a line into a scatter plot.
+const MAX_SAMPLE_DOTS = 12
 // Override Mantine's chart-local defaults with the shell's inherited tokens.
 const chartStyle = {
   '--chart-grid-color': 'inherit',
   '--chart-cursor-fill': 'inherit',
   fontVariantNumeric: 'tabular-nums',
 } as CSSProperties
-const gridStyle = { stroke: 'var(--chart-grid-color)', strokeDasharray: '0', strokeWidth: 1 }
+// Hand-drawn calm: a recessive, only-horizontal dashed grid. Vertical rules
+// and axis lines are noise at 150px tall.
+const gridStyle = { stroke: 'var(--chart-grid-color)', strokeDasharray: '3 4', strokeWidth: 1 }
 type ChartTooltipPayload = { dataKey?: unknown; value?: unknown }
-const axisTick = { fontSize: 13, fill: 'var(--mantine-color-dimmed)' }
+const axisTick = { fontSize: 11, fill: 'var(--mantine-color-dimmed)' }
+// Keep Mantine's axis offsets but at the smaller type scale.
+const xTick = { ...axisTick, transform: 'translate(0, 8)' }
+const yTick = { ...axisTick, transform: 'translate(-6, 0)' }
 
 function mergeSeries(...groups: Array<SeriesPoint[] | undefined>): HistoryChartData[] {
   const timestamps = [
@@ -95,11 +103,58 @@ function sampleValue(value: unknown, formatter: HistoryFormatter): number | unde
   return formatter(value) === '—' ? undefined : value
 }
 
+interface SeriesDelta {
+  pct: number
+  direction: 'up' | 'down' | 'flat'
+}
+
+// Change from the first to the latest SAMPLED value. Undefined when the series
+// has fewer than two samples or the baseline is zero — never invent a delta.
+export function seriesDelta(values: number[]): SeriesDelta | undefined {
+  const samples = values.filter((value) => Number.isFinite(value))
+  if (samples.length < 2) return undefined
+  const first = samples[0]
+  const last = samples[samples.length - 1]
+  if (first === 0) return undefined
+  const pct = ((last - first) / Math.abs(first)) * 100
+  if (!Number.isFinite(pct)) return undefined
+  return { pct, direction: pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat' }
+}
+
+const pillStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 3,
+  padding: '1px 6px',
+  borderRadius: 999,
+  background: 'var(--sunken)',
+  flexShrink: 0,
+  fontVariantNumeric: 'tabular-nums',
+}
+
+// A compact delta pill: arrow + percent change from the first sample. Near
+// zero stays muted so noise never reads as a trend.
+function DeltaPill({ delta }: { delta: SeriesDelta }) {
+  const nearZero = Math.abs(delta.pct) < 0.5
+  const arrow = delta.direction === 'up' ? '▲' : delta.direction === 'down' ? '▼' : '±'
+  const label = `${delta.pct > 0 ? '+' : ''}${delta.pct.toFixed(1)}%`
+  return (
+    <span
+      style={{ ...pillStyle, color: nearZero ? 'var(--muted)' : 'var(--ink)' }}
+      title={`Change from the first to the latest sampled value: ${label}`}
+      aria-label={`Change from first to latest sample: ${label}`}
+    >
+      <span aria-hidden="true" style={{ fontSize: 9 }}>{arrow}</span>
+      <span style={{ fontSize: 11, fontWeight: 600 }}>{label}</span>
+    </span>
+  )
+}
+
 // Legends and tooltips key series with a short line, mirroring the mark.
 function LineKey({ item }: { item: ColoredSeries }) {
   return (
-    <svg width="24" height="10" aria-hidden="true" style={{ flexShrink: 0 }}>
-      <line x1="0" y1="5" x2="24" y2="5" stroke={item.color} strokeWidth="2" strokeDasharray={item.strokeDasharray} />
+    <svg width="22" height="10" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <line x1="0" y1="5" x2="22" y2="5" stroke={item.color} strokeWidth={1.6} strokeDasharray={item.strokeDasharray} />
     </svg>
   )
 }
@@ -122,6 +177,8 @@ function ChartTooltip({ payload, timestamp, series }: {
         maxWidth: 'min(320px, calc(100vw - 32px))',
         backgroundColor: 'var(--card)',
         borderColor: 'var(--hairline)',
+        boxShadow: '0 8px 24px rgba(10, 10, 10, 0.10)',
+        fontVariantNumeric: 'tabular-nums',
       }}
     >
       <Text size="xs" c="dimmed" mb={6} style={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -240,46 +297,87 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
     })
     return row
   }), [data, series])
-  // Keep latest sampled values beside their stable line keys. In-plot labels
-  // collide when series converge and consume most of a narrow chart's width.
-  const lastIndexBySeries = useMemo(() => {
-    const map = new Map<string, number>()
+  // Latest sampled value and point per series, plus the change vs the first
+  // sample. Keeping only observed samples is what makes "No sample" honest.
+  const seriesStats = useMemo(() => {
+    const stats = new Map<string, { lastIndex: number; lastValue: number; delta?: SeriesDelta }>()
     series.forEach((item) => {
-      for (let i = data.length - 1; i >= 0; i--) {
-        if (sampleValue(data[i][item.name], item.formatter) !== undefined) {
-          map.set(item.name, i)
-          break
+      const values: number[] = []
+      let lastIndex = -1
+      for (let i = 0; i < data.length; i++) {
+        const value = sampleValue(data[i][item.name], item.formatter)
+        if (value !== undefined) {
+          values.push(value)
+          lastIndex = i
         }
       }
+      if (lastIndex < 0) return
+      stats.set(item.name, {
+        lastIndex,
+        lastValue: values[values.length - 1],
+        delta: seriesDelta(values),
+      })
     })
-    return map
+    return stats
   }, [data, series])
   const hasData = plotData.some((point) => series.some((item) => typeof point[item.name] === 'number'))
+  const sampleCount = plotData.filter((point) => series.some((item) => typeof point[item.name] === 'number')).length
   const formatter = axisFormatter(series[0]?.formatter ?? fmtInt)
   // Single series reads as an area with a gradient wash; multi-series keeps
-  // crisp lines so overlapping series don't muddy each other.
+  // crisp lines so overlapping series don't muddy each other. A percentage
+  // series is excluded: a near-1.0 rate fills the whole plot and the wash
+  // reads as a translucent band, not data.
   const single = series.length === 1
+  const percentScale = single && series[0]?.formatter === historyFormatters.percent
+  const useArea = single && !percentScale
+  const showDots = sampleCount > 0 && sampleCount <= MAX_SAMPLE_DOTS
+
+  // A single small terminal dot marks the newest sample when the series is
+  // too dense for per-point dots.
+  const terminalDots: ReactNode = !showDots && hasData
+    ? coloredSeries.map((item) => {
+      const stat = seriesStats.get(item.name)
+      if (!stat) return null
+      const point = data[stat.lastIndex]
+      if (!point) return null
+      return (
+        <ReferenceDot
+          key={item.name}
+          x={point.time}
+          y={sampleValue(point[item.name], item.formatter)}
+          r={2.5}
+          fill={item.color}
+          stroke="var(--card)"
+          strokeWidth={1.5}
+          pointerEvents="none"
+        />
+      )
+    })
+    : null
 
   const chartProps = {
     h: height,
     data: plotData,
     dataKey: 'time',
-    curveType: 'linear' as const,
+    curveType: 'monotone' as const,
     connectNulls: false,
     accessibilityLayer: true,
     series: coloredSeries,
     valueFormatter: formatter,
+    withLegend: false,
+    withDots: showDots,
+    gridAxis: 'y' as const,
     gridProps: gridStyle,
     style: chartStyle,
     tooltipProps: {
-      cursor: { fill: 'var(--chart-cursor-fill)', strokeWidth: 1, stroke: 'var(--chart-grid-color)' },
+      cursor: { fill: 'var(--chart-cursor-fill)', strokeWidth: 1, stroke: 'var(--chart-grid-color)', strokeDasharray: '3 4' },
       content: ({ active, payload, label }: { active?: boolean; payload?: readonly ChartTooltipPayload[]; label?: unknown }) =>
         active && payload?.length ? (
           <ChartTooltip payload={payload} timestamp={String(label)} series={coloredSeries} />
         ) : null,
     },
     xAxisProps: {
-      tick: axisTick,
+      tick: xTick,
       tickFormatter: axisTimeFormatter(data),
       tickLine: false as const,
       axisLine: false as const,
@@ -287,12 +385,12 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
       interval: 'preserveStartEnd' as const,
     },
     yAxisProps: {
-      tick: axisTick,
+      tick: yTick,
       tickLine: false as const,
       axisLine: false as const,
-      width: 48,
+      width: 44,
       tickCount: 4,
-      ...(single && (series[0]?.formatter === fmtPct || series[0]?.formatter === historyFormatters.percent) ? { domain: [0, 1] as [number, number], ticks: [0, 0.5, 1] } : {}),
+      ...(single && (series[0]?.formatter === fmtPct || percentScale) ? { domain: [0, 1] as [number, number], ticks: [0, 0.5, 1] } : {}),
       tickFormatter: formatter,
     },
   }
@@ -304,17 +402,17 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
       {hasData && (!compact || !single) && (
         <Group gap={compact ? 'sm' : 'md'} mb="sm" aria-label={compact ? 'Chart legend' : 'Latest sampled values and chart legend'}>
           {coloredSeries.map((item) => {
-            const index = lastIndexBySeries.get(item.name)
-            const point = index === undefined ? undefined : data[index]
-            const value = point ? sampleValue(point[item.name], item.formatter) : undefined
+            const stat = seriesStats.get(item.name)
+            const point = stat ? data[stat.lastIndex] : undefined
             // Compact cards carry the values in their headline; the legend
             // only has to name the marks so it stays on one line.
             return <Group key={item.name} gap={6} wrap="nowrap" miw={0} title={point ? `Latest sample: ${formatTooltipTime(String(point.time))}` : 'No sample'}>
               <LineKey item={item} />
               <Text size="xs" c="dimmed">{item.label}</Text>
               {!compact && <>
-                <Text size="xs" fw={600} className="tabular">{value === undefined ? '—' : item.formatter(value)}</Text>
+                <Text size="xs" fw={600} className="tabular">{stat ? item.formatter(stat.lastValue) : '—'}</Text>
                 <Text size="xs" c="dimmed">latest</Text>
+                {stat?.delta && <DeltaPill delta={stat.delta} />}
               </>}
             </Group>
           })}
@@ -326,31 +424,34 @@ export const HistoryLineChart = memo(function HistoryLineChart({ title, descript
         </Box>
       ) : (
         <>
-          {single ? (
+          {useArea ? (
             <AreaChart
               {...chartProps}
               withGradient
               fillOpacity={0.1}
-              strokeWidth={2}
-              strokeDasharray="0"
+              strokeWidth={1.6}
               areaProps={{ strokeLinecap: 'round', strokeLinejoin: 'round' }}
-              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--card)' }}
-              activeDotProps={{ r: 5, fill: coloredSeries[0].color, strokeWidth: 2, stroke: 'var(--card)' }}
-            />
+              dotProps={{ r: 2.5, strokeWidth: 0, pointerEvents: 'none' }}
+              activeDotProps={{ r: 3, strokeWidth: 0, pointerEvents: 'none' }}
+              areaChartProps={{ margin: { top: 6, right: 4, bottom: 0, left: 0 } }}
+            >
+              {terminalDots}
+            </AreaChart>
           ) : (
             <LineChart
               {...chartProps}
-              strokeWidth={2}
-              strokeDasharray="0"
+              strokeWidth={1.6}
               lineProps={(item) => ({
                 strokeLinecap: 'round',
                 strokeLinejoin: 'round',
                 strokeDasharray: (item as ColoredSeries).strokeDasharray,
               })}
-              dotProps={{ r: 4, strokeWidth: 2, stroke: 'var(--card)' }}
-              activeDotProps={{ r: 5, strokeWidth: 2, stroke: 'var(--card)' }}
-              lineChartProps={{ margin: { right: 8 } }}
-            />
+              dotProps={{ r: 2.5, strokeWidth: 0, pointerEvents: 'none' }}
+              activeDotProps={{ r: 3, strokeWidth: 0, pointerEvents: 'none' }}
+              lineChartProps={{ margin: { top: 6, right: 4, bottom: 0, left: 0 } }}
+            >
+              {terminalDots}
+            </LineChart>
           )}
           <ChartDataTable title={title} data={data} series={series} />
         </>
@@ -380,9 +481,18 @@ export const HistoryBarChart = memo(function HistoryBarChart({ title, descriptio
     return value === undefined ? { time: point.ts } : { time: point.ts, value }
   })
   const hasData = data.some((point) => typeof point.value === 'number')
+  const observed = data.map((point) => point.value).filter((value): value is number => typeof value === 'number')
+  const delta = seriesDelta(observed)
   return (
     <Box miw={0} pos="relative" role="group" aria-labelledby={id} aria-describedby={`${id}-description`}>
-      <Text id={id} size="sm" fw={650} lh={1.25} style={compact ? assistiveOnly : undefined}>{title}</Text>
+      {compact ? (
+        <Text id={id} size="sm" fw={650} lh={1.25} style={assistiveOnly}>{title}</Text>
+      ) : (
+        <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+          <Text id={id} size="sm" fw={650} lh={1.25}>{title}</Text>
+          {hasData && delta && <DeltaPill delta={delta} />}
+        </Group>
+      )}
       <Text id={`${id}-description`} size="xs" c="dimmed" mt={compact ? 0 : 1} mb={compact ? 0 : 10} lh={1.3} style={compact ? assistiveOnly : undefined}>{description}</Text>
       {!hasData ? (
         <Box h={height} style={{ display: 'grid', placeItems: 'center' }}>
@@ -398,6 +508,7 @@ export const HistoryBarChart = memo(function HistoryBarChart({ title, descriptio
             accessibilityLayer
             series={[barSeries]}
             valueFormatter={axisFormatter(formatter)}
+            gridAxis="y"
             gridProps={gridStyle}
             tooltipProps={{
               cursor: { fill: 'var(--chart-cursor-fill)' },
@@ -405,11 +516,10 @@ export const HistoryBarChart = memo(function HistoryBarChart({ title, descriptio
                 <ChartTooltip payload={payload} timestamp={String(label)} series={[barSeries]} />
               ) : null,
             }}
-            xAxisProps={{ tick: axisTick, tickFormatter: axisTimeFormatter(data), tickLine: false, axisLine: false, minTickGap: 32, interval: 'preserveStartEnd' }}
-            yAxisProps={{ tick: axisTick, tickLine: false, axisLine: false, width: 48, tickCount: 4, tickFormatter: axisFormatter(formatter) }}
-            barProps={{ radius: [4, 4, 0, 0], maxBarSize: 18 }}
-            gridAxis="y"
-            strokeDasharray="0"
+            xAxisProps={{ tick: xTick, tickFormatter: axisTimeFormatter(data), tickLine: false, axisLine: false, minTickGap: 32, interval: 'preserveStartEnd' }}
+            yAxisProps={{ tick: yTick, tickLine: false, axisLine: false, width: 44, tickCount: 4, tickFormatter: axisFormatter(formatter) }}
+            barProps={{ radius: [3, 3, 0, 0], maxBarSize: 18 }}
+            barChartProps={{ margin: { top: 6, right: 4, bottom: 0, left: 0 } }}
           />
           <ChartDataTable title={title} data={data} series={[barSeries]} />
         </>

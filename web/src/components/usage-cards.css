@@ -1,7 +1,229 @@
-.usage-card { min-width: 0; overflow-wrap: anywhere; }
-.usage-card-icon { display: grid; place-items: center; flex-shrink: 0; width: 34px; height: 34px; border: 1px solid var(--hairline); border-radius: var(--mantine-radius-md); background: var(--sunken); color: var(--mantine-color-dimmed); }
-.usage-card-updated { border-top: 1px solid var(--hairline); padding-top: 9px; font-variant-numeric: tabular-nums; }
-.usage-card-balance { padding: 12px; background: var(--sunken); border-radius: var(--mantine-radius-md); }
-.usage-checkin-day { min-width: 0; border: 1px solid var(--hairline); border-radius: var(--mantine-radius-md); }
-.usage-checkin-day[data-today="true"] { border-color: var(--mantine-color-brand-light-color); background: var(--mantine-color-brand-light); }
-.usage-checkin-day[data-claimed="true"] { background: var(--mantine-color-teal-light); }
+/* Subscription usage cards — shell anatomy plus the small provider-owned
+   blocks (balance hero, check-in day tiles). Values come from the API layer;
+   this file only dresses them. Fallbacks keep the cards correct even if the
+   token sheet has not landed. */
+
+.usage-card {
+  min-width: 0;
+  width: 100%;
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  /* Grid parents must never stretch an account card to a neighbour's height:
+     an empty-usage card hugs its content instead of opening a blank body.
+     `width: 100%` keeps the cross axis right in a *column flex* parent (the
+     provider drawer), where `align-self: start` would otherwise collapse the
+     card to its (contained) content width of 0. */
+  align-self: start;
+  height: auto;
+  container-type: inline-size;
+}
+
+/* ---------- header ---------- */
+.usage-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline, #e4e4e7);
+  min-width: 0;
+}
+.usage-card-identity { min-width: 0; }
+.usage-card-titles { min-width: 0; }
+.usage-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.usage-card-subtitle {
+  margin-top: 2px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.usage-card-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--ink, #0a0a0a);
+  background: var(--surface-2, var(--sunken, #f4f4f5));
+  border: 1px solid var(--hairline, #e4e4e7);
+  box-shadow: var(--shadow-subtle, 0 1px 2px rgba(15, 15, 20, 0.05));
+}
+.usage-card-meta {
+  flex-shrink: 0;
+  align-self: center;
+}
+.usage-card-updated {
+  font-family: var(--numeric-font, 'JetBrains Mono', ui-monospace, monospace);
+  font-size: 10.5px !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+.usage-card-error { margin: 12px 16px 0; }
+
+/* ---------- body ----------
+   Content-sized: an account card hugs what the API actually reported. Nothing
+   is capped with an internal scroll here, because the lowest row (daily
+   check-in + its action) must never be hidden behind a scrollbar; the grid's
+   `align-items: start` keeps the ragged-bottom from becoming a stretched
+   empty band. */
+.usage-card-body {
+  padding: 14px 16px 16px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+.usage-card-skeleton { min-width: 0; }
+
+/* Compact empty state: an inset block that hugs its content, so a card with
+   no reported usage stays short instead of leaving a blank body. */
+.usage-card-empty {
+  padding: 11px 13px;
+  border: 1px dashed var(--hairline, #e4e4e7);
+  border-radius: 10px;
+  background: var(--surface-3, var(--sunken, #f4f4f5));
+  color: var(--muted, #71717a);
+  font-size: 12.5px;
+  line-height: 1.5;
+  min-width: 0;
+}
+
+/* ---------- provider-owned blocks ---------- */
+.usage-card-balance {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: var(--surface-3, var(--sunken, #f4f4f5));
+  border: 1px solid var(--hairline, #e4e4e7);
+  min-width: 0;
+}
+.usage-card-balance .mantine-Text-root:first-child {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #71717a);
+  line-height: 1.4;
+}
+
+/* ---------- meter ---------- */
+.usage-meter {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--meter-color, var(--muted, #71717a)) 14%, var(--card, #ffffff));
+  border: 1px solid color-mix(in srgb, var(--meter-color, var(--muted, #71717a)) 18%, var(--hairline, #e4e4e7));
+}
+.usage-meter[data-compact='true'] { height: 5px; }
+.usage-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--meter-color, var(--muted, #71717a));
+  transition: width var(--motion-base, 220ms) var(--ease-out, ease);
+}
+
+/* ---------- daily check-in days ----------
+   Seven days must never wrap into a ragged 3/3/1 block: the card is a narrow
+   column, so the days are ONE horizontal strip that scrolls. Only when the
+   card itself is >=560px wide do they become seven equal columns.
+
+   Chips never shrink (flex-shrink 0) and their labels never wrap — the strip
+   scrolls instead of squeezing a label into a vertical stack. The strip has a
+   min-height so every account card's low band converges. */
+.usage-checkin-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  height: 78px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  min-width: 0;
+  /* Right-edge mask: the cut edge reads as "there is more", not "broken". */
+  mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+}
+.usage-checkin-strip::-webkit-scrollbar { display: none; }
+.usage-checkin-day {
+  flex: 0 0 auto;
+  min-width: 88px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--hairline, #e4e4e7);
+  border-radius: 9px;
+  background: var(--card, #ffffff);
+  scroll-snap-align: start;
+  transition: border-color var(--motion-fast, 140ms) var(--ease-out, ease);
+}
+.usage-checkin-day .mantine-Text-root {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 14px;
+}
+.usage-checkin-dayno { height: 14px; }
+.usage-checkin-points { height: 16px; font-size: 11px !important; }
+.usage-checkin-bonus { height: 13px; font-size: 10px !important; }
+.usage-checkin-status { height: 14px; font-size: 10.5px !important; }
+@container (min-width: 560px) {
+  .usage-checkin-strip {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    overflow: visible;
+    mask-image: none;
+    -webkit-mask-image: none;
+    min-height: 0;
+  }
+  .usage-checkin-day { min-width: 0; }
+  .usage-checkin-today { display: inline; }
+}
+.usage-checkin-day[data-today='true'] {
+  border-color: var(--hairline-strong, #d4d4d8);
+  background: var(--surface-2, var(--sunken, #f4f4f5));
+}
+.usage-checkin-day[data-claimed='true'] {
+  border-color: color-mix(in srgb, var(--data-good, #157748) 30%, var(--hairline, #e4e4e7));
+  background: color-mix(in srgb, var(--data-good, #157748) 7%, var(--card, #ffffff));
+}
+.usage-checkin-top { min-height: 17px; }
+/* In the scrolling strip the "Today" word would fight "Day N" for a 76px
+   chip, so the marker folds into the header row's weight + border instead
+   (weight and border are non-color cues; the status line still spells state). */
+.usage-checkin-today {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink, #0a0a0a);
+  white-space: nowrap;
+}
+@container (max-width: 559px) {
+  .usage-checkin-day[data-today='true'] .usage-checkin-dayno { font-weight: 700; }
+  .usage-checkin-today { display: none; }
+}
+
+@media (max-width: 48em) {
+  .usage-card-head { padding: 11px 14px; }
+  .usage-card-body { padding: 12px 14px 14px; }
+}

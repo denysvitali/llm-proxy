@@ -1,0 +1,269 @@
+/* Shared small primitives: masthead eyebrow, section heads, empty states,
+   error alerts, search, and status pills.
+
+   Every rule uses the EasyUI tokens from index.css with literal fallbacks so a
+   component never depends on another lane landing its token sheet first. No
+   global tokens are declared here. */
+
+/* ---------- masthead ---------- */
+
+.page-eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #71717a);
+  line-height: 1.3;
+}
+
+/* ---------- section heads (micro-label voice) ---------- */
+
+.page-section { min-width: 0; }
+.page-section-head { margin-bottom: 12px; }
+.page-section[data-dense='true'] .page-section-head { margin-bottom: 8px; }
+.page-section-copy {
+  flex: 1 1 16rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.page-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #71717a);
+  line-height: 1.4;
+}
+.page-section-description {
+  margin: 0;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+}
+.page-section-extra { flex-shrink: 0; }
+.page-section-body { min-width: 0; }
+
+/* ---------- empty states ---------- */
+
+.empty-state {
+  align-items: center;
+  gap: 0;
+  padding: 28px 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.empty-state-mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  color: var(--muted, #71717a);
+  background: var(--surface-2, var(--sunken, #f4f4f5));
+  border: 1px solid var(--hairline, #e4e4e7);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--hairline, #e4e4e7) 45%, transparent),
+    var(--shadow-subtle, 0 1px 2px rgba(15, 15, 20, 0.05));
+}
+.empty-state-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-align: center;
+  max-width: 100%;
+}
+.empty-state-hint {
+  margin-top: 5px;
+  max-width: 380px;
+  line-height: 1.5;
+  text-align: center;
+}
+.empty-state-action { margin-top: 14px; }
+
+/* ---------- inline error alert (retry card) ---------- */
+
+.error-retry-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--data-critical, #c33030) 26%, var(--hairline, #e4e4e7));
+  border-radius: var(--radius-card, 14px);
+  background: color-mix(in srgb, var(--data-critical, #c33030) 6%, var(--card, #ffffff));
+  box-shadow: var(--shadow-subtle, 0 1px 2px rgba(15, 15, 20, 0.05));
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.error-retry-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--data-critical, #c33030);
+  background: color-mix(in srgb, var(--data-critical, #c33030) 12%, var(--card, #ffffff));
+  border: 1px solid color-mix(in srgb, var(--data-critical, #c33030) 24%, var(--hairline, #e4e4e7));
+}
+.error-retry-copy { min-width: 0; flex: 1 1 18rem; }
+.error-retry-title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink, #0a0a0a);
+  line-height: 1.35;
+}
+.error-retry-message { line-height: 1.5; }
+.error-retry-action { flex: none; min-height: 36px; }
+@media (pointer: coarse) {
+  .error-retry-action { min-height: 44px; }
+}
+
+/* ---------- page error boundary ---------- */
+
+.page-error-card {
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--data-critical, #c33030) 26%, var(--hairline, #e4e4e7));
+  border-radius: var(--radius-card, 14px);
+  background: color-mix(in srgb, var(--data-critical, #c33030) 5%, var(--card, #ffffff));
+  box-shadow: var(--shadow-raised, 0 1px 2px rgba(15, 15, 20, 0.05));
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.page-error-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--data-critical, #c33030);
+  background: color-mix(in srgb, var(--data-critical, #c33030) 12%, var(--card, #ffffff));
+  border: 1px solid color-mix(in srgb, var(--data-critical, #c33030) 24%, var(--hairline, #e4e4e7));
+}
+.page-error-copy { min-width: 0; }
+.page-error-title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+.page-error-actions { margin-top: 16px; flex-wrap: wrap; }
+.page-error-details { margin-top: 14px; width: 100%; }
+.page-error-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted, #71717a);
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+.page-error-details pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-3, var(--sunken, #f4f4f5));
+  border: 1px solid var(--hairline, #e4e4e7);
+  font-family: var(--numeric-font, 'JetBrains Mono', ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+@media (pointer: coarse) {
+  .page-error-actions .mantine-Button-root { min-height: 44px; }
+}
+
+/* ---------- search field ---------- */
+
+.search-input .mantine-TextInput-input {
+  min-height: 44px;
+  padding-inline-start: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline, #e4e4e7);
+  background: var(--surface-2, var(--sunken, #f4f4f5));
+  color: var(--ink, #0a0a0a);
+  font-size: 13px;
+  box-shadow: var(--shadow-subtle, 0 1px 2px rgba(15, 15, 20, 0.05));
+  transition:
+    border-color var(--motion-fast, 140ms) var(--ease-out, ease),
+    box-shadow var(--motion-fast, 140ms) var(--ease-out, ease),
+    background-color var(--motion-fast, 140ms) var(--ease-out, ease);
+}
+.search-input .mantine-TextInput-input:hover {
+  border-color: var(--hairline-strong, var(--hairline, #e4e4e7));
+  background: var(--card, #ffffff);
+}
+.search-input .mantine-TextInput-input:focus {
+  border-color: var(--ink, #0a0a0a);
+  background: var(--card, #ffffff);
+  outline: none;
+  box-shadow:
+    0 0 0 3px var(--accent-ring, rgba(10, 10, 10, 0.16)),
+    var(--shadow-subtle, 0 1px 2px rgba(15, 15, 20, 0.05));
+}
+.search-input .mantine-TextInput-input::placeholder { color: var(--muted, #71717a); }
+.search-input-glyph {
+  display: inline-flex;
+  color: var(--muted, #71717a);
+}
+.search-input-clear { color: var(--muted, #71717a); }
+.search-input-clear:hover { color: var(--ink, #0a0a0a); }
+
+/* ---------- status pills ---------- */
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 24px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline, #e4e4e7);
+  background: var(--surface-2, var(--sunken, #f4f4f5));
+  color: var(--ink, #0a0a0a);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: default;
+  box-shadow: var(--shadow-subtle, 0 1px 2px rgba(15, 15, 20, 0.05));
+}
+.status-pill-sm {
+  min-height: 21px;
+  padding: 2px 7px 2px 6px;
+  font-size: 10.5px;
+}
+.status-pill-label { display: inline-block; overflow: visible; }
+.status-pill[data-tone='good'] {
+  color: var(--data-good, #157748);
+  border-color: color-mix(in srgb, var(--data-good, #157748) 28%, var(--hairline, #e4e4e7));
+  background: color-mix(in srgb, var(--data-good, #157748) 10%, var(--card, #ffffff));
+}
+.status-pill[data-tone='warning'] {
+  color: var(--data-warning, #946200);
+  border-color: color-mix(in srgb, var(--data-warning, #946200) 28%, var(--hairline, #e4e4e7));
+  background: color-mix(in srgb, var(--data-warning, #946200) 10%, var(--card, #ffffff));
+}
+.status-pill[data-tone='critical'] {
+  color: var(--data-critical, #c33030);
+  border-color: color-mix(in srgb, var(--data-critical, #c33030) 28%, var(--hairline, #e4e4e7));
+  background: color-mix(in srgb, var(--data-critical, #c33030) 10%, var(--card, #ffffff));
+}
+.status-pill[data-tone='neutral'] {
+  color: var(--muted, #71717a);
+  border-color: var(--hairline, #e4e4e7);
+  background: var(--surface-2, var(--sunken, #f4f4f5));
+}
+.status-pill:focus-visible {
+  outline: 2px solid var(--accent-ring, rgba(10, 10, 10, 0.16));
+  outline-offset: 2px;
+}

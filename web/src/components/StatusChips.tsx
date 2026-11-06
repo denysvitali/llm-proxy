@@ -1,4 +1,5 @@
-import { Badge, Group, Tooltip } from '@mantine/core'
+import { Group, Tooltip } from '@mantine/core'
+import './primitives.css'
 
 // HTTP status chips for a backend or model.
 //
@@ -8,7 +9,7 @@ import { Badge, Group, Tooltip } from '@mantine/core'
 // limit, while the `+N` overflow keeps the common codes reachable via tooltip.
 //
 // Every chip is dot + code + count, and each carries an aria-label, so the
-// severity is never conveyed by color alone (DESIGN.md §9).
+// severity is never conveyed by color alone (DESIGN.md).
 type Severity = 'critical' | 'warning' | 'good' | 'neutral'
 
 const rank: Record<Severity, number> = { critical: 0, warning: 1, good: 2, neutral: 3 }
@@ -26,7 +27,7 @@ const token: Record<Severity, string> = {
   critical: 'var(--data-critical)',
   warning: 'var(--data-warning)',
   good: 'var(--data-good)',
-  neutral: 'var(--mantine-color-dimmed)',
+  neutral: 'var(--muted)',
 }
 
 function describeStatus(status: string, count: number): string {
@@ -79,34 +80,20 @@ export default function StatusChips({
         const description = describeStatus(status, n)
         return (
           <Tooltip key={status} label={description} withArrow events={{ hover: true, focus: true, touch: true }}>
-            <Badge
-              variant="light"
-              size="xs"
-              aria-label={description}
-              leftSection={<Dot color={token[sev]} />}
-              styles={{
-                root: { flex: 'none', cursor: 'default', fontVariantNumeric: 'tabular-nums', color: token[sev], background: `color-mix(in srgb, ${token[sev]} 10%, var(--card))` },
-                label: { overflow: 'visible' },
-              }}
-            >
-              {status === 'error' ? 'err' : status} · {n.toLocaleString('en-US')}
-            </Badge>
+            <span className="status-pill status-pill-sm" data-tone={sev} aria-label={description}>
+              <Dot color={token[sev]} />
+              <span className="status-pill-label">
+                {status === 'error' ? 'err' : status} · {n.toLocaleString('en-US')}
+              </span>
+            </span>
           </Tooltip>
         )
       })}
       {rest.length > 0 && (
         <Tooltip label={restLabel} withArrow multiline w={280} events={{ hover: true, focus: true, touch: true }}>
-          <Badge
-            variant="light"
-            size="xs"
-            aria-label={`${rest.length} more statuses: ${restLabel}`}
-            styles={{
-              root: { flex: 'none', cursor: 'default', background: 'var(--sunken)', color: 'var(--mantine-color-dimmed)' },
-              label: { overflow: 'visible' },
-            }}
-          >
-            +{rest.length}
-          </Badge>
+          <span className="status-pill status-pill-sm" data-tone="neutral" aria-label={`${rest.length} more statuses: ${restLabel}`}>
+            <span className="status-pill-label">+{rest.length}</span>
+          </span>
         </Tooltip>
       )}
     </Group>

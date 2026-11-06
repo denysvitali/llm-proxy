@@ -1,22 +1,30 @@
-import { Box, Card, SimpleGrid, Text } from '@mantine/core'
+import { Text } from '@mantine/core'
 
-export function CatalogSummary({ label, items }: {
+// A single summary band: one hairline-divided surface, micro-labels over big
+// tabular figures. Attention values keep the warning hue (never color alone —
+// the label says what the number means).
+export function CatalogSummary({
+  label,
+  items,
+}: {
   label: string
   items: { label: string; value: string; hint: string; attention?: boolean }[]
 }) {
   return (
-    <Card component="section" p="md" aria-label={label} radius="lg">
-      <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md" verticalSpacing="md">
-        {items.map((item) => (
-          <Box key={item.label} miw={0} data-attention={item.attention}>
-            <Text size="xs" c="dimmed">{item.label}</Text>
-            <Text fz={22} fw={700} lh={1.2} mt={2} style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em', color: item.attention ? 'var(--data-warning)' : undefined }}>
-              {item.value}
-            </Text>
-            <Text size="xs" c="dimmed">{item.hint}</Text>
-          </Box>
-        ))}
-      </SimpleGrid>
-    </Card>
+    <section className="catalog-summary-band" aria-label={label}>
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="catalog-summary-cell"
+          data-attention={item.attention ? 'true' : undefined}
+        >
+          <Text className="micro-label catalog-summary-label">{item.label}</Text>
+          <Text className="catalog-summary-value tabular">{item.value}</Text>
+          <Text size="xs" c="dimmed" className="catalog-summary-hint-text">
+            {item.hint}
+          </Text>
+        </div>
+      ))}
+    </section>
   )
 }

@@ -1,40 +1,46 @@
 import { Box, Group, Stack, Text, Title } from '@mantine/core'
 import { useId, type ReactNode } from 'react'
+import './primitives.css'
 
-// Labeled sections keep screen-reader navigation aligned with the visual hierarchy.
+// Labeled sections keep screen-reader navigation aligned with the visual
+// hierarchy. The heading is the micro-label voice (11px/650/.08em, uppercase
+// via CSS) so every section on every page reads as one instrument label.
+// `dense` tightens the heading-to-content gap for stacked compact blocks.
 export function PageSection({
   title,
   description,
   extra,
+  dense = false,
   children,
 }: {
   title: string
   description?: string
   extra?: ReactNode
+  dense?: boolean
   children: ReactNode
 }) {
   const titleId = useId()
 
   return (
-    <Box component="section" aria-labelledby={titleId} miw={0}>
-      <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm" mb="sm">
-        <Stack gap={1} style={{ flex: '1 1 16rem', minWidth: 0, overflowWrap: 'anywhere' }}>
-          <Title order={3} id={titleId} fz={14} fw={650} m={0} lh={1.3}>
+    <Box component="section" aria-labelledby={titleId} miw={0} className="page-section" data-dense={dense || undefined}>
+      <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm" className="page-section-head">
+        <Stack gap={2} className="page-section-copy">
+          <Title order={3} id={titleId} className="page-section-title">
             {title}
           </Title>
           {description && (
-            <Text size="xs" c="dimmed" lh={1.5} m={0}>
+            <Text size="xs" c="dimmed" lh={1.5} m={0} className="page-section-description">
               {description}
             </Text>
           )}
         </Stack>
         {extra != null && (
-          <Group gap="xs" wrap="wrap" miw={0} maw="100%" style={{ flexShrink: 0 }}>
+          <Group gap="xs" wrap="wrap" miw={0} maw="100%" className="page-section-extra">
             {extra}
           </Group>
         )}
       </Group>
-      {children}
+      <div className="page-section-body">{children}</div>
     </Box>
   )
 }

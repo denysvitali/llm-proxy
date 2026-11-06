@@ -1,4 +1,4 @@
-import { Badge, Tooltip } from '@mantine/core'
+import { Tooltip } from '@mantine/core'
 import {
   IconCircleCheck,
   IconAlertTriangle,
@@ -6,21 +6,22 @@ import {
   IconMinus,
 } from '@tabler/icons-react'
 import { uptimeState } from '../lib/stats'
+import './primitives.css'
 
 interface UptimeBadgeProps {
   uptime: number // fraction 0..1
   requests: number
 }
 
-// Status is carried by icon + label + the reserved status hue — never by
-// color alone (DESIGN.md §9). The hue comes from the `--data-*` tokens, which
-// are re-stepped per color scheme in index.css; using Mantine's `teal`/`yellow`
+// Status is carried by icon + dot + label + the reserved status hue — never by
+// color alone (DESIGN.md). The hue comes from the `--data-*` tokens, which are
+// re-stepped per color scheme in index.css; using Mantine's `teal`/`yellow`
 // here would bypass the validated ramp and drift on the dark surface.
 const states = {
   good: { color: 'var(--data-good)', Icon: IconCircleCheck, label: 'healthy' },
   warning: { color: 'var(--data-warning)', Icon: IconAlertTriangle, label: 'degraded' },
   critical: { color: 'var(--data-critical)', Icon: IconCircleX, label: 'unhealthy' },
-  neutral: { color: 'var(--mantine-color-dimmed)', Icon: IconMinus, label: null },
+  neutral: { color: 'var(--muted)', Icon: IconMinus, label: null },
 } as const
 
 type StateKey = keyof typeof states
@@ -37,19 +38,10 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
     const description = noTraffic ? 'No requests recorded yet' : 'Request success data is unavailable'
     return (
       <Tooltip label={description} withArrow events={{ hover: true, focus: true, touch: true }}>
-        <Badge
-          variant="light"
-          tt="none"
-          tabIndex={0}
-          aria-label={description}
-          leftSection={<states.neutral.Icon size={12} stroke={2} aria-hidden="true" style={{ color: states.neutral.color }} />}
-          styles={{
-            root: { flex: 'none', cursor: 'default', color: 'var(--mantine-color-dimmed)', background: 'var(--sunken)' },
-            label: { overflow: 'visible' },
-          }}
-        >
-          {noTraffic ? 'no traffic' : 'no data'}
-        </Badge>
+        <span className="status-pill" data-tone="neutral" tabIndex={0} aria-label={description}>
+          <states.neutral.Icon size={12} stroke={2} aria-hidden="true" style={{ color: states.neutral.color }} />
+          <span className="status-pill-label">{noTraffic ? 'no traffic' : 'no data'}</span>
+        </span>
       </Tooltip>
     )
   }
@@ -58,19 +50,10 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
   const detail = `${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`
   return (
     <Tooltip label={detail} withArrow events={{ hover: true, focus: true, touch: true }}>
-      <Badge
-        variant="light"
-        tt="none"
-        tabIndex={0}
-        aria-label={`${state.label}: ${detail}`}
-        leftSection={<state.Icon size={12} stroke={2} aria-hidden="true" style={{ color: state.color }} />}
-        styles={{
-          root: { flex: 'none', cursor: 'default', fontWeight: 600, letterSpacing: 0, color: state.color, background: `color-mix(in srgb, ${state.color} 12%, var(--card))` },
-          label: { overflow: 'visible' },
-        }}
-      >
-        {state.label}
-      </Badge>
+      <span className="status-pill" data-tone={key} tabIndex={0} aria-label={`${state.label}: ${detail}`}>
+        <state.Icon size={12} stroke={2} aria-hidden="true" style={{ color: state.color }} />
+        <span className="status-pill-label">{state.label}</span>
+      </span>
     </Tooltip>
   )
 }

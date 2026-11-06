@@ -5,7 +5,6 @@ import {
   Badge,
   Box,
   Button,
-  Card,
   Chip,
   Drawer,
   Group,
@@ -16,12 +15,7 @@ import {
   Text,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import {
-  IconArrowDown,
-  IconArrowUp,
-  IconInboxOff,
-  IconSearchOff,
-} from '@tabler/icons-react'
+import { IconArrowDown, IconArrowUp, IconInboxOff, IconSearchOff } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { dashboardQueries } from '../queries'
 import { fmtInt, fmtSec } from '../format'
@@ -41,6 +35,9 @@ import {
   type SortKey,
 } from '../components/catalog/modelData'
 import { Fade } from '../App'
+// The catalog stylesheet covers the model grid, the traffic grid and the drawers;
+// the Models route renders it too (Vite dedupes the shared import).
+import './catalog.css'
 
 const ModelDetail = lazy(() => import('../components/catalog/ModelDetail'))
 
@@ -96,37 +93,61 @@ export default function ModelsPage() {
   return (
     <Fade pending={query.isPending}>
       <Stack gap="lg" className="models-page" miw={0}>
-        <PageHeader title="Models" subtitle="Explore available models and inspect their recorded performance." />
-        <Tabs defaultValue="catalog" miw={0}>
+        <PageHeader
+          title="Models"
+          subtitle="Explore available models and inspect their recorded performance."
+        />
+        <Tabs defaultValue="catalog" miw={0} className="catalog-workspace">
           <Tabs.List aria-label="Model workspace">
             <Tabs.Tab value="catalog">Available models</Tabs.Tab>
             <Tabs.Tab value="traffic">Recorded traffic</Tabs.Tab>
           </Tabs.List>
-          <Tabs.Panel value="catalog" pt="md"><ModelCatalog /></Tabs.Panel>
+          <Tabs.Panel value="catalog" pt="md">
+            <ModelCatalog />
+          </Tabs.Panel>
           <Tabs.Panel value="traffic" pt="md">
             <Stack gap="md" miw={0}>
-              <CatalogSummary label="Model traffic summary" items={[
-                { label: 'Models tracked', value: query.data ? fmtInt(models.length) : '—', hint: 'With recorded activity' },
-                { label: 'Requests', value: query.data ? fmtInt(summary.requests) : '—', hint: 'Across all models' },
-                { label: 'First token', value: fmtSec(summary.latency), hint: 'Median model p50' },
-                { label: 'With errors', value: query.data ? fmtInt(summary.errors) : '—', hint: 'Request or tool failures', attention: summary.errors > 0 },
-              ]} />
-              <Card component="section" aria-label="Recorded model traffic" miw={0}>
-                <Group justify="space-between" gap="xs" mb="md" wrap="nowrap">
+              <CatalogSummary
+                label="Model traffic summary"
+                items={[
+                  {
+                    label: 'Models tracked',
+                    value: query.data ? fmtInt(models.length) : '—',
+                    hint: 'With recorded activity',
+                  },
+                  {
+                    label: 'Requests',
+                    value: query.data ? fmtInt(summary.requests) : '—',
+                    hint: 'Across all models',
+                  },
+                  {
+                    label: 'First token',
+                    value: fmtSec(summary.latency),
+                    hint: 'Median model p50',
+                  },
+                  {
+                    label: 'With errors',
+                    value: query.data ? fmtInt(summary.errors) : '—',
+                    hint: 'Request or tool failures',
+                    attention: summary.errors > 0,
+                  },
+                ]}
+              />
+              <section className="catalog-traffic-section" aria-label="Recorded model traffic">
+                <header className="catalog-traffic-head">
                   <Box miw={0}>
-                    <Text fw={650} fz={14}>
-                      Recorded traffic
-                    </Text>
-                    <Text size="xs" c="dimmed" mt={3}>
+                    <Text className="catalog-traffic-title">Recorded traffic</Text>
+                    <Text size="xs" c="dimmed">
                       All-time totals · latency and throughput show p50
                     </Text>
                   </Box>
-                  <Badge variant="light" color="gray" style={{ flexShrink: 0 }}>
-                    {query.data ? models.length : '—'} tracked
+                  <Badge variant="light" color="gray" className="catalog-count-badge">
+                    {query.data ? `${models.length} tracked` : '— tracked'}
                   </Badge>
-                </Group>
-                <Group gap="sm" align="flex-start" wrap="wrap">
-                  <Box flex={1} miw={220}>
+                </header>
+
+                <div className="catalog-traffic-toolbar-row">
+                  <Box flex={1} miw={0}>
                     <SearchInput
                       label="Filter backend or model"
                       placeholder="Filter backend or model…"
@@ -134,12 +155,13 @@ export default function ModelsPage() {
                       onChange={setFilter}
                     />
                   </Box>
-                  <Group gap="xs" wrap="nowrap">
+                  <Group gap="xs" wrap="nowrap" className="catalog-sort-group">
                     <Select
                       aria-label="Sort models by"
                       value={sort.key}
                       data={sortOptions}
                       allowDeselect={false}
+                      className="catalog-sort-select"
                       onChange={(value) =>
                         value && setSort({ key: value as SortKey, dir: value === 'model' ? 1 : -1 })
                       }
@@ -153,9 +175,10 @@ export default function ModelsPage() {
                       {sort.dir === 1 ? <IconArrowUp size={17} /> : <IconArrowDown size={17} />}
                     </ActionIcon>
                   </Group>
-                </Group>
-                <Group justify="space-between" gap="xs" my="sm">
-                  <Text size="xs" c="dimmed" aria-live="polite">
+                </div>
+
+                <Group justify="space-between" gap="xs" className="catalog-traffic-meta">
+                  <Text size="xs" c="dimmed" aria-live="polite" className="tabular">
                     {query.isPending
                       ? 'Loading tracked models…'
                       : query.isError
@@ -166,15 +189,18 @@ export default function ModelsPage() {
                     Errors only
                   </Chip>
                 </Group>
+
                 {query.isPending ? (
-                  <Group py="xl" justify="center" role="status">
+                  <Group py="xl" justify="center" gap="xs" role="status">
                     <Loader size="sm" />
                     <Text size="sm">Loading model statistics…</Text>
                   </Group>
                 ) : query.isError ? (
                   <Alert color="red" title="Couldn't load model stats">
                     <Stack gap="xs" align="flex-start">
-                      <Text size="sm">Model statistics are temporarily unavailable. {query.error.message}</Text>
+                      <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
+                        Model statistics are temporarily unavailable. {query.error.message}
+                      </Text>
                       <Button variant="light" mih={44} onClick={() => query.refetch()}>
                         Retry
                       </Button>
@@ -206,7 +232,7 @@ export default function ModelsPage() {
                     onInspect={(model) => setSelectedId(`${model.backend}/${model.model}`)}
                   />
                 )}
-              </Card>
+              </section>
             </Stack>
           </Tabs.Panel>
         </Tabs>
@@ -215,16 +241,17 @@ export default function ModelsPage() {
         opened={!!selected}
         onClose={() => setSelectedId(null)}
         position="right"
-        size={isMobile ? '100%' : 'lg'}
+        size={isMobile ? '100%' : 680}
+        className="catalog-detail-drawer"
         closeButtonProps={{ ...{ 'data-autofocus': true }, 'aria-label': 'Close model details', size: 44 }}
         styles={{ title: { minWidth: 0, flex: 1 }, close: { flexShrink: 0 } }}
         title={
           selected && (
             <Box miw={0}>
-              <Text size="xs" c="dimmed" fw={600}>
+              <Text size="xs" c="dimmed" fw={600} className="catalog-drawer-eyebrow">
                 {selected.backend} / Model performance
               </Text>
-              <Text fw={700} mt={4} style={{ overflowWrap: 'anywhere' }}>
+              <Text fw={700} mt={4} className="catalog-drawer-title">
                 {selected.model}
               </Text>
               <Box mt={6}>
@@ -235,11 +262,13 @@ export default function ModelsPage() {
         }
       >
         {selected && (
-          <Suspense fallback={(
-            <Group justify="center" py="xl" role="status" aria-label="Loading model details">
-              <Loader size="sm" />
-            </Group>
-          )}>
+          <Suspense
+            fallback={(
+              <Group justify="center" py="xl" role="status" aria-label="Loading model details">
+                <Loader size="sm" />
+              </Group>
+            )}
+          >
             <ModelDetail
               stat={selected}
               colors={palette.series}
