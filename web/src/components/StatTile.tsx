@@ -2,6 +2,7 @@ import { Box, Card, Group, Text } from '@mantine/core'
 import { useReducedMotion } from 'framer-motion'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import Sparkline from './Sparkline'
+import { countUpFrame, countUpPhase } from '../lib/countUp'
 
 type Accent = 'brand' | 'teal' | 'orange' | 'grape' | 'gray' | 'red'
 
@@ -23,27 +24,25 @@ interface StatTileProps {
 // `value` is usually a preformatted string; count-up applies only to finite
 // numbers so formatted strings ("34.9K", "96.4%") are never mangled.
 function useCountUp(value: ReactNode, enabled: boolean) {
-  const numeric = typeof value === 'number' && Number.isFinite(value)
-  const [shown, setShown] = useState(numeric && enabled ? 0 : value)
+  // Phases and frame math live in lib/countUp.ts.
+  const phase = countUpPhase(value, enabled)
+  const target = phase.kind === 'counting' ? phase.target : undefined
+  const [shown, setShown] = useState<ReactNode>(phase.kind === 'counting' ? 0 : value)
   useEffect(() => {
-    if (!numeric || !enabled) {
+    if (target === undefined) {
       setShown(value)
       return
     }
     let frame = 0
     const start = performance.now()
-    const duration = 640
-    const target = value as number
     const tick = (now: number) => {
-      const progress = Math.min(1, (now - start) / duration)
-      // Ease-out cubic: quick to read, settles softly.
-      const eased = 1 - Math.pow(1 - progress, 3)
-      setShown(Math.round(target * eased))
-      if (progress < 1) frame = requestAnimationFrame(tick)
+      const step = countUpFrame(target, now - start)
+      setShown(step.shown)
+      if (!step.done) frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [numeric, enabled, value])
+  }, [target, value])
   return shown
 }
 

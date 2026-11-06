@@ -29,6 +29,7 @@ import { dashboardQueries } from '../../queries'
 import SearchInput from '../SearchInput'
 import { EmptyState } from '../EmptyState'
 import { springSnappy, useMotionPreset } from '../../motion/tokens'
+import { pageWindow } from '../../lib/pagination'
 
 // The available-model catalog is a scanning surface: 500+ ids, no traffic
 // numbers, one action (copy). It is a responsive card grid — provider prefix
@@ -60,10 +61,7 @@ export default function ModelCatalog() {
       (provider === 'all' || entry.providers.includes(provider)) &&
       `${entry.id} ${entry.providers.join(' ')}`.toLowerCase().includes(needle),
   )
-  const lastPage = Math.max(0, Math.ceil(visible.length / pageSize) - 1)
-  const currentPage = Math.min(page, lastPage)
-  const start = currentPage * pageSize + 1
-  const end = Math.min((currentPage + 1) * pageSize, visible.length)
+  const { currentPage, lastPage, start, end } = pageWindow(visible.length, pageSize, page)
   const failed = enabled.filter((backend) => !backend.catalogOK).length
   const rangeLabel = visible.length
     ? `${start}–${end} of ${visible.length} available models`

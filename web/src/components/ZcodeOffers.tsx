@@ -1,27 +1,29 @@
-import { useRef, useState } from 'react'
+import { useReducer, useRef, useState } from 'react'
 import { Alert, Anchor, Box, Button, Divider, Group, Stack, Text, Title } from '@mantine/core'
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { claimZcodeOffer, type ZcodeClaimResult, type ZcodeOffer } from '../api'
 import { dashboardQueries, queryKeys } from '../queries'
-
-type Attempt = { result?: ZcodeClaimResult; error?: string; reviewed?: boolean }
+import { canSubmitClaim, claimReducer, INITIAL_CLAIM_STATE, isRiskBlocked } from '../lib/zcodeClaim'
 
 export default function ZcodeOffers() {
   const [expanded, setExpanded] = useState(false)
-  const [attempts, setAttempts] = useState<Record<string, Attempt>>({})
-  const [reviewing, setReviewing] = useState(false)
-  const [reviewError, setReviewError] = useState('')
+  // Per-plan attempts and the review status: see lib/zcodeClaim.ts for the
+  // transition table.
+  const [{ attempts, review }, dispatch] = useReducer(claimReducer, INITIAL_CLAIM_STATE)
+  // Synchronous double-submit latch: held from submit until the post-claim
+  // invalidations finish, so a second click before React re-renders is dropped.
   const inFlight = useRef(false)
   const client = useQueryClient()
   const offers = useQuery({ ...dashboardQueries.zcodeOffers(), enabled: expanded })
   const pending = useIsMutating({ mutationKey: ['zcode-claim'] }) > 0
-  const riskBlocked = Object.values(attempts).some((attempt) => attempt.result?.failure_kind === 'risk_blocked')
+  const riskBlocked = isRiskBlocked(attempts)
+  const reviewing = review.kind === 'reviewing'
   const claim = useMutation({
     mutationKey: ['zcode-claim'],
     mutationFn: claimZcodeOffer,
     retry: false,
-    onSuccess: (result, planID) => setAttempts((current) => ({ ...current, [planID]: { result } })),
-    onError: (error, planID) => setAttempts((current) => ({ ...current, [planID]: { error: error.message } })),
+    onSuccess: (result, planID) => dispatch({ type: 'claim-succeeded', planID, result }),
+    onError: (error, planID) => dispatch({ type: 'claim-failed', planID, message: error.message }),
     onSettled: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: queryKeys.zcodeQuota }),
@@ -32,25 +34,22 @@ export default function ZcodeOffers() {
   })
 
   async function reviewStatus() {
-    setReviewing(true)
-    setReviewError('')
+    dispatch({ type: 'review-started' })
     try {
       await Promise.all([
         offers.refetch({ throwOnError: true }),
         client.fetchQuery({ ...dashboardQueries.zcodeQuota(true), staleTime: 0 }),
       ])
-      setAttempts((current) => Object.fromEntries(Object.entries(current).map(([id, attempt]) => [id, { ...attempt, reviewed: true }])))
+      dispatch({ type: 'review-succeeded' })
     } catch {
-      setReviewError('Could not refresh both offers and quota. Check your account before making another attempt.')
-    } finally {
-      setReviewing(false)
+      dispatch({ type: 'review-failed', message: 'Could not refresh both offers and quota. Check your account before making another attempt.' })
     }
   }
 
   function submit(planID: string) {
-    if (inFlight.current || pending || riskBlocked || attempts[planID] || !planID.trim()) return
+    if (inFlight.current || pending || !canSubmitClaim({ attempts, review }, planID)) return
     inFlight.current = true
-    setAttempts((current) => ({ ...current, [planID]: {} }))
+    dispatch({ type: 'submit', planID })
     claim.mutate(planID)
   }
 
@@ -66,11 +65,11 @@ export default function ZcodeOffers() {
       <Button variant="light" size="xs" mih={44} loading={reviewing} disabled={pending || offers.isFetching || reviewing} onClick={() => void reviewStatus()} style={{ alignSelf: 'flex-start', maxWidth: '100%', height: 'auto', minHeight: 44 }} styles={{ label: { whiteSpace: 'normal' } }}>Refresh offers and quota</Button>
       {offers.isPending && <Text size="sm" role="status">Loading offers…</Text>}
       {offers.error && <Alert color="yellow" title="Offers unavailable">{offers.error.message}</Alert>}
-      {reviewError && <Alert color="yellow" title="Status refresh incomplete">{reviewError}</Alert>}
+      {review.kind === 'failed' && <Alert color="yellow" title="Status refresh incomplete">{review.message}</Alert>}
       {offers.data?.plans.length === 0 && <Text size="sm" c="dimmed">No claimable offers are available for this account.</Text>}
       {offers.data?.plans.map((offer, index) => {
         const attempt = attempts[offer.plan_id]
-        const complete = attempt?.result?.ok || attempt?.result?.failure_kind === 'already_claimed'
+        const complete = attempt?.kind === 'complete'
         return <Box key={`${offer.plan_id}-${index}`} style={{ minWidth: 0 }}>
           {index > 0 && <Divider mb="sm" />}
           <OfferDetails offer={offer} />
@@ -80,25 +79,20 @@ export default function ZcodeOffers() {
         </Box>
       })}
       {Object.entries(attempts).map(([planID, attempt]) => {
-        const complete = attempt.result?.ok || attempt.result?.failure_kind === 'already_claimed'
-        const retryable = !complete && ['captcha', 'login_required', 'invalid_request'].includes(attempt.result?.failure_kind ?? '')
+        const complete = attempt.kind === 'complete'
         return <Box key={planID}>
           <Text size="xs" c="dimmed">Claim result for {planID}</Text>
-          {attempt?.result && <Alert mt="sm" color={complete ? 'teal' : 'yellow'} title={attempt.result.ok ? 'Offer claimed' : attempt.result.failure_kind === 'already_claimed' ? 'Already claimed' : 'Claim was not accepted'} role="status">
+          {'result' in attempt && <Alert mt="sm" color={complete ? 'teal' : 'yellow'} title={attempt.result.ok ? 'Offer claimed' : attempt.result.failure_kind === 'already_claimed' ? 'Already claimed' : 'Claim was not accepted'} role="status">
             <Text size="sm">{claimResultMessage(attempt.result)}</Text>
             {attempt.result.message && <Text size="sm" mt={4}>{attempt.result.message}</Text>}
           </Alert>}
-          {attempt?.error && <Alert mt="sm" color="yellow" title="Claim outcome unknown" role="status">
+          {attempt.kind === 'unknown-outcome' && attempt.error && <Alert mt="sm" color="yellow" title="Claim outcome unknown" role="status">
             <Text size="sm">{attempt.error}</Text>
             <Text size="sm" mt={4}>The offer may have been claimed. No automatic retry was sent. Refresh offers and quota, then check whether the plan activated. Further attempts for this offer are disabled in this session.</Text>
           </Alert>}
-          {retryable && !riskBlocked && <>
+          {attempt.kind === 'retryable' && !riskBlocked && <>
             <Text size="sm" c="dimmed" mt="sm">Check the refreshed quota and offers before another attempt. If the account status is still unclear, verify it with ZCode first.</Text>
-            <Button mt="xs" variant="subtle" size="xs" mih={44} disabled={!attempt.reviewed || pending || reviewing || offers.isError} onClick={() => setAttempts((current) => {
-              const next = { ...current }
-              delete next[planID]
-              return next
-            })} style={{ maxWidth: '100%', height: 'auto' }} styles={{ label: { whiteSpace: 'normal' } }}>I checked account status; enable another attempt</Button>
+            <Button mt="xs" variant="subtle" size="xs" mih={44} disabled={!attempt.reviewed || pending || reviewing || offers.isError} onClick={() => dispatch({ type: 'retry-enabled', planID })} style={{ maxWidth: '100%', height: 'auto' }} styles={{ label: { whiteSpace: 'normal' } }}>I checked account status; enable another attempt</Button>
           </>}
         </Box>
       })}

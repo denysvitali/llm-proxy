@@ -20,6 +20,7 @@ import Fade from './components/Fade'
 import RouteProgress from './components/RouteProgress'
 import CommandPalette, { CommandPaletteButton } from './components/CommandPalette'
 import { springGentle, useMotionPreset } from './motion/tokens'
+import { chordStep, IDLE_CHORD, type ChordState, type ShellOverlay } from './lib/keyChord'
 import './app-shell.css'
 
 export { Fade }
@@ -49,8 +50,12 @@ export default function App() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const pageName = NAV.find((item) => isActiveNavPath(pathname, item.path))?.label ?? 'Overview'
-  const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [overlay, setOverlay] = useState<ShellOverlay>('none')
+  const openPalette = () => setOverlay('palette')
+  const openShortcuts = () => setOverlay('shortcuts')
+  // Closing only clears the overlay it belongs to, so a palette action that
+  // opens the shortcut sheet is not undone by the palette's own close.
+  const closeOverlay = (which: Exclude<ShellOverlay, 'none'>) => setOverlay((current) => (current === which ? 'none' : current))
   const { reduced } = useMotionPreset()
 
   // Focus main content on route change
@@ -58,46 +63,20 @@ export default function App() {
     document.getElementById('main')?.focus()
   }, [pathname])
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts: see lib/keyChord.ts for the chord transition table.
   useEffect(() => {
-    let lastGPress = 0
+    let chord: ChordState = IDLE_CHORD
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target instanceof HTMLElement ? e.target : null
-      if (e.defaultPrevented || e.isComposing || e.repeat || e.altKey
-        || shortcutsOpen || paletteOpen || target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="dialog"]')) {
-        lastGPress = 0
-        return
-      }
-
-      // ⌘K / Ctrl+K opens the command menu from anywhere in the shell.
-      if (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault()
-        lastGPress = 0
-        setPaletteOpen(true)
-        return
-      }
-
-      if (e.key === 'g' && !e.metaKey && !e.ctrlKey) {
-        lastGPress = Date.now()
-        return
-      }
-
-      if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault()
-        lastGPress = 0
-        setShortcutsOpen(true)
-        return
-      }
-
-      const isNavigationSequence = Date.now() - lastGPress < 1000 && !e.metaKey && !e.ctrlKey
-      lastGPress = 0
-      if (!isNavigationSequence) return
-
-      switch (e.key) {
-        case 'o': navigate('/'); break
-        case 'm': navigate('/models'); break
-        case 'p': navigate('/providers'); break
-        case 's': navigate('/setup'); break
+      const blocked = e.defaultPrevented || e.isComposing || e.repeat || e.altKey
+        || overlay !== 'none' || !!target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="dialog"]')
+      const step = chordStep(chord, { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, blocked, now: Date.now() })
+      chord = step.state
+      if (step.preventDefault) e.preventDefault()
+      switch (step.action.type) {
+        case 'open-palette': setOverlay('palette'); break
+        case 'open-shortcuts': setOverlay('shortcuts'); break
+        case 'navigate': navigate(step.action.path); break
       }
     }
 
@@ -105,7 +84,7 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [navigate, shortcutsOpen, paletteOpen])
+  }, [navigate, overlay])
 
   return (
     <AppShell
@@ -121,15 +100,15 @@ export default function App() {
         <div className="topbar-inner">
           <HeaderBrand subtitle={isMobile ? pageName : undefined} />
           <div className="topbar-actions">
-            {!isMobile && <CommandPaletteButton onClick={() => setPaletteOpen(true)} />}
+            {!isMobile && <CommandPaletteButton onClick={openPalette} />}
             <LiveStatusBadge />
             {isMobile && (
-              <ActionIcon variant="subtle" size={34} aria-label="Open command menu" onClick={() => setPaletteOpen(true)}>
+              <ActionIcon variant="subtle" size={34} aria-label="Open command menu" onClick={openPalette}>
                 <IconSearch size={17} aria-hidden />
               </ActionIcon>
             )}
             <Tooltip label="Keyboard shortcuts">
-              <ActionIcon variant="subtle" size={34} aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
+              <ActionIcon variant="subtle" size={34} aria-label="Keyboard shortcuts" onClick={openShortcuts}>
                 <IconKeyboard size={17} aria-hidden />
               </ActionIcon>
             </Tooltip>
@@ -182,12 +161,12 @@ export default function App() {
       )}
 
       <CommandPalette
-        opened={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        onShowShortcuts={() => setShortcutsOpen(true)}
+        opened={overlay === 'palette'}
+        onClose={() => closeOverlay('palette')}
+        onShowShortcuts={openShortcuts}
       />
 
-      <Modal opened={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" centered radius="lg">
+      <Modal opened={overlay === 'shortcuts'} onClose={() => closeOverlay('shortcuts')} title="Keyboard shortcuts" centered radius="lg">
         <Text size="sm" c="dimmed" mb="lg">Move around your workspace without leaving the keyboard.</Text>
         <Stack gap={2}>
           {SHORTCUTS.map(({ keys, action }) => (

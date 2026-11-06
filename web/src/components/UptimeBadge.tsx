@@ -5,7 +5,7 @@ import {
   IconCircleX,
   IconMinus,
 } from '@tabler/icons-react'
-import { uptimeState } from '../lib/stats'
+import { uptimeReading } from '../lib/stats'
 import './primitives.css'
 
 interface UptimeBadgeProps {
@@ -31,10 +31,9 @@ type StateKey = keyof typeof states
 // A tooltip exposes the exact percentage and request count so the coarse
 // label doesn't hide the underlying numbers.
 export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
-  const noTraffic = requests === 0
-  const unavailable = !Number.isFinite(requests) || requests < 0
-    || !Number.isFinite(uptime) || uptime < 0 || uptime > 1
-  if (noTraffic || unavailable) {
+  const reading = uptimeReading(uptime, requests)
+  if (reading.kind !== 'measured') {
+    const noTraffic = reading.kind === 'no-traffic'
     const description = noTraffic ? 'No requests recorded yet' : 'Request success data is unavailable'
     return (
       <Tooltip label={description} withArrow events={{ hover: true, focus: true, touch: true }}>
@@ -45,9 +44,9 @@ export default function UptimeBadge({ uptime, requests }: UptimeBadgeProps) {
       </Tooltip>
     )
   }
-  const key: StateKey = uptimeState(uptime)
+  const key: StateKey = reading.tone
   const state = states[key]
-  const detail = `${(uptime * 100).toFixed(2)}% of ${requests.toLocaleString('en-US')} requests succeeded`
+  const detail = `${(reading.uptime * 100).toFixed(2)}% of ${reading.requests.toLocaleString('en-US')} requests succeeded`
   return (
     <Tooltip label={detail} withArrow events={{ hover: true, focus: true, touch: true }}>
       <span className="status-pill" data-tone={key} tabIndex={0} aria-label={`${state.label}: ${detail}`}>

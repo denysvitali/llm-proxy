@@ -3,14 +3,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys, refreshLiveQueries } from './queries.ts'
 import { createLiveRefreshScheduler } from './liveRefresh.ts'
 import type { InspectedRequest, RequestsResponse } from './api.ts'
-
-const INITIAL_RECONNECT_DELAY_MS = 1_000
-const MAX_RECONNECT_DELAY_MS = 15_000
-// WebSockets need a connection the server can hijack; some paths (HTTP/2
-// through a proxy) cannot, and the dial fails with 501 forever. After this
-// many failed dials the hook switches to the SSE twin endpoint, which works
-// over every transport.
-const WS_ATTEMPTS_BEFORE_SSE = 2
+import {
+  INITIAL_LIVE_CONNECTION, transitionLiveConnection, type LiveConnection, type LiveConnectionEvent,
+} from './liveConnection.ts'
 
 // How many live-injected requests to keep in the recent-requests cache before
 // the next refetch reconciles it with the server's retained history.
@@ -52,12 +47,12 @@ export function LiveStatsProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<LiveRequest | null>(null)
 
   useEffect(() => {
+    // The connection lifecycle lives in the pure machine in liveConnection.ts;
+    // this effect only owns the resources and runs the commands it returns.
+    let connection: LiveConnection = INITIAL_LIVE_CONNECTION
     let socket: WebSocket | undefined
     let eventSource: EventSource | undefined
     let reconnectTimer: number | undefined
-    let retryDelay = INITIAL_RECONNECT_DELAY_MS
-    let wsFailures = 0
-    let stopped = false
     let requestCount = 0
 
     const refresh = createLiveRefreshScheduler(() => { void refreshLiveQueries(queryClient) })
@@ -70,7 +65,7 @@ export function LiveStatsProvider({ children }: { children: ReactNode }) {
     }
 
     const onEvent = (data: unknown) => {
-      if (stopped || typeof data !== 'string') return
+      if (connection.kind === 'stopped' || typeof data !== 'string') return
       try {
         const parsed = JSON.parse(data)
         if (parsed?.type === 'request') {
@@ -87,48 +82,36 @@ export function LiveStatsProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const connectSSE = () => {
-      eventSource = new EventSource('/api/updates/sse')
-      eventSource.addEventListener('open', () => {
-        if (stopped) return
-        retryDelay = INITIAL_RECONNECT_DELAY_MS
-        setConnected(true)
-        refresh.schedule()
-      })
-      eventSource.addEventListener('message', (event) => onEvent(event.data))
-      eventSource.addEventListener('error', () => {
-        if (stopped) return
-        setConnected(false)
-        // EventSource reconnects on its own; only surface the state.
-      })
+    const dispatch = (event: LiveConnectionEvent) => {
+      const step = transitionLiveConnection(connection, event)
+      connection = step.state
+      for (const command of step.commands) {
+        switch (command.type) {
+          case 'open-ws': openWebSocket(); break
+          case 'open-sse': openEventSource(); break
+          case 'schedule-reconnect':
+            reconnectTimer = window.setTimeout(() => dispatch({ type: 'retry' }), command.delayMs)
+            break
+          case 'set-connected': setConnected(command.connected); break
+          case 'refresh': refresh.schedule(); break
+        }
+      }
     }
 
-    const connect = () => {
+    // EventSource reconnects on its own; the machine only surfaces its state.
+    const openEventSource = () => {
+      eventSource = new EventSource('/api/updates/sse')
+      eventSource.addEventListener('open', () => dispatch({ type: 'sse-open' }))
+      eventSource.addEventListener('message', (event) => onEvent(event.data))
+      eventSource.addEventListener('error', () => dispatch({ type: 'sse-error' }))
+    }
+
+    const openWebSocket = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(`${protocol}//${window.location.host}/api/updates/ws`)
-
-      socket.addEventListener('open', () => {
-        if (stopped) return
-        refresh.schedule()
-        retryDelay = INITIAL_RECONNECT_DELAY_MS
-        wsFailures = 0
-        setConnected(true)
-      })
-
+      socket.addEventListener('open', () => dispatch({ type: 'ws-open' }))
       socket.addEventListener('message', (event) => onEvent(event.data))
-
-      socket.addEventListener('close', () => {
-        if (stopped) return
-        setConnected(false)
-        if (eventSource) return
-        wsFailures += 1
-        if (wsFailures > WS_ATTEMPTS_BEFORE_SSE) {
-          connectSSE()
-          return
-        }
-        reconnectTimer = window.setTimeout(connect, retryDelay)
-        retryDelay = Math.min(retryDelay * 2, MAX_RECONNECT_DELAY_MS)
-      })
+      socket.addEventListener('close', () => dispatch({ type: 'ws-close' }))
     }
 
     const onVisibilityChange = () => {
@@ -139,10 +122,10 @@ export function LiveStatsProvider({ children }: { children: ReactNode }) {
 
     document.addEventListener('visibilitychange', onVisibilityChange)
 
-    connect()
+    dispatch({ type: 'start' })
 
     return () => {
-      stopped = true
+      dispatch({ type: 'stop' })
       window.clearTimeout(reconnectTimer)
       refresh.cancel()
       document.removeEventListener('visibilitychange', onVisibilityChange)

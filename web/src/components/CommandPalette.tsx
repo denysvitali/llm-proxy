@@ -4,9 +4,10 @@ import { useMotionPreset, springSnappy } from '../motion/tokens'
 import {
   IconBook, IconChartBar, IconKeyboard, IconSearch, IconTerminal2,
 } from '@tabler/icons-react'
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useMemo, useReducer, useRef, type ComponentType } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { NAV } from '../nav'
+import { INITIAL_PALETTE, paletteReducer } from '../lib/paletteCursor'
 
 export interface PaletteItem {
   id: string
@@ -33,8 +34,8 @@ export default function CommandPalette({
 }) {
   const navigate = useNavigate()
   const { reduced } = useMotionPreset()
-  const [query, setQuery] = useState('')
-  const [cursor, setCursor] = useState(0)
+  // Query + highlight transitions live in lib/paletteCursor.ts.
+  const [{ query, cursor }, dispatch] = useReducer(paletteReducer, INITIAL_PALETTE)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -73,18 +74,12 @@ export default function CommandPalette({
 
   // Reset the highlight when the query narrows the list. Done in the change
   // handler instead of an effect so it happens in the same render pass.
-  const changeQuery = (value: string) => {
-    setQuery(value)
-    setCursor(0)
-  }
+  const changeQuery = (value: string) => dispatch({ type: 'query-changed', query: value })
 
   // A fresh palette every time it opens: no stale query or highlight.
   useEffect(() => {
     if (!opened) return
-    const id = window.setTimeout(() => {
-      setQuery('')
-      setCursor(0)
-    }, 0)
+    const id = window.setTimeout(() => dispatch({ type: 'reset' }), 0)
     return () => window.clearTimeout(id)
   }, [opened])
 
@@ -107,10 +102,10 @@ export default function CommandPalette({
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setCursor((value) => Math.min(value + 1, matches.length - 1))
+      dispatch({ type: 'move-down', count: matches.length })
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setCursor((value) => Math.max(value - 1, 0))
+      dispatch({ type: 'move-up' })
     } else if (event.key === 'Enter' && matches[cursor]) {
       event.preventDefault()
       run(matches[cursor])
@@ -163,7 +158,7 @@ export default function CommandPalette({
                     <UnstyledButton
                       className="command-palette-item"
                       data-selected={selected || undefined}
-                      onMouseMove={() => setCursor(index)}
+                      onMouseMove={() => dispatch({ type: 'hover', index })}
                       onClick={() => run(item)}
                     >
                       <span className="command-palette-item-icon" aria-hidden><item.icon size={17} stroke={1.7} /></span>

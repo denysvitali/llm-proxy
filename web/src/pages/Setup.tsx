@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useReducer, useState } from 'react'
 import {
   Alert, Anchor, Badge, Box, Button, Card, Code, Group,
   Skeleton, Stack, Tabs, Text, Title,
@@ -16,6 +16,7 @@ import { PageHeader } from '../components/PageHeader'
 import { ACCOUNT_AUTH } from '../lib/accounts'
 import { Snippet } from '../components/setup/Snippet'
 import { Reveal } from '../components/setup/Reveal'
+import { connectionProbeReducer, INITIAL_CONNECTION_PROBE } from '../lib/connectionProbe'
 import './setup.css'
 
 const accountProviders = Object.entries(ACCOUNT_AUTH).map(([name, { label, account, login }]) => ({
@@ -245,18 +246,14 @@ function AccountConnections({ overview }: { overview: Overview }) {
 }
 
 function ConnectionCheck() {
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
-  const [testing, setTesting] = useState(false)
+  const [probe, dispatch] = useReducer(connectionProbeReducer, INITIAL_CONNECTION_PROBE)
   async function checkConnection() {
-    setTesting(true)
-    setResult(null)
+    dispatch({ type: 'start' })
     try {
       const response = await fetch('/healthz', { cache: 'no-store', signal: AbortSignal.timeout(10000) })
-      setResult({ ok: response.ok, message: response.ok ? 'Gateway is reachable.' : `Gateway returned HTTP ${response.status}.` })
+      dispatch({ type: 'reached', ok: response.ok, status: response.status })
     } catch {
-      setResult({ ok: false, message: 'Could not reach the gateway. Check your connection and try again.' })
-    } finally {
-      setTesting(false)
+      dispatch({ type: 'error' })
     }
   }
   return (
@@ -280,7 +277,7 @@ function ConnectionCheck() {
           <Button
             variant="default"
             className="setup-check-button press"
-            loading={testing}
+            loading={probe.kind === 'testing'}
             onClick={() => void checkConnection()}
             leftSection={<IconPlugConnected size={15} aria-hidden />}
           >
@@ -288,12 +285,12 @@ function ConnectionCheck() {
           </Button>
         </div>
         <div role="status" aria-live="polite" className="setup-check-result-slot">
-          {result && (
-            <div className="setup-check-result" data-ok={result.ok}>
+          {(probe.kind === 'ok' || probe.kind === 'failed') && (
+            <div className="setup-check-result" data-ok={probe.kind === 'ok'}>
               <span className="setup-check-result-icon" aria-hidden>
-                {result.ok ? <IconCheck size={15} /> : <IconInfoCircle size={15} />}
+                {probe.kind === 'ok' ? <IconCheck size={15} /> : <IconInfoCircle size={15} />}
               </span>
-              <Text size="sm" component="div">{result.message}</Text>
+              <Text size="sm" component="div">{probe.message}</Text>
             </div>
           )}
         </div>

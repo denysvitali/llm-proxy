@@ -23,7 +23,7 @@ import { EmptyState } from '../components/EmptyState'
 import { providerSegments, healthState } from '../lib/stats'
 import ProviderCard from '../components/catalog/ProviderCard'
 import { CatalogSummary } from '../components/catalog/CatalogSummary'
-import { emptyProviderUsage, indexProviderRouteCounts, indexProviderUsage, type StatsState } from '../components/catalog/providerData'
+import { emptyProviderUsage, indexProviderRouteCounts, indexProviderUsage, statsStateOf, type StatsState } from '../components/catalog/providerData'
 import { Fade } from '../App'
 import './catalog.css'
 
@@ -48,7 +48,7 @@ export default function ProvidersPage() {
   const models = useMemo(() => stats.data?.models ?? [], [stats.data?.models])
   const routeCounts = useMemo(() => indexProviderRouteCounts(overview.data?.routes), [overview.data?.routes])
   const usageIndex = useMemo(() => indexProviderUsage(models), [models])
-  const statsState: StatsState = stats.data ? 'ready' : stats.isPending ? 'loading' : 'unavailable'
+  const statsState: StatsState = statsStateOf(stats)
   const segments = useMemo(() => new Map(providerSegments(models, palette.series)), [models, palette.series])
   const providers = useMemo(
     () =>

@@ -18,7 +18,16 @@ export function pct(ratio: number, digits = 1): string {
   return fmtPct(ratio, digits)
 }
 
+// Whether provider request stats can be shown. Data wins even while a refetch
+// fails, so a stale snapshot stays visible:
+//   ready        stats data is present
+//   loading      no data yet and the first fetch is still pending
+//   unavailable  no data and the fetch has failed
 export type StatsState = 'ready' | 'loading' | 'unavailable'
+
+export function statsStateOf(query: { data?: unknown; isPending: boolean }): StatsState {
+  return query.data ? 'ready' : query.isPending ? 'loading' : 'unavailable'
+}
 
 function emptyAggregate() {
   return {

@@ -6,11 +6,16 @@ import './primitives.css'
 // Keep the shell usable if a page fails to render. App keys this by pathname,
 // so navigating away also clears the failed page's state. The fallback uses the
 // same calm alert anatomy as ErrorRetryCard: icon tile, title, body.
-export class PageErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean; error: Error | null }> {
-  state = { failed: false, error: null as Error | null }
+//   rendering  render error   → failed(error)
+//   failed     Try again      → rendering (re-render the page)
+//   failed     Reload page    → full browser reload
+type BoundaryState = { kind: 'rendering' } | { kind: 'failed'; error: Error | null }
 
-  static getDerivedStateFromError(error: Error) {
-    return { failed: true, error }
+export class PageErrorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
+  state: BoundaryState = { kind: 'rendering' }
+
+  static getDerivedStateFromError(error: Error): BoundaryState {
+    return { kind: 'failed', error }
   }
 
   componentDidCatch(error: Error) {
@@ -18,7 +23,8 @@ export class PageErrorBoundary extends Component<{ children: ReactNode }, { fail
   }
 
   render() {
-    if (!this.state.failed) return this.props.children
+    if (this.state.kind === 'rendering') return this.props.children
+    const { error } = this.state
     return (
       <Box component="section" role="alert" className="page-error-card">
         <Group gap="sm" align="flex-start" wrap="nowrap">
@@ -31,14 +37,14 @@ export class PageErrorBoundary extends Component<{ children: ReactNode }, { fail
           </Stack>
         </Group>
         <Group gap="xs" className="page-error-actions">
-          <Button variant="default" onClick={() => this.setState({ failed: false, error: null })}>Try again</Button>
+          <Button variant="default" onClick={() => this.setState({ kind: 'rendering' })}>Try again</Button>
           <Button variant="default" onClick={() => window.location.reload()}>Reload page</Button>
         </Group>
-        {this.state.error && (
+        {error && (
           <details className="page-error-details">
             <summary>Error details</summary>
             <Text size="xs" c="dimmed" component="pre" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-              {this.state.error.message}
+              {error.message}
             </Text>
           </details>
         )}

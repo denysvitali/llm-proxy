@@ -3,7 +3,8 @@ import { Alert, Button, Card, Group, Loader, Modal, ScrollArea, Stack, Table, Te
 import { IconClock, IconListDetails, IconServerOff, IconShieldCheck } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
-import { ApiError, fetchRequest, type InspectedRequest, type UpstreamErrorEvent } from '../../api'
+import { fetchRequest, type InspectedRequest, type UpstreamErrorEvent } from '../../api'
+import { requestInspectView } from '../../lib/requestInspect'
 import { fmtInt } from '../../format'
 import { EmptyState } from '../EmptyState'
 import { statusSeverity, severityColor, statusDescription } from '../../lib/httpStatus'
@@ -261,6 +262,7 @@ export function RecentRequestsCard({
 function RequestInspectButton({ id }: { id: string }) {
   const [opened, setOpened] = useState(false)
   const query = useQuery({ queryKey: ['request', id], queryFn: () => fetchRequest(id), enabled: opened, retry: 1 })
+  const view = requestInspectView(query)
   return (
     <>
       <Button size="compact-xs" variant="subtle" aria-label={`Inspect request ${id}`} onClick={() => setOpened(true)}>Inspect</Button>
@@ -272,18 +274,16 @@ function RequestInspectButton({ id }: { id: string }) {
         centered
         closeButtonProps={{ 'aria-label': 'Close request inspection' }}
       >
-        {query.isPending ? <Group justify="center" py="xl" role="status"><Loader size="sm" aria-hidden="true" /></Group> : query.isError ? (
-          query.error instanceof ApiError && query.error.status === 404 ? (
-            <Alert color="red">This request is no longer available in the retained history.</Alert>
-          ) : (
-            <Alert color="red" title="Couldn't load request details">
-              <Stack gap="xs" align="flex-start">
-                <Text size="sm">Request history is temporarily unavailable. Try again.</Text>
-                <Button variant="light" onClick={() => query.refetch({ cancelRefetch: false })} loading={query.isFetching}>Retry</Button>
-              </Stack>
-            </Alert>
-          )
-        ) : query.data ? <RequestDetail request={query.data} /> : null}
+        {view.kind === 'loading' ? <Group justify="center" py="xl" role="status"><Loader size="sm" aria-hidden="true" /></Group> : view.kind === 'expired' ? (
+          <Alert color="red">This request is no longer available in the retained history.</Alert>
+        ) : view.kind === 'failed' ? (
+          <Alert color="red" title="Couldn't load request details">
+            <Stack gap="xs" align="flex-start">
+              <Text size="sm">Request history is temporarily unavailable. Try again.</Text>
+              <Button variant="light" onClick={() => query.refetch({ cancelRefetch: false })} loading={query.isFetching}>Retry</Button>
+            </Stack>
+          </Alert>
+        ) : view.kind === 'loaded' ? <RequestDetail request={view.request} /> : null}
       </Modal>
     </>
   )

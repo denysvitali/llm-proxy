@@ -1,8 +1,9 @@
 import { Alert, Badge, Box, Button, Divider, Group, Progress, Stack, Text, Title } from '@mantine/core'
 import { useIsMutating, useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { claimMiniMaxCheckin, type MiniMaxCheckinPanel, type MiniMaxQuotaWindow, type MiniMaxUsage, type MiniMaxVideoQuota } from '../api'
+import { claimMiniMaxCheckin, type MiniMaxQuotaWindow, type MiniMaxUsage, type MiniMaxVideoQuota } from '../api'
 import UsageCardShell from './UsageCardShell'
 import { queryKeys } from '../queries'
+import { CHECKIN_DAY_LABEL, checkinDayState, checkinOutcome, checkinPanelState } from '../lib/minimaxCheckin'
 
 export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<MiniMaxUsage, Error> }) {
   const usage = query.data
@@ -22,8 +23,10 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
     onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.minimaxUsage }),
   })
   const panel = usage?.checkin
-  const claimed = claimedToday(panel)
-  const claimable = !claimed && !!panel?.days.some((day) => day.status === 2)
+  const panelState = checkinPanelState(panel)
+  const claimed = panelState === 'claimed'
+  const claimable = panelState === 'claimable'
+  const outcome = checkin.isSuccess ? checkinOutcome(checkin.data) : null
 
   return (
     <UsageCardShell title="MiniMax Code" ariaLabel="MiniMax Code account" subtitle={account?.tier || 'Account credits and quotas'}
@@ -57,26 +60,29 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
             {checkin.error.message}
             <Text size="sm" mt={4}>Check the refreshed status before trying again.</Text>
           </Alert>}
-          {checkin.isSuccess && <Text size="sm" role="status" style={{ color: 'var(--data-good)' }}>
-            {checkin.data.claim_result === 2 ? 'Already checked in today.' : `Checked in! +${checkin.data.points.toLocaleString()} credits.`}
-            {checkin.data.claim_result === 1 && dateLabel(checkin.data.expire_at_ms) ? ` Credits expire ${dateLabel(checkin.data.expire_at_ms)}.` : ''}
+          {outcome && <Text size="sm" role="status" style={{ color: 'var(--data-good)' }}>
+            {outcome.kind === 'already-checked-in' ? 'Already checked in today.' : `Checked in! +${outcome.points.toLocaleString()} credits.`}
+            {outcome.kind === 'checked-in' && dateLabel(outcome.expireAtMs) ? ` Credits expire ${dateLabel(outcome.expireAtMs)}.` : ''}
           </Text>}
           {panel?.days.length ? (
             <div className="usage-checkin-strip">
-              {[...panel.days].sort((a, b) => a.day_no - b.day_no).map((day) => (
-                <div key={day.day_no} className="usage-checkin-day" data-today={day.is_today} data-claimed={day.status === 3}>
-                  <Group gap={4} justify="space-between" wrap="nowrap" className="usage-checkin-top">
-                    <Text size="xs" fw={day.is_today ? 700 : 500} className="usage-checkin-dayno">Day {day.day_no}</Text>
-                    {day.is_today && <span className="usage-checkin-today">Today</span>}
-                  </Group>
-                  <Text fz={12} fw={600} className="usage-checkin-points">{Number.isFinite(day.points) ? day.points.toLocaleString() : '—'} credits</Text>
-                  {day.bonus_points != null && day.bonus_points > 0 && <Text fz={11} c="dimmed" className="usage-checkin-bonus">Includes {day.bonus_points.toLocaleString()} bonus</Text>}
-                  <Text fz={11} mt={4} className="usage-checkin-status" style={{ color: day.status === 3 ? 'var(--data-good)' : undefined }} c={day.status === 3 ? undefined : 'dimmed'}>{day.status === 3 ? 'Claimed' : day.status === 2 ? 'Available' : day.status === 4 ? 'Unavailable' : 'Upcoming'}</Text>
-                </div>
-              ))}
+              {[...panel.days].sort((a, b) => a.day_no - b.day_no).map((day) => {
+                const dayState = checkinDayState(day)
+                return (
+                  <div key={day.day_no} className="usage-checkin-day" data-today={day.is_today} data-claimed={dayState === 'claimed'}>
+                    <Group gap={4} justify="space-between" wrap="nowrap" className="usage-checkin-top">
+                      <Text size="xs" fw={day.is_today ? 700 : 500} className="usage-checkin-dayno">Day {day.day_no}</Text>
+                      {day.is_today && <span className="usage-checkin-today">Today</span>}
+                    </Group>
+                    <Text fz={12} fw={600} className="usage-checkin-points">{Number.isFinite(day.points) ? day.points.toLocaleString() : '—'} credits</Text>
+                    {day.bonus_points != null && day.bonus_points > 0 && <Text fz={11} c="dimmed" className="usage-checkin-bonus">Includes {day.bonus_points.toLocaleString()} bonus</Text>}
+                    <Text fz={11} mt={4} className="usage-checkin-status" style={{ color: dayState === 'claimed' ? 'var(--data-good)' : undefined }} c={dayState === 'claimed' ? undefined : 'dimmed'}>{CHECKIN_DAY_LABEL[dayState]}</Text>
+                  </div>
+                )
+              })}
             </div>
           ) : <Text size="sm" c="dimmed">Check-in schedule is unavailable.</Text>}
-          {!claimable && !claimed && !!panel?.days.length && !usage.checkinError && <Text size="xs" c="dimmed">Daily check-in is unavailable right now.</Text>}
+          {panelState === 'unavailable' && !usage.checkinError && <Text size="xs" c="dimmed">Daily check-in is unavailable right now.</Text>}
         </> : null}
       </Stack>
     </UsageCardShell>
@@ -84,6 +90,7 @@ export default function MiniMaxUsageCard({ query }: { query: UseQueryResult<Mini
 }
 
 export function MiniMaxUsageCompact({ usage }: { usage: MiniMaxUsage }) {
+  const panelState = checkinPanelState(usage.checkin)
   return <Box miw={0} style={{ overflowWrap: 'anywhere' }}>
     <Group justify="space-between" gap="xs">
       <Text size="xs" c="dimmed">Credit balance</Text>
@@ -93,13 +100,13 @@ export function MiniMaxUsageCompact({ usage }: { usage: MiniMaxUsage }) {
       <Text size="xs" c="dimmed">Daily check-in</Text>
       <Badge size="xs" variant="light" tt="none"
         styles={{
-          root: claimedToday(usage.checkin)
+          root: panelState === 'claimed'
             ? { color: 'var(--data-good)', background: 'color-mix(in srgb, var(--data-good) 12%, var(--card))' }
             : undefined,
         }}
-        color={claimedToday(usage.checkin) ? undefined : 'gray'}
+        color={panelState === 'claimed' ? undefined : 'gray'}
       >
-        {usage.checkinError ? 'Unavailable' : claimedToday(usage.checkin) ? 'Checked in today' : usage.checkin?.days.some((day) => day.status === 2) ? 'Ready to claim' : 'Unavailable'}
+        {usage.checkinError ? 'Unavailable' : panelState === 'claimed' ? 'Checked in today' : panelState === 'claimable' ? 'Ready to claim' : 'Unavailable'}
       </Badge>
     </Group>
     {usage.accountError && <Text size="xs" c="dimmed" mt={4}>Account information unavailable</Text>}
@@ -119,10 +126,6 @@ function QuotaWindow({ label, quota }: { label: string; quota?: MiniMaxQuotaWind
     {!quota?.unlimited && percent !== null && <Progress value={percent} color={color} size="sm" radius="xl" aria-label={`${label} remaining`} aria-valuetext={`${percent}% remaining`} />}
     {reset && <Text size="xs" c="dimmed" mt={4}>Resets <time dateTime={new Date(quota!.reset_at_ms!).toISOString()}>{reset}</time></Text>}
   </Box>
-}
-
-function claimedToday(panel?: MiniMaxCheckinPanel) {
-  return panel?.days.some((day) => day.is_today && day.status === 3) ?? false
 }
 
 function VideoQuota({ quota }: { quota: MiniMaxVideoQuota }) {
