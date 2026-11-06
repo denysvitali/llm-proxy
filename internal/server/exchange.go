@@ -50,24 +50,9 @@ const (
 	exchangeCanceled
 )
 
-// exchangeResult keeps the delivery verdict, response commitment, and replay
-// policy separate. A final 502 is a committed failure, not a successful
-// exchange; an uncommitted failure may be handed to another backend.
-type exchangeResult struct {
-	outcome          exchangeOutcome
-	committed        bool
-	fallbackEligible bool
-	message          string
-	rejection        *translate.UpstreamError
-}
-
-func failedExchange(message string) exchangeResult {
-	return exchangeResult{outcome: exchangeFailed, fallbackEligible: true, message: message}
-}
-
-// exchangeOutcomeName renders an outcome for span attributes.
-func exchangeOutcomeName(outcome exchangeOutcome) string {
-	switch outcome {
+// String renders an outcome for span attributes.
+func (o exchangeOutcome) String() string {
+	switch o {
 	case exchangeOK:
 		return "ok"
 	case exchangeFailed:
@@ -81,6 +66,141 @@ func exchangeOutcomeName(outcome exchangeOutcome) string {
 	default:
 		return "unknown"
 	}
+}
+
+// exchangeResult keeps the delivery verdict, response commitment, and replay
+// policy separate. A final 502 is a committed failure, not a successful
+// exchange; an uncommitted failure may be handed to another backend. The
+// commitment/replay pair is read through stage() and changed only by the
+// transitions below.
+type exchangeResult struct {
+	outcome          exchangeOutcome
+	committed        bool
+	fallbackEligible bool
+	message          string
+	rejection        *translate.UpstreamError
+}
+
+// exchangeStage is the response-commitment lifecycle of one backend attempt,
+// derived from (committed, fallbackEligible):
+//
+//	handoff   --cancel-->           held       (outcome canceled)
+//	handoff   --answerRejection-->  committed  (when a rejection is carried)
+//	handoff   --answerFinal-->      committed  (final backend's 502)
+//	held      --cancel-->           held
+//	held      --answerRejection-->  committed  (relayed 400)
+//	committed --cancel-->           committed  (outcome canceled, replay off)
+//
+// Only handoff lets the fallback chain advance; every other stage ends it.
+type exchangeStage int
+
+const (
+	// exchangeStageHandoff: nothing reached the client and another backend
+	// may replay the request.
+	exchangeStageHandoff exchangeStage = iota
+	// exchangeStageHeld: nothing reached the client, but replay is not
+	// allowed (client gone, or a rejection waiting to be relayed).
+	exchangeStageHeld
+	// exchangeStageCommitted: a response has been written to the client.
+	exchangeStageCommitted
+)
+
+func (st exchangeStage) String() string {
+	switch st {
+	case exchangeStageHandoff:
+		return "handoff"
+	case exchangeStageHeld:
+		return "held"
+	case exchangeStageCommitted:
+		return "committed"
+	default:
+		return "unknown"
+	}
+}
+
+func (r exchangeResult) stage() exchangeStage {
+	switch {
+	case r.committed:
+		return exchangeStageCommitted
+	case r.fallbackEligible:
+		return exchangeStageHandoff
+	default:
+		return exchangeStageHeld
+	}
+}
+
+// canAdvanceChain reports whether the fallback chain may hand the request to
+// the next backend.
+func (r exchangeResult) canAdvanceChain() bool {
+	return r.stage() == exchangeStageHandoff
+}
+
+// cancel records that the client stopped waiting. A served exchange keeps its
+// verdict; any other outcome becomes canceled and loses replay eligibility.
+func (r *exchangeResult) cancel() {
+	if r.outcome == exchangeOK {
+		return
+	}
+	r.outcome = exchangeCanceled
+	r.fallbackEligible = false
+}
+
+// answerRejection relays a carried non-retryable rejection as a 400 while
+// nothing has been written yet.
+func (r *exchangeResult) answerRejection(w http.ResponseWriter, dialect clientDialect) {
+	if r.rejection == nil || r.stage() == exchangeStageCommitted {
+		return
+	}
+	dialect.writeError(w, http.StatusBadRequest, "invalid_request_error", r.rejection.Message)
+	r.committed = true
+}
+
+// answerFinal writes the last backend's 502 for a failure no fallback can
+// take over any more.
+func (r *exchangeResult) answerFinal(w http.ResponseWriter, dialect clientDialect) {
+	if r.stage() != exchangeStageHandoff {
+		return
+	}
+	dialect.writeError(w, http.StatusBadGateway, "api_error", r.message)
+	r.committed = true
+	r.fallbackEligible = false
+}
+
+// failedExchange is an uncommitted failure another backend may take over.
+func failedExchange(message string) exchangeResult {
+	return exchangeResult{outcome: exchangeFailed, fallbackEligible: true, message: message}
+}
+
+// canceledExchange is an attempt the client abandoned before any response.
+func canceledExchange() exchangeResult {
+	return exchangeResult{outcome: exchangeCanceled}
+}
+
+// servedExchange is a completed exchange; committed reports whether any
+// response reached the client.
+func servedExchange(committed bool) exchangeResult {
+	return exchangeResult{outcome: exchangeOK, committed: committed}
+}
+
+// deliveryFailure is a failure that may already have reached the client and
+// can never be replayed.
+func deliveryFailure(committed bool, message string) exchangeResult {
+	return exchangeResult{outcome: exchangeFailed, committed: committed, message: message}
+}
+
+// surfacedExchange is a broken stream whose failure was reported in-band.
+func surfacedExchange() exchangeResult {
+	return exchangeResult{outcome: exchangeSurfaced, committed: true}
+}
+
+// relayedRejection is an upstream non-2xx answer already relayed verbatim.
+func relayedRejection(message string) exchangeResult {
+	return exchangeResult{outcome: exchangeRejected, committed: true, message: message}
+}
+
+// exchangeOutcomeName renders an outcome for span attributes.
+func exchangeOutcomeName(outcome exchangeOutcome) string {
+	return outcome.String()
 }
 
 // nocloseReader adapts a bytes.Reader as a response body whose Close is a
@@ -137,7 +257,7 @@ func (s *Server) exchangeChain(
 			continue
 		}
 		result := s.exchange(w, r, routeLog, rt, dialect, wire, payload, r.Header.Clone(), routeEnv, final)
-		if !result.fallbackEligible || result.committed || final || r.Context().Err() != nil {
+		if final || !result.canAdvanceChain() || r.Context().Err() != nil {
 			return
 		}
 		s.metrics.noteFallback(rt.backend.Name(), chain[i+1].backend.Name())
@@ -200,20 +320,17 @@ func (s *Server) exchange(
 		span.End()
 	}()
 	r = r.WithContext(spanCtx)
+	// finish normalises an attempt's result: a client that went away cancels
+	// any unfinished outcome; otherwise a carried rejection is answered, and
+	// the final backend answers any failure still in handoff.
 	finish := func(result exchangeResult) exchangeResult {
 		if result.outcome != exchangeOK && r.Context().Err() != nil {
-			result.outcome = exchangeCanceled
-			result.fallbackEligible = false
+			result.cancel()
 			return result
 		}
-		if result.rejection != nil && !result.committed {
-			dialect.writeError(w, http.StatusBadRequest, "invalid_request_error", result.rejection.Message)
-			result.committed = true
-		}
-		if final && result.fallbackEligible && !result.committed {
-			dialect.writeError(w, http.StatusBadGateway, "api_error", result.message)
-			result.committed = true
-			result.fallbackEligible = false
+		result.answerRejection(w, dialect)
+		if final {
+			result.answerFinal(w, dialect)
 		}
 		return result
 	}
@@ -262,7 +379,7 @@ func (s *Server) exchange(
 	resp, err := s.sendWithRetry(r.Context(), log, rt, fetch)
 	if r.Context().Err() != nil {
 		tr.noteTransportError(r.Context().Err())
-		return exchangeResult{outcome: exchangeCanceled}
+		return canceledExchange()
 	}
 	if err != nil {
 		tr.noteTransportError(err)
@@ -287,7 +404,7 @@ func (s *Server) exchange(
 			return finish(failedExchange("upstream server error"))
 		}
 		dialect.relayError(w, resp)
-		return exchangeResult{outcome: exchangeRejected, committed: true, message: fmt.Sprintf("upstream returned HTTP %d", resp.Status)}
+		return relayedRejection(fmt.Sprintf("upstream returned HTTP %d", resp.Status))
 	}
 
 	switch {
@@ -316,9 +433,9 @@ func (s *Server) exchange(
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(json.RawMessage(out)); err != nil {
-			return finish(exchangeResult{outcome: exchangeFailed, committed: true, message: err.Error()})
+			return finish(deliveryFailure(true, err.Error()))
 		}
-		result = exchangeResult{outcome: exchangeOK, committed: true}
+		result = servedExchange(true)
 	}
 	return finish(result)
 }

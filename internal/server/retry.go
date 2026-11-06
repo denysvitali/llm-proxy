@@ -65,6 +65,140 @@ const (
 	retrySurfaced  = "surfaced"
 )
 
+// upstreamPhase names the stage of an upstream exchange a retry belongs to;
+// String yields the byte-identical metric label.
+type upstreamPhase int
+
+const (
+	// upstreamPhaseConnect: Send failed or returned a transient status.
+	upstreamPhaseConnect upstreamPhase = iota
+	// upstreamPhaseBody: a 2xx response body broke or ended empty.
+	upstreamPhaseBody
+)
+
+func (p upstreamPhase) String() string {
+	switch p {
+	case upstreamPhaseConnect:
+		return retryPhaseConnect
+	case upstreamPhaseBody:
+		return retryPhaseBody
+	default:
+		return "unknown"
+	}
+}
+
+// retryState classifies how one phase's attempts end. The terminal states
+// recovered, exhausted, and surfaced render as their metric labels.
+//
+//	active --retried-->           active     (retry attempt metric)
+//	active --succeeded-->         unneeded   (no retries: no metric)
+//	active --succeeded-->         recovered  (after retries)
+//	active --exhausted-->         exhausted
+//	active --surfaced-->          surfaced   (body phase, output flowed)
+//	active --rejected-->          rejected   (invalid request: no metric)
+//	active --abandoned-->         abandoned  (client gone or unwritable: no metric)
+//	active --concluded(failed)--> unneeded | exhausted | recovered
+//
+// Every state but active is terminal; transitions out of one are ignored.
+type retryState int
+
+const (
+	retryStateActive retryState = iota
+	retryStateUnneeded
+	retryStateRecovered
+	retryStateExhausted
+	retryStateSurfaced
+	retryStateRejected
+	retryStateAbandoned
+)
+
+func (st retryState) String() string {
+	switch st {
+	case retryStateActive:
+		return "active"
+	case retryStateUnneeded:
+		return "unneeded"
+	case retryStateRecovered:
+		return retryRecovered
+	case retryStateExhausted:
+		return retryExhausted
+	case retryStateSurfaced:
+		return retrySurfaced
+	case retryStateRejected:
+		return "rejected"
+	case retryStateAbandoned:
+		return "abandoned"
+	default:
+		return "unknown"
+	}
+}
+
+// retryTracker owns the retry state of one phase and records its metrics.
+type retryTracker struct {
+	metrics        *Metrics
+	phase          upstreamPhase
+	backend, model string
+	state          retryState
+	retries        int
+}
+
+func (s *Server) newRetryTracker(phase upstreamPhase, rt route) *retryTracker {
+	return &retryTracker{metrics: s.metrics, phase: phase, backend: rt.backend.Name(), model: rt.model}
+}
+
+// retried counts one more upstream attempt; the phase stays active.
+func (t *retryTracker) retried() {
+	if t.state != retryStateActive {
+		return
+	}
+	t.retries++
+	t.metrics.noteRetryAttempt(t.phase.String(), t.backend, t.model)
+}
+
+// succeeded ends the phase with a usable response.
+func (t *retryTracker) succeeded() {
+	if t.state != retryStateActive {
+		return
+	}
+	if t.retries == 0 {
+		t.state = retryStateUnneeded
+		return
+	}
+	t.end(retryStateRecovered)
+}
+
+// concluded ends a connect phase whose last attempt is final either way:
+// nothing is recorded unless a retry happened.
+func (t *retryTracker) concluded(failed bool) {
+	switch {
+	case t.state != retryStateActive:
+	case t.retries == 0:
+		t.state = retryStateUnneeded
+	case failed:
+		t.end(retryStateExhausted)
+	default:
+		t.end(retryStateRecovered)
+	}
+}
+
+func (t *retryTracker) exhausted() { t.end(retryStateExhausted) }
+func (t *retryTracker) surfaced()  { t.end(retryStateSurfaced) }
+func (t *retryTracker) rejected()  { t.end(retryStateRejected) }
+func (t *retryTracker) abandoned() { t.end(retryStateAbandoned) }
+
+// end moves an active phase into a terminal state, recording the outcome
+// metric for the states that have one.
+func (t *retryTracker) end(next retryState) {
+	if t.state != retryStateActive {
+		return
+	}
+	t.state = next
+	switch next {
+	case retryStateRecovered, retryStateExhausted, retryStateSurfaced:
+		t.metrics.noteRetryOutcome(t.phase.String(), next.String(), t.backend, t.model)
+	}
+}
+
 // midstreamFailureMessage is the client-facing message for an upstream stream
 // that broke after content had already been forwarded.
 const midstreamFailureMessage = "the upstream stream was interrupted mid-response"
@@ -144,9 +278,9 @@ func retryAfter(header http.Header, maxBackoff time.Duration) (time.Duration, bo
 func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt route, fetch upstreamFetch) (*backend.Response, error) {
 	budget := s.retryBudgetFor(rt.backend.Name())
 	backendName, model := rt.backend.Name(), rt.model
+	tracker := s.newRetryTracker(upstreamPhaseConnect, rt)
 	var resp *backend.Response
 	var err error
-	attempts := 0
 	for attempt := 0; ; attempt++ {
 		resp, err = fetch()
 		if !retryableUpstream(resp, err) || attempt >= budget.attempts {
@@ -168,10 +302,9 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 			retryLog = retryLog.WithError(err)
 		}
 		failed.done()
-		attempts++
-		s.metrics.noteRetryAttempt(retryPhaseConnect, backendName, model)
+		tracker.retried()
 		retryLog.WithFields(logrus.Fields{
-			"attempt":      attempts + 1,
+			"attempt":      tracker.retries + 1,
 			"max_attempts": budget.attempts + 1,
 		}).Warn("upstream unavailable; retrying")
 		paused := true
@@ -189,17 +322,11 @@ func (s *Server) sendWithRetry(ctx context.Context, log logrus.FieldLogger, rt r
 			paused = retryPause(ctx, attempt, budget.maxBackoff)
 		}
 		if !paused {
+			tracker.abandoned()
 			return nil, ctx.Err()
 		}
 	}
-	switch {
-	case attempts == 0:
-		// first attempt succeeded; nothing to classify
-	case err != nil || retryableUpstream(resp, err):
-		s.metrics.noteRetryOutcome(retryPhaseConnect, retryExhausted, backendName, model)
-	default:
-		s.metrics.noteRetryOutcome(retryPhaseConnect, retryRecovered, backendName, model)
-	}
+	tracker.concluded(err != nil || retryableUpstream(resp, err))
 	return resp, err
 }
 
@@ -224,6 +351,7 @@ func (s *Server) retryReader(fetch upstreamFetch) io.Reader {
 // any of it, so retries only ever look like latency.
 func (s *Server) fetchResponseBody(ctx context.Context, rt route, resp *backend.Response, fetch upstreamFetch, limit int64) ([]byte, error) {
 	budget := s.retryBudgetFor(rt.backend.Name())
+	tracker := s.newRetryTracker(upstreamPhaseBody, rt)
 	var body io.Reader = resp.Body
 	for attempt := 0; ; attempt++ {
 		data, readErr := io.ReadAll(io.LimitReader(body, limit+1))
@@ -231,16 +359,14 @@ func (s *Server) fetchResponseBody(ctx context.Context, rt route, resp *backend.
 			_ = closer.Close()
 		}
 		if readErr == nil {
-			if attempt > 0 {
-				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
-			}
+			tracker.succeeded()
 			return data, nil
 		}
 		if attempt >= midstreamRetries || !retryPause(ctx, attempt, budget.maxBackoff) {
-			s.metrics.noteRetryOutcome(retryPhaseBody, retryExhausted, rt.backend.Name(), rt.model)
+			tracker.exhausted()
 			return nil, readErr
 		}
-		s.metrics.noteRetryAttempt(retryPhaseBody, rt.backend.Name(), rt.model)
+		tracker.retried()
 		s.log.WithError(readErr).WithField("attempt", attempt+1).Warn("upstream body failed before any output; retrying")
 		body = s.retryReader(fetch)
 	}
@@ -311,32 +437,84 @@ func pipeSSE(w io.Writer, flush func(), body io.Reader, done func(sse.Event) boo
 	}
 }
 
+// gatedWriterState is the commitment lifecycle of a gatedWriter:
+//
+//	uncommitted --first non-empty Write--> committed (headers sent)
+//	committed   --write error-->           failed    (error is sticky)
+//
+// failed is terminal: every later Write returns the recorded error.
+type gatedWriterState int
+
+const (
+	gateUncommitted gatedWriterState = iota
+	gateCommitted
+	gateFailed
+)
+
+func (st gatedWriterState) String() string {
+	switch st {
+	case gateUncommitted:
+		return "uncommitted"
+	case gateCommitted:
+		return "committed"
+	case gateFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
 // gatedWriter commits the response headers the moment the first byte of
 // streamed output flows, so a failure before that point can still be answered
 // with a clean non-2xx error.
 type gatedWriter struct {
 	open  func() io.Writer
 	w     io.Writer
+	state gatedWriterState
 	wrote int64
 	err   error
 }
 
+// committed reports whether response headers have reached the client.
+func (g *gatedWriter) committed() bool { return g.state != gateUncommitted }
+
+// failed reports whether a client write has failed; err holds the cause.
+func (g *gatedWriter) failed() bool { return g.state == gateFailed }
+
+// commit opens the client response; only an uncommitted gate can commit.
+func (g *gatedWriter) commit() {
+	if g.state != gateUncommitted {
+		return
+	}
+	g.w = g.open()
+	g.state = gateCommitted
+}
+
+// fail records a client write error; only a committed gate can fail.
+func (g *gatedWriter) fail(err error) {
+	if g.state != gateCommitted {
+		return
+	}
+	g.err = err
+	g.state = gateFailed
+}
+
 func (g *gatedWriter) Write(payload []byte) (int, error) {
-	if g.err != nil {
+	if g.failed() {
 		return 0, g.err
 	}
 	if len(payload) == 0 {
 		return 0, nil
 	}
-	if g.w == nil {
-		g.w = g.open()
-	}
+	g.commit()
 	n, err := g.w.Write(payload)
 	if err == nil && n < len(payload) {
 		err = io.ErrShortWrite
 	}
 	g.wrote += int64(n)
-	g.err = err
+	if err != nil {
+		g.fail(err)
+	}
 	return n, err
 }
 
@@ -375,6 +553,7 @@ func (s *Server) relayNativeStreaming(
 	copyCodexResponseHeaders(w.Header(), resp.Header)
 	contentType := resp.Header.Get("Content-Type")
 	status := resp.Status
+	tracker := s.newRetryTracker(upstreamPhaseBody, rt)
 	var body io.Reader = resp.Body
 	for attempt := 0; ; attempt++ {
 		gate := &gatedWriter{open: func() io.Writer {
@@ -394,22 +573,21 @@ func (s *Server) relayNativeStreaming(
 		_, complete, streamErr := pipeSSE(gate, flush, body, done)
 		closeBody(body)
 
-		if gate.err != nil {
-			return exchangeResult{outcome: exchangeFailed, committed: gate.w != nil, message: gate.err.Error()}
+		if gate.failed() {
+			tracker.abandoned()
+			return deliveryFailure(gate.committed(), gate.err.Error())
 		}
 		if complete {
-			if attempt > 0 {
-				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
-			}
-			return exchangeResult{outcome: exchangeOK, committed: gate.w != nil}
+			tracker.succeeded()
+			return servedExchange(gate.committed())
 		}
-		if gate.w != nil {
-			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced, rt.backend.Name(), rt.model)
+		if gate.committed() {
+			tracker.surfaced()
 			log.WithError(streamErr).Warn("upstream stream broke after content was forwarded; surfacing an in-stream error")
 			surface(w, midstreamFailureMessage)
-			return exchangeResult{outcome: exchangeSurfaced, committed: true}
+			return surfacedExchange()
 		}
-		if !s.retryStream(ctx, log, rt, streamErr, attempt) {
+		if !s.retryStream(ctx, log, tracker, streamErr, attempt) {
 			return failedStream(streamErr)
 		}
 		body = s.retryReader(fetch)
@@ -452,9 +630,9 @@ func (s *Server) relayNativeBuffered(
 		err = io.ErrShortWrite
 	}
 	if err != nil {
-		return exchangeResult{outcome: exchangeFailed, committed: true, message: err.Error()}
+		return deliveryFailure(true, err.Error())
 	}
-	return exchangeResult{outcome: exchangeOK, committed: true}
+	return servedExchange(true)
 }
 
 // errorShapedBody reports whether a buffered 200 body is a JSON object with a
@@ -491,6 +669,7 @@ func (s *Server) relayTranslatedStreaming(
 	env translateEnv,
 	stream func(env translateEnv, client io.Writer, flush func()) streamTranslator,
 ) exchangeResult {
+	tracker := s.newRetryTracker(upstreamPhaseBody, rt)
 	var body io.Reader = resp.Body
 	for attempt := 0; ; attempt++ {
 		gate := &gatedWriter{open: func() io.Writer {
@@ -504,7 +683,7 @@ func (s *Server) relayTranslatedStreaming(
 		var flush func()
 		if flusher, ok := w.(http.Flusher); ok {
 			flush = func() {
-				if gate.w != nil {
+				if gate.committed() {
 					flusher.Flush()
 				}
 			}
@@ -513,8 +692,9 @@ func (s *Server) relayTranslatedStreaming(
 		consumeErr := writer.Consume(body)
 		closeBody(body)
 
-		if gate.err != nil {
-			return exchangeResult{outcome: exchangeFailed, committed: gate.w != nil, message: gate.err.Error()}
+		if gate.failed() {
+			tracker.abandoned()
+			return deliveryFailure(gate.committed(), gate.err.Error())
 		}
 		streamErr := consumeErr
 		if streamErr == nil && gate.wrote == 0 {
@@ -523,13 +703,11 @@ func (s *Server) relayTranslatedStreaming(
 			streamErr = errors.New("upstream ended the stream without emitting any events")
 		}
 		if streamErr == nil {
-			if attempt > 0 {
-				s.metrics.noteRetryOutcome(retryPhaseBody, retryRecovered, rt.backend.Name(), rt.model)
-			}
-			return exchangeResult{outcome: exchangeOK, committed: gate.w != nil}
+			tracker.succeeded()
+			return servedExchange(gate.committed())
 		}
-		if gate.w != nil {
-			s.metrics.noteRetryOutcome(retryPhaseBody, retrySurfaced, rt.backend.Name(), rt.model)
+		if gate.committed() {
+			tracker.surfaced()
 			log.WithError(streamErr).Warn("upstream stream broke after content was forwarded; surfacing an in-stream error")
 			message := midstreamFailureMessage
 			var upstream *translate.UpstreamError
@@ -537,9 +715,9 @@ func (s *Server) relayTranslatedStreaming(
 				message = upstream.Message
 			}
 			failTranslatedStream(writer, message)
-			return exchangeResult{outcome: exchangeSurfaced, committed: true}
+			return surfacedExchange()
 		}
-		if !s.retryStream(ctx, log, rt, streamErr, attempt) {
+		if !s.retryStream(ctx, log, tracker, streamErr, attempt) {
 			return failedStream(streamErr)
 		}
 		body = s.retryReader(fetch)
@@ -551,22 +729,23 @@ func (s *Server) relayTranslatedStreaming(
 func (s *Server) retryStream(
 	ctx context.Context,
 	log logrus.FieldLogger,
-	rt route,
+	tracker *retryTracker,
 	streamErr error,
 	attempt int,
 ) bool {
 	var upstream *translate.UpstreamError
 	if errors.As(streamErr, &upstream) && upstream.InvalidRequest() {
+		tracker.rejected()
 		log.WithError(streamErr).Warn("upstream rejected stream input")
 		return false
 	}
-	budget := s.retryBudgetFor(rt.backend.Name())
+	budget := s.retryBudgetFor(tracker.backend)
 	if attempt < midstreamRetries && retryPause(ctx, attempt, budget.maxBackoff) {
-		s.metrics.noteRetryAttempt(retryPhaseBody, rt.backend.Name(), rt.model)
+		tracker.retried()
 		log.WithError(streamErr).WithField("attempt", attempt+1).Warn("upstream stream failed before any output; retrying")
 		return true
 	}
-	s.metrics.noteRetryOutcome(retryPhaseBody, retryExhausted, rt.backend.Name(), rt.model)
+	tracker.exhausted()
 	log.WithError(streamErr).Warn("upstream stream failed before any output")
 	return false
 }

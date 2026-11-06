@@ -16,15 +16,62 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// statusRecorder captures the response status for logging and metrics.
+// recorderState is the commitment lifecycle of a statusRecorder:
+//
+//	pending   --WriteHeader(1xx except 101)--> pending   (passed through)
+//	pending   --WriteHeader(other code)-->     committed (code recorded)
+//	pending   --Write-->                       committed (implicit 200)
+//	pending   --Flush-->                       committed (explicit 200)
+//	pending   --settle (handler returned)-->   committed (200 recorded only)
+//	committed --WriteHeader-->                 committed (ignored)
+type recorderState int
+
+const (
+	recorderPending recorderState = iota
+	recorderCommitted
+)
+
+func (st recorderState) String() string {
+	switch st {
+	case recorderPending:
+		return "pending"
+	case recorderCommitted:
+		return "committed"
+	default:
+		return "unknown"
+	}
+}
+
+// statusRecorder captures the response status for logging and metrics. The
+// state is derived from status: zero means no final status was recorded yet.
 type statusRecorder struct {
 	delegate http.ResponseWriter
 	status   int
 	bytes    int64
 }
 
+func (r *statusRecorder) state() recorderState {
+	if r.status == 0 {
+		return recorderPending
+	}
+	return recorderCommitted
+}
+
+// commit records the final status of a pending response.
+func (r *statusRecorder) commit(code int) {
+	if r.state() != recorderPending {
+		return
+	}
+	r.status = code
+}
+
+// settle records the implicit 200 of a handler that returned without writing.
+func (r *statusRecorder) settle() {
+	r.commit(http.StatusOK)
+}
+
 func (r *statusRecorder) WriteHeader(code int) {
-	if r.status != 0 {
+	if r.state() == recorderCommitted {
 		return
 	}
 	// Informational responses do not commit the final response status.
@@ -32,14 +79,12 @@ func (r *statusRecorder) WriteHeader(code int) {
 		r.delegate.WriteHeader(code)
 		return
 	}
-	r.status = code
+	r.commit(code)
 	r.delegate.WriteHeader(code)
 }
 
 func (r *statusRecorder) Write(b []byte) (int, error) {
-	if r.status == 0 {
-		r.status = http.StatusOK
-	}
+	r.commit(http.StatusOK)
 	n, err := r.delegate.Write(b)
 	r.bytes += int64(n)
 	return n, err
@@ -51,7 +96,7 @@ func (r *statusRecorder) Header() http.Header {
 
 // Flush promotes streaming so SSE handlers flush through the wrapper.
 func (r *statusRecorder) Flush() {
-	if r.status == 0 {
+	if r.state() == recorderPending {
 		r.WriteHeader(http.StatusOK)
 	}
 	if f, ok := r.delegate.(http.Flusher); ok {
@@ -108,13 +153,11 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 			if p != nil {
 				s.log.WithField("request_id", requestID).
 					Errorf("panic serving %s %s: %v", r.Method, r.URL.Path, p)
-				if rec.status == 0 {
+				if rec.state() == recorderPending {
 					writeError(rec, r, http.StatusInternalServerError, "api_error", "internal proxy error")
 				}
 			}
-			if rec.status == 0 {
-				rec.status = http.StatusOK
-			}
+			rec.settle()
 			duration := time.Since(start)
 			s.metrics.observe(r.Method, route, rec.status, duration)
 			if quiet && rec.status < http.StatusBadRequest && p == nil {
