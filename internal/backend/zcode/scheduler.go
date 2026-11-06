@@ -40,22 +40,16 @@ func (m *Manager) runAutoClaim(ctx context.Context, log *logrus.Logger, interval
 		attemptCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		err := m.autoClaim(attemptCtx, now().UTC())
-		outcome := "failed"
-		switch {
-		case err == nil:
-			outcome = "success"
-		case errors.Is(err, errAutoClaimAttempted):
-			outcome = "already_attempted"
-		case errors.Is(err, errAutoClaimUnavailable):
-			outcome = "unavailable"
-		case ctx.Err() != nil:
+		outcome := classifyAutoClaimOutcome(err)
+		if outcome == autoClaimFailed && ctx.Err() != nil {
+			// The scheduler is shutting down; this is not a claim result.
 			return
 		}
 		reason := schedulerReason(err)
-		m.noteSchedulerResult(outcome, reason)
-		fields := logrus.Fields{"outcome": outcome, "reason": reason}
+		m.noteSchedulerResult(outcome.String(), reason)
+		fields := logrus.Fields{"outcome": outcome.String(), "reason": reason}
 		// Never log upstream errors, plan text, JWTs, CAPTCHA proofs or account IDs.
-		if outcome == "failed" {
+		if outcome == autoClaimFailed {
 			log.WithFields(fields).Warn("ZCode automatic claim failed")
 		} else {
 			log.WithFields(fields).Info("ZCode automatic claim completed")
@@ -80,41 +74,42 @@ func (m *Manager) autoClaim(ctx context.Context, now time.Time) error {
 		return err
 	}
 	if now.Hour() < 11 {
-		return schedulerError("before_claim_window", errAutoClaimUnavailable)
+		return schedulerError(reasonBeforeClaimWindow, errAutoClaimUnavailable)
 	}
 	if !m.HasSession() {
-		return schedulerError("signed_out", errAutoClaimUnavailable)
+		return schedulerError(reasonSignedOut, errAutoClaimUnavailable)
 	}
 	token, err := m.AccessToken(ctx)
 	if err != nil {
-		return schedulerError("authentication_failed", err)
+		return schedulerError(reasonAuthenticationFailed, err)
 	}
 	subject, err := autoClaimSubject(token)
 	if err != nil {
-		return schedulerError("identity_unavailable", err)
+		return schedulerError(reasonIdentityUnavailable, err)
 	}
 	path := autoClaimMarkerPath(m.Store.Path, subject, now)
-	if _, err := os.Stat(path); err == nil {
-		return schedulerError("already_attempted", errAutoClaimAttempted)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return schedulerError("marker_failed", err)
+	switch state, err := autoClaimMarker(path); state {
+	case autoClaimMarkerPresent:
+		return schedulerError(reasonAlreadyAttempted, errAutoClaimAttempted)
+	case autoClaimMarkerUnknown:
+		return schedulerError(reasonMarkerFailed, err)
 	}
 	plans, err := m.PreviewPlans(ctx)
 	if err != nil {
-		return schedulerError("preview_failed", err)
+		return schedulerError(reasonPreviewFailed, err)
 	}
 	var selected *PreviewPlan
 	for i := range plans {
 		if dailyFreeOffer(plans[i], now) {
 			// An ambiguous preview is not permission to make multiple mutations.
 			if selected != nil {
-				return schedulerError("ambiguous_offer", errAutoClaimUnavailable)
+				return schedulerError(reasonAmbiguousOffer, errAutoClaimUnavailable)
 			}
 			selected = &plans[i]
 		}
 	}
 	if selected == nil {
-		return schedulerError("no_eligible_offer", errAutoClaimUnavailable)
+		return schedulerError(reasonNoEligibleOffer, errAutoClaimUnavailable)
 	}
 	outcome, err := m.claimPlan(ctx, selected.PlanID, token, func() error {
 		if err := ctx.Err(); err != nil {
@@ -122,9 +117,9 @@ func (m *Manager) autoClaim(ctx context.Context, now time.Time) error {
 		}
 		if err := createAutoClaimMarker(path); err != nil {
 			if errors.Is(err, errAutoClaimAttempted) {
-				return schedulerError("already_attempted", err)
+				return schedulerError(reasonAlreadyAttempted, err)
 			}
-			return schedulerError("marker_failed", err)
+			return schedulerError(reasonMarkerFailed, err)
 		}
 		m.noteSchedulerAttempt()
 		return nil
@@ -133,7 +128,7 @@ func (m *Manager) autoClaim(ctx context.Context, now time.Time) error {
 		return err
 	}
 	if !outcome.OK {
-		return schedulerError("claim_"+outcome.FailureKind, errors.New("ZCode automatic claim rejected"))
+		return claimRejectedError(outcome.FailureKind, errors.New("ZCode automatic claim rejected"))
 	}
 	return nil
 }
@@ -197,6 +192,47 @@ func autoClaimSubject(token string) (string, error) {
 func autoClaimMarkerPath(storePath, subject string, now time.Time) string {
 	hash := sha256.Sum256([]byte(subject))
 	return filepath.Join(storePath+".autoclaim", now.UTC().Format("2006-01-02")+"-"+hex.EncodeToString(hash[:]))
+}
+
+// autoClaimMarkerState is the durable once-per-day reservation for one
+// account. The marker file is the only cross-replica deduplication:
+//
+//	absent  --createAutoClaimMarker (O_EXCL), just before the claim POST--> present
+//	present stays present for the rest of the UTC day; it is never removed,
+//	        even when the POST or its response fails, because the outcome
+//	        may be unknown. The next day uses a new marker path.
+//	unknown the marker could not be checked; treated as a failure.
+type autoClaimMarkerState int
+
+const (
+	autoClaimMarkerAbsent autoClaimMarkerState = iota
+	autoClaimMarkerPresent
+	autoClaimMarkerUnknown
+)
+
+func (s autoClaimMarkerState) String() string {
+	switch s {
+	case autoClaimMarkerAbsent:
+		return "absent"
+	case autoClaimMarkerPresent:
+		return "present"
+	default:
+		return "unknown"
+	}
+}
+
+// autoClaimMarker reports the marker state at path; err is set only for
+// autoClaimMarkerUnknown.
+func autoClaimMarker(path string) (autoClaimMarkerState, error) {
+	_, err := os.Stat(path)
+	switch {
+	case err == nil:
+		return autoClaimMarkerPresent, nil
+	case errors.Is(err, os.ErrNotExist):
+		return autoClaimMarkerAbsent, nil
+	default:
+		return autoClaimMarkerUnknown, err
+	}
 }
 
 func createAutoClaimMarker(path string) error {

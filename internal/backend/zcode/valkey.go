@@ -34,7 +34,10 @@ return current
 
 // ValkeyCaptchaStore stores one disposable ZCode proof in Redis-compatible
 // Valkey. The server-side TTL is an additional bound beyond the timestamp in
-// the value, so an abandoned proof is removed automatically.
+// the value, so an abandoned proof is removed automatically. The store only
+// moves proofs between absent and stored; freshness (captchaProofState) is
+// judged by the Manager from the stored issue time. Get and Take report an
+// absent proof as os.ErrNotExist.
 type ValkeyCaptchaStore struct {
 	client *redis.Client
 	key    string

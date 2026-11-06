@@ -69,15 +69,15 @@ func (m *Manager) ClaimPlan(ctx context.Context, planID string) (ClaimOutcome, e
 func ClaimPreflightFailure(err error) string {
 	var failure *schedulerFailure
 	if !errors.As(err, &failure) {
-		return ""
+		return claimFailureNone.String()
 	}
 	switch failure.reason {
-	case "captcha_preparation_failed":
-		return "captcha"
-	case "authentication_failed":
-		return "login_required"
+	case reasonCaptchaPreparationFailed:
+		return claimFailureCaptcha.String()
+	case reasonAuthenticationFailed:
+		return claimFailureLoginRequired.String()
 	default:
-		return ""
+		return claimFailureNone.String()
 	}
 }
 
@@ -90,19 +90,19 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 	}
 	token, err := m.AccessToken(ctx)
 	if err != nil {
-		return ClaimOutcome{}, schedulerError("authentication_failed", err)
+		return ClaimOutcome{}, schedulerError(reasonAuthenticationFailed, err)
 	}
 	captcha, err := m.TakeCaptchaVerifyParam(ctx)
 	if err != nil {
-		return ClaimOutcome{}, schedulerError("captcha_preparation_failed", err)
+		return ClaimOutcome{}, schedulerError(reasonCaptchaPreparationFailed, err)
 	}
 	body, err := json.Marshal(map[string]string{"plan_id": planID})
 	if err != nil {
-		return ClaimOutcome{}, schedulerError("claim_preparation_failed", err)
+		return ClaimOutcome{}, schedulerError(reasonClaimPreparationFailed, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(m.Issuer, "/")+"/api/v1/zcode-plan/billing/claim", bytes.NewReader(body))
 	if err != nil {
-		return ClaimOutcome{}, schedulerError("claim_preparation_failed", err)
+		return ClaimOutcome{}, schedulerError(reasonClaimPreparationFailed, err)
 	}
 	req.Header.Set("Authorization", bearerToken(token))
 	req.Header.Set("Content-Type", "application/json")
@@ -124,10 +124,10 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 	defer m.Store.mu.Unlock()
 	current, err := m.Store.loadUnlocked()
 	if err != nil || current == nil || current.AccessToken != token || (expectedToken != "" && token != expectedToken) {
-		return ClaimOutcome{}, schedulerError("account_changed", fmt.Errorf("ZCode session changed before claim"))
+		return ClaimOutcome{}, schedulerError(reasonAccountChanged, fmt.Errorf("ZCode session changed before claim"))
 	}
 	if err := ctx.Err(); err != nil {
-		return ClaimOutcome{}, schedulerError("claim_preparation_failed", err)
+		return ClaimOutcome{}, schedulerError(reasonClaimPreparationFailed, err)
 	}
 	if before != nil {
 		if err := before(); err != nil {
@@ -139,12 +139,12 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
-		return ClaimOutcome{}, schedulerError("claim_request_failed", fmt.Errorf("request ZCode plan claim: %w", err))
+		return ClaimOutcome{}, schedulerError(reasonClaimRequestFailed, fmt.Errorf("request ZCode plan claim: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return ClaimOutcome{}, schedulerError("claim_response_failed", fmt.Errorf("read ZCode plan claim response: %w", err))
+		return ClaimOutcome{}, schedulerError(reasonClaimResponseFailed, fmt.Errorf("read ZCode plan claim response: %w", err))
 	}
 	var envelope struct {
 		Code any    `json:"code"`
@@ -157,7 +157,7 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return ClaimOutcome{}, schedulerError("claim_response_invalid", fmt.Errorf("decode ZCode plan claim response (HTTP %d)", resp.StatusCode))
+		return ClaimOutcome{}, schedulerError(reasonClaimResponseInvalid, fmt.Errorf("decode ZCode plan claim response (HTTP %d)", resp.StatusCode))
 	}
 	code := numericCode(envelope.Code)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && code == 0 {
@@ -172,7 +172,7 @@ func (m *Manager) claimPlan(ctx context.Context, planID, expectedToken string, b
 	}
 	return ClaimOutcome{
 		PlanID:      planID,
-		FailureKind: classifyClaimCode(code, resp.StatusCode),
+		FailureKind: classifyClaimCode(code, resp.StatusCode).String(),
 		Code:        envelope.Code,
 		Message:     message,
 		StartsAt:    envelope.Data.Plan.StartsAt,
@@ -344,32 +344,92 @@ func numericCode(code any) int {
 	return -1
 }
 
-func classifyClaimCode(code, status int) string {
+// claimFailure is the normalized ClaimOutcome.FailureKind. Every claim
+// attempt that produces an outcome lands in exactly one kind:
+//
+//	none            HTTP 2xx and result code 0 (OK)
+//	known code      1001 not_found, 1002 unavailable, 1003 already_claimed,
+//	                1004 ineligible, 1005 quota_exhausted, 3001 invalid_request,
+//	                3007 captcha (also invalidates the proof), 3012 risk_blocked,
+//	                401 login_required
+//	unknown code    HTTP 401 -> login_required, HTTP >= 400 -> http_error,
+//	                otherwise unknown
+//
+// ClaimPreflightFailure maps errors raised before the POST onto the same
+// kinds (captcha, login_required, or none). String values are part of the
+// HTTP API and must not change.
+type claimFailure int
+
+const (
+	claimFailureNone claimFailure = iota
+	claimFailureNotFound
+	claimFailureUnavailable
+	claimFailureAlreadyClaimed
+	claimFailureIneligible
+	claimFailureQuotaExhausted
+	claimFailureInvalidRequest
+	claimFailureCaptcha
+	claimFailureRiskBlocked
+	claimFailureLoginRequired
+	claimFailureHTTPError
+	claimFailureUnknown
+)
+
+func (f claimFailure) String() string {
+	switch f {
+	case claimFailureNone:
+		return ""
+	case claimFailureNotFound:
+		return "not_found"
+	case claimFailureUnavailable:
+		return "unavailable"
+	case claimFailureAlreadyClaimed:
+		return "already_claimed"
+	case claimFailureIneligible:
+		return "ineligible"
+	case claimFailureQuotaExhausted:
+		return "quota_exhausted"
+	case claimFailureInvalidRequest:
+		return "invalid_request"
+	case claimFailureCaptcha:
+		return "captcha"
+	case claimFailureRiskBlocked:
+		return "risk_blocked"
+	case claimFailureLoginRequired:
+		return "login_required"
+	case claimFailureHTTPError:
+		return "http_error"
+	default:
+		return "unknown"
+	}
+}
+
+func classifyClaimCode(code, status int) claimFailure {
 	switch code {
 	case 1001:
-		return "not_found"
+		return claimFailureNotFound
 	case 1002:
-		return "unavailable"
+		return claimFailureUnavailable
 	case 1003:
-		return "already_claimed"
+		return claimFailureAlreadyClaimed
 	case 1004:
-		return "ineligible"
+		return claimFailureIneligible
 	case 1005:
-		return "quota_exhausted"
+		return claimFailureQuotaExhausted
 	case 3001:
-		return "invalid_request"
+		return claimFailureInvalidRequest
 	case 3007:
-		return "captcha"
+		return claimFailureCaptcha
 	case 3012:
-		return "risk_blocked"
+		return claimFailureRiskBlocked
 	case 401:
-		return "login_required"
+		return claimFailureLoginRequired
 	}
 	if status == http.StatusUnauthorized {
-		return "login_required"
+		return claimFailureLoginRequired
 	}
 	if status >= 400 {
-		return "http_error"
+		return claimFailureHTTPError
 	}
-	return "unknown"
+	return claimFailureUnknown
 }

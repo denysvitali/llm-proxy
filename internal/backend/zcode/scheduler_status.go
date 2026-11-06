@@ -43,7 +43,7 @@ func (m *Manager) noteSchedulerResult(outcome, reason string) {
 	status := &m.schedulerStatus
 	status.LastCheckUnix = time.Now().Unix()
 	status.LastOutcome, status.LastReason = outcome, reason
-	if outcome == "success" {
+	if outcome == autoClaimSuccess.String() {
 		status.LastSuccessUnix = status.LastCheckUnix
 	}
 	if status.ReasonCounts == nil {
@@ -52,29 +52,184 @@ func (m *Manager) noteSchedulerResult(outcome, reason string) {
 	status.ReasonCounts[reason]++
 }
 
+// autoClaimReason is the fixed, metric-facing reason recorded for one
+// scheduler check (AutoClaimStatus.LastReason and ReasonCounts keys). Its
+// String values are part of the metrics contract and must stay byte-identical.
+//
+// One autoClaim check passes these gates in order, stopping at the first
+// failing one (see Manager.autoClaim):
+//
+//	before_claim_window   UTC hour < 11                       -> unavailable
+//	signed_out            no stored session                   -> unavailable
+//	authentication_failed session expired or unreadable       -> failed
+//	identity_unavailable  JWT has no subject                  -> failed
+//	already_attempted     today's durable marker exists       -> already_attempted
+//	marker_failed         marker cannot be checked or created -> failed
+//	preview_failed        billing preview request failed      -> failed
+//	ambiguous_offer       more than one daily free offer      -> unavailable
+//	no_eligible_offer     no daily free offer                 -> unavailable
+//	claim preparation (captcha_preparation_failed, claim_preparation_failed,
+//	  account_changed), then the marker is reserved and the claim POSTed
+//	  (claim_request_failed, claim_response_failed, claim_response_invalid)
+//	claim_<kind>          upstream rejected the claim         -> failed
+//	claimed               upstream accepted the claim         -> success
+//
+// deadline_exceeded, canceled and unexpected_error classify errors that
+// carry no gate.
+type autoClaimReason int
+
+const (
+	reasonUnexpectedError autoClaimReason = iota
+	reasonClaimed
+	reasonDeadlineExceeded
+	reasonCanceled
+	reasonBeforeClaimWindow
+	reasonSignedOut
+	reasonAuthenticationFailed
+	reasonIdentityUnavailable
+	reasonAlreadyAttempted
+	reasonMarkerFailed
+	reasonPreviewFailed
+	reasonAmbiguousOffer
+	reasonNoEligibleOffer
+	reasonCaptchaPreparationFailed
+	reasonClaimPreparationFailed
+	reasonAccountChanged
+	reasonClaimRequestFailed
+	reasonClaimResponseFailed
+	reasonClaimResponseInvalid
+	// reasonClaimRejected renders as "claim_" + the ClaimOutcome.FailureKind.
+	reasonClaimRejected
+)
+
+func (r autoClaimReason) String() string {
+	switch r {
+	case reasonClaimed:
+		return "claimed"
+	case reasonDeadlineExceeded:
+		return "deadline_exceeded"
+	case reasonCanceled:
+		return "canceled"
+	case reasonBeforeClaimWindow:
+		return "before_claim_window"
+	case reasonSignedOut:
+		return "signed_out"
+	case reasonAuthenticationFailed:
+		return "authentication_failed"
+	case reasonIdentityUnavailable:
+		return "identity_unavailable"
+	case reasonAlreadyAttempted:
+		return "already_attempted"
+	case reasonMarkerFailed:
+		return "marker_failed"
+	case reasonPreviewFailed:
+		return "preview_failed"
+	case reasonAmbiguousOffer:
+		return "ambiguous_offer"
+	case reasonNoEligibleOffer:
+		return "no_eligible_offer"
+	case reasonCaptchaPreparationFailed:
+		return "captcha_preparation_failed"
+	case reasonClaimPreparationFailed:
+		return "claim_preparation_failed"
+	case reasonAccountChanged:
+		return "account_changed"
+	case reasonClaimRequestFailed:
+		return "claim_request_failed"
+	case reasonClaimResponseFailed:
+		return "claim_response_failed"
+	case reasonClaimResponseInvalid:
+		return "claim_response_invalid"
+	case reasonClaimRejected:
+		return "claim_rejected"
+	default:
+		return "unexpected_error"
+	}
+}
+
+// autoClaimOutcome is the metric-facing outcome of one scheduler check
+// (AutoClaimStatus.LastOutcome). String values must stay byte-identical.
+//
+//	nil error                       -> success
+//	errAutoClaimAttempted in chain  -> already_attempted
+//	errAutoClaimUnavailable         -> unavailable
+//	anything else                   -> failed (not recorded when the
+//	                                   scheduler itself is shutting down)
+type autoClaimOutcome int
+
+const (
+	autoClaimFailed autoClaimOutcome = iota
+	autoClaimSuccess
+	autoClaimAlreadyAttempted
+	autoClaimUnavailable
+)
+
+func (o autoClaimOutcome) String() string {
+	switch o {
+	case autoClaimSuccess:
+		return "success"
+	case autoClaimAlreadyAttempted:
+		return "already_attempted"
+	case autoClaimUnavailable:
+		return "unavailable"
+	default:
+		return "failed"
+	}
+}
+
+func classifyAutoClaimOutcome(err error) autoClaimOutcome {
+	switch {
+	case err == nil:
+		return autoClaimSuccess
+	case errors.Is(err, errAutoClaimAttempted):
+		return autoClaimAlreadyAttempted
+	case errors.Is(err, errAutoClaimUnavailable):
+		return autoClaimUnavailable
+	default:
+		return autoClaimFailed
+	}
+}
+
 // schedulerFailure preserves errors.Is and existing user-facing error text.
-// Reasons are supplied only by fixed local literals, never upstream payloads.
+// Reasons are fixed local constants, never upstream payloads; kind is only
+// set for reasonClaimRejected and comes from claimFailure.
 type schedulerFailure struct {
-	reason string
+	reason autoClaimReason
+	kind   string
 	err    error
 }
 
-func (e *schedulerFailure) Error() string           { return e.err.Error() }
-func (e *schedulerFailure) Unwrap() error           { return e.err }
-func schedulerError(reason string, err error) error { return &schedulerFailure{reason, err} }
+func (e *schedulerFailure) Error() string { return e.err.Error() }
+func (e *schedulerFailure) Unwrap() error { return e.err }
+
+func (e *schedulerFailure) reasonString() string {
+	if e.reason == reasonClaimRejected {
+		return "claim_" + e.kind
+	}
+	return e.reason.String()
+}
+
+func schedulerError(reason autoClaimReason, err error) error {
+	return &schedulerFailure{reason: reason, err: err}
+}
+
+func claimRejectedError(kind string, err error) error {
+	return &schedulerFailure{reason: reasonClaimRejected, kind: kind, err: err}
+}
+
 func schedulerReason(err error) string {
 	if err == nil {
-		return "claimed"
+		return reasonClaimed.String()
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "deadline_exceeded"
+		return reasonDeadlineExceeded.String()
 	}
 	if errors.Is(err, context.Canceled) {
-		return "canceled"
+		return reasonCanceled.String()
 	}
 	var failure *schedulerFailure
 	if errors.As(err, &failure) {
-		return failure.reason
+		return failure.reasonString()
 	}
-	return "unexpected_error"
+	return reasonUnexpectedError.String()
 }

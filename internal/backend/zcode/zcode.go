@@ -256,44 +256,41 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	if inspection.unusualActivity {
 		c.markUnusualActivity()
 	}
-	if inspection.captcha {
-		for captchaRetry := 0; captchaRetry < maxAutomaticModelCaptchaRetries; captchaRetry++ {
-			captchaParam, automatic, captchaErr := c.optionalModelCaptcha(ctx, requestCaptcha)
-			if captchaErr != nil {
-				_ = resp.Body.Close()
-				// Do not let the server's generic transport retry loop hammer the
-				// gateway while the configured solver is unavailable. A solver
-				// outage is definitive for this request; a later client request can
-				// try again once the solver is healthy.
-				return nil, backend.Terminal(fmt.Errorf("obtain ZCode CAPTCHA proof after security challenge: %w", captchaErr))
-			}
-			if captchaParam == "" {
-				break
-			}
+	recovery := newCaptchaRecovery(inspection.captcha)
+	for recovery.state == captchaRecoveryChallenged {
+		captchaParam, automatic, captchaErr := c.optionalModelCaptcha(ctx, requestCaptcha)
+		if captchaErr != nil {
 			_ = resp.Body.Close()
-			retryReq, buildErr := buildRequest(captchaParam)
-			if buildErr != nil {
-				return nil, buildErr
-			}
-			resp, err = backend.DoInference(c.HTTP, retryReq, c.BaseURL, req.TracePropagation)
-			if err != nil {
-				return nil, fmt.Errorf("retry request to ZCode after security challenge failed: %w", err)
-			}
-			normalizeZCodeResponse(resp)
-			inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
-			if inspection.unusualActivity {
-				c.markUnusualActivity()
-			}
-			if !inspection.captcha {
-				break
-			}
+			// Do not let the server's generic transport retry loop hammer the
+			// gateway while the configured solver is unavailable. A solver
+			// outage is definitive for this request; a later client request can
+			// try again once the solver is healthy.
+			return nil, backend.Terminal(fmt.Errorf("obtain ZCode CAPTCHA proof after security challenge: %w", captchaErr))
+		}
+		if captchaParam == "" {
+			recovery.noProof()
+			break
+		}
+		_ = resp.Body.Close()
+		retryReq, buildErr := buildRequest(captchaParam)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		resp, err = backend.DoInference(c.HTTP, retryReq, c.BaseURL, req.TracePropagation)
+		if err != nil {
+			return nil, fmt.Errorf("retry request to ZCode after security challenge failed: %w", err)
+		}
+		normalizeZCodeResponse(resp)
+		inspection, resp.Body = inspectRejection(resp.StatusCode, resp.Body)
+		if inspection.unusualActivity {
+			c.markUnusualActivity()
+		}
+		if inspection.captcha {
 			if invalidator, ok := c.Tokens.(captchaInvalidator); ok {
 				invalidator.InvalidateCaptcha(captchaParam)
 			}
-			if !automatic {
-				break
-			}
 		}
+		recovery.retried(inspection.captcha, automatic)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		// The gateway answered normally again: any past unusual-activity
@@ -301,6 +298,88 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 		c.clearUnusualActivity()
 	}
 	return &backend.Response{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
+}
+
+// captchaRecoveryState tracks how Send answers a CAPTCHA challenge (code
+// 3007 or the Aliyun 405 block page) on a model request. Transitions live in
+// the captchaRecovery methods:
+//
+//	resolved   (initial response was not a challenge; terminal)
+//	challenged --no proof available-->              no_proof          (terminal)
+//	challenged --retry not challenged-->            resolved          (terminal)
+//	challenged --retry challenged, manual proof-->  manual_rejected   (terminal)
+//	challenged --retry challenged, solver proof-->  challenged, or exhausted
+//	                                                once maxAutomaticModelCaptchaRetries
+//	                                                proofs were sent  (terminal)
+//
+// A solver outage while challenged ends Send with a backend.Terminal error
+// instead of a state. Every terminal state relays the latest response.
+type captchaRecoveryState int
+
+const (
+	captchaRecoveryResolved captchaRecoveryState = iota
+	captchaRecoveryChallenged
+	captchaRecoveryNoProof
+	captchaRecoveryManualRejected
+	captchaRecoveryExhausted
+)
+
+func (s captchaRecoveryState) String() string {
+	switch s {
+	case captchaRecoveryResolved:
+		return "resolved"
+	case captchaRecoveryChallenged:
+		return "challenged"
+	case captchaRecoveryNoProof:
+		return "no_proof"
+	case captchaRecoveryManualRejected:
+		return "manual_rejected"
+	case captchaRecoveryExhausted:
+		return "exhausted"
+	default:
+		return "unknown"
+	}
+}
+
+type captchaRecovery struct {
+	state captchaRecoveryState
+	// proofs counts the proofs already sent upstream for this request.
+	proofs int
+}
+
+func newCaptchaRecovery(challenged bool) captchaRecovery {
+	if !challenged {
+		return captchaRecovery{state: captchaRecoveryResolved}
+	}
+	if maxAutomaticModelCaptchaRetries <= 0 {
+		return captchaRecovery{state: captchaRecoveryExhausted}
+	}
+	return captchaRecovery{state: captchaRecoveryChallenged}
+}
+
+// noProof records that no proof source could answer the challenge.
+func (r *captchaRecovery) noProof() {
+	if r.state == captchaRecoveryChallenged {
+		r.state = captchaRecoveryNoProof
+	}
+}
+
+// retried records the classification of the response to a retry that carried
+// a proof. automatic reports whether the proof came from the solver, which can
+// mint a replacement; a rejected browser or client proof cannot be replaced.
+func (r *captchaRecovery) retried(challenged, automatic bool) {
+	if r.state != captchaRecoveryChallenged {
+		return
+	}
+	r.proofs++
+	switch {
+	case !challenged:
+		r.state = captchaRecoveryResolved
+	case !automatic:
+		r.state = captchaRecoveryManualRejected
+	case r.proofs >= maxAutomaticModelCaptchaRetries:
+		r.state = captchaRecoveryExhausted
+	}
 }
 
 func (c *Client) optionalModelCaptcha(ctx context.Context, clientParam string) (string, bool, error) {
@@ -460,39 +539,93 @@ func zcodeGatewayErrorStatus(body []byte) (int, bool) {
 	}
 }
 
+// unusualActivityState is the post-3012 cooldown of a Client. It is derived
+// from blockedUntil (the deadline) and blockedStrikes (consecutive 3012s);
+// expiry is lazy, so a passed deadline is only noticed when next read.
+//
+//	clear   --3012-->            blocked (base pause, strikes = 1)
+//	blocked --3012-->            blocked (pause doubles per strike, capped)
+//	blocked --deadline passes--> lapsed  (strikes are kept)
+//	lapsed  --3012-->            blocked (pause keeps escalating)
+//	any     --2xx/3xx response-> clear   (strikes forgotten)
+//
+// Only blocked rejects model requests; lapsed behaves like clear except that
+// the next 3012 continues the escalation.
+type unusualActivityState int
+
+const (
+	unusualActivityClear unusualActivityState = iota
+	unusualActivityBlocked
+	unusualActivityLapsed
+)
+
+func (s unusualActivityState) String() string {
+	switch s {
+	case unusualActivityClear:
+		return "clear"
+	case unusualActivityBlocked:
+		return "blocked"
+	case unusualActivityLapsed:
+		return "lapsed"
+	default:
+		return "unknown"
+	}
+}
+
+// unusualActivityStateLocked derives the cooldown state at now. The caller
+// holds blockedMu.
+func (c *Client) unusualActivityStateLocked(now time.Time) unusualActivityState {
+	switch {
+	case c.blockedUntil.IsZero():
+		return unusualActivityClear
+	case now.After(c.blockedUntil):
+		return unusualActivityLapsed
+	default:
+		return unusualActivityBlocked
+	}
+}
+
 // unusualActivityBlock reports the time until which model requests should
 // pause after a code-3012 unusual-activity rejection.
 func (c *Client) unusualActivityBlock() (time.Time, bool) {
 	c.blockedMu.Lock()
 	defer c.blockedMu.Unlock()
-	if c.blockedUntil.IsZero() || time.Now().After(c.blockedUntil) {
+	if c.unusualActivityStateLocked(time.Now()) != unusualActivityBlocked {
 		return time.Time{}, false
 	}
 	return c.blockedUntil, true
 }
 
-// markUnusualActivity arms the post-3012 cooldown. Consecutive rejections
-// double the pause, capped at unusualActivityCooldownMax, because the plan
-// gateway's block escalates when a blocked session keeps probing and outlives
-// a fixed 15-minute pause in practice. A later successful model request
-// clears the strikes.
-func (c *Client) markUnusualActivity() {
-	c.blockedMu.Lock()
-	defer c.blockedMu.Unlock()
+// unusualActivityPause is the cooldown armed by the strike that follows
+// strikes earlier consecutive 3012s: the base pause doubled once per earlier
+// strike, capped at unusualActivityCooldownMax.
+func unusualActivityPause(strikes int) time.Duration {
 	pause := unusualActivityCooldown
-	for i := 0; i < c.blockedStrikes && pause < unusualActivityCooldownMax; i++ {
+	for i := 0; i < strikes && pause < unusualActivityCooldownMax; i++ {
 		pause *= 2
 	}
 	if pause > unusualActivityCooldownMax {
 		pause = unusualActivityCooldownMax
 	}
+	return pause
+}
+
+// markUnusualActivity arms the post-3012 cooldown: any state -> blocked.
+// Consecutive rejections double the pause, capped at
+// unusualActivityCooldownMax, because the plan gateway's block escalates when
+// a blocked session keeps probing and outlives a fixed 15-minute pause in
+// practice. A later successful model request clears the strikes.
+func (c *Client) markUnusualActivity() {
+	c.blockedMu.Lock()
+	defer c.blockedMu.Unlock()
+	pause := unusualActivityPause(c.blockedStrikes)
 	c.blockedStrikes++
 	c.blockedUntil = time.Now().Add(pause)
 }
 
 // clearUnusualActivity resets the cooldown and its strike count once a model
-// request succeeds again, restoring the initial 15-minute pause for any
-// future block.
+// request succeeds again (any state -> clear), restoring the initial 15-minute
+// pause for any future block.
 func (c *Client) clearUnusualActivity() {
 	c.blockedMu.Lock()
 	defer c.blockedMu.Unlock()
@@ -633,8 +766,14 @@ func derivedUUID(seed string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
-// rejectionInspection classifies a buffered ZCode error response that marks
-// the account as temporarily blocked for unusual activity.
+// rejectionInspection classifies a buffered ZCode error response. The two
+// fields are independent signals, not states of one machine:
+//
+//	captcha         code 3007, or an Aliyun block page behind HTTP 405;
+//	                drives the captchaRecovery machine in Send.
+//	unusualActivity code 3012; arms the unusualActivityState cooldown.
+//
+// Only HTTP 400, 403 and 405 are inspected; any other status yields neither.
 type rejectionInspection struct {
 	captcha         bool
 	unusualActivity bool

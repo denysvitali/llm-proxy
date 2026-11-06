@@ -167,16 +167,111 @@ func NewManagerWithCaptchaStore(path string, captcha CaptchaStore) *Manager {
 	}
 }
 
+// sessionExpiryMargin is how long before its expiry a session stops being
+// handed out, so a request never leaves with a token about to lapse.
+const sessionExpiryMargin = 5 * time.Minute
+
+// sessionState is the stored ZCode session as seen by AccessToken. It is
+// derived from the credentials file on every call; nothing is cached.
+//
+//	no_file  --browser sign-in (LoginDevice)-->     active
+//	no_token --browser sign-in-->                   active
+//	active   --within sessionExpiryMargin of exp--> expiring
+//	expiring --browser sign-in-->                   active
+//
+// There is no refresh token, so leaving expiring needs a new sign-in. An
+// ExpiresAt of 0 means "derive it from the JWT exp claim"; a JWT without a
+// usable exp never expires.
+type sessionState int
+
+const (
+	sessionNoFile sessionState = iota
+	sessionNoToken
+	sessionActive
+	sessionExpiring
+)
+
+func (s sessionState) String() string {
+	switch s {
+	case sessionNoFile:
+		return "no_file"
+	case sessionNoToken:
+		return "no_token"
+	case sessionActive:
+		return "active"
+	case sessionExpiring:
+		return "expiring"
+	default:
+		return "unknown"
+	}
+}
+
+// signedIn reports whether a token is stored, regardless of its expiry.
+func (s sessionState) signedIn() bool {
+	return s == sessionActive || s == sessionExpiring
+}
+
+// classifySession derives the session state of loaded credentials at now.
+// A nil credentials value means the file does not exist.
+func classifySession(credentials *Credentials, now time.Time) sessionState {
+	if credentials == nil {
+		return sessionNoFile
+	}
+	if strings.TrimSpace(credentials.AccessToken) == "" {
+		return sessionNoToken
+	}
+	expiresAt := credentials.ExpiresAt
+	if expiresAt == 0 {
+		expiresAt, _ = jwtExpiration(credentials.AccessToken)
+	}
+	if expiresAt > 0 && expiresAt <= now.Add(sessionExpiryMargin).Unix() {
+		return sessionExpiring
+	}
+	return sessionActive
+}
+
 func (m *Manager) HasSession() bool {
 	credentials, err := m.Store.Load()
-	return err == nil && credentials != nil && strings.TrimSpace(credentials.AccessToken) != ""
+	return err == nil && classifySession(credentials, time.Now()).signedIn()
+}
+
+// captchaProofSource is the single source consulted for a CAPTCHA proof. It
+// is fixed by configuration, not by availability: a configured solver is
+// exclusive, and browser proofs are neither used nor consumed while it is,
+// even when the solver fails.
+//
+//	browser_cache --CaptchaSolverURL set-->   solver
+//	solver        --CaptchaSolverURL unset--> browser_cache
+type captchaProofSource int
+
+const (
+	captchaFromBrowserCache captchaProofSource = iota
+	captchaFromSolver
+)
+
+func (s captchaProofSource) String() string {
+	switch s {
+	case captchaFromBrowserCache:
+		return "browser_cache"
+	case captchaFromSolver:
+		return "solver"
+	default:
+		return "unknown"
+	}
+}
+
+func (m *Manager) captchaProofSource() captchaProofSource {
+	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
+		return captchaFromSolver
+	}
+	return captchaFromBrowserCache
 }
 
 // CaptchaSolverConfigured reports whether an automatic CAPTCHA solver is
 // wired up for optional plan claims and model-request challenge recovery.
 // Browser-minted proofs are not used when the solver exists.
 func (m *Manager) CaptchaSolverConfigured() bool {
-	return strings.TrimSpace(m.CaptchaSolverURL) != ""
+	return m.captchaProofSource() == captchaFromSolver
 }
 
 func (m *Manager) AccessToken(ctx context.Context) (string, error) {
@@ -186,13 +281,10 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if credentials == nil || strings.TrimSpace(credentials.AccessToken) == "" {
+	switch classifySession(credentials, time.Now()) {
+	case sessionNoFile, sessionNoToken:
 		return "", errors.New("not signed in to ZCode; use the dashboard to sign in with ZCode")
-	}
-	if credentials.ExpiresAt == 0 {
-		credentials.ExpiresAt, _ = jwtExpiration(credentials.AccessToken)
-	}
-	if credentials.ExpiresAt > 0 && credentials.ExpiresAt <= time.Now().Add(5*time.Minute).Unix() {
+	case sessionExpiring:
 		return "", errors.New("ZCode session expired; sign in again from the dashboard")
 	}
 	return credentials.AccessToken, nil
@@ -302,7 +394,7 @@ func (m *Manager) CaptchaVerifyParam(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	default:
 	}
-	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
+	if m.captchaProofSource() == captchaFromSolver {
 		// A solver failure surfaces as an error rather than falling back to a
 		// browser proof: the fallback is precisely what armed the blocks.
 		return m.freshCaptchaVerifyParam(ctx)
@@ -323,7 +415,7 @@ func (m *Manager) TakeCaptchaVerifyParam(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	default:
 	}
-	if strings.TrimSpace(m.CaptchaSolverURL) != "" {
+	if m.captchaProofSource() == captchaFromSolver {
 		// A solver failure surfaces as an error rather than falling back to a
 		// browser proof: the fallback is precisely what armed the blocks.
 		return m.freshCaptchaVerifyParam(ctx)
@@ -380,9 +472,56 @@ func (m *Manager) takeCachedCaptchaVerifyParam(ctx context.Context) (string, err
 	return strings.TrimSpace(record.VerifyParam), nil
 }
 
-func isFreshCaptcha(param string, issuedAt time.Time) bool {
+// captchaProofState is the lifecycle of a cached browser proof, whether it
+// lives in the sidecar file or a shared CaptchaStore (see valkey.go):
+//
+//	absent   --SetCaptchaVerifyParam-->              fresh
+//	fresh    --captchaTTL elapses or clock skew-->   stale
+//	fresh    --Take (one-use hand-off)-->            consumed = absent
+//	stale    --any read-->                           absent (deleted)
+//	fresh    --InvalidateCaptcha with this proof-->  absent
+//
+// Only fresh proofs are ever returned. Expiry is lazy: a stale proof stays
+// stored until the next read deletes it (Valkey also expires it server-side
+// after captchaTTL). A proof is never consulted while the solver is the
+// configured captchaProofSource.
+type captchaProofState int
+
+const (
+	captchaProofAbsent captchaProofState = iota
+	captchaProofFresh
+	captchaProofStale
+)
+
+func (s captchaProofState) String() string {
+	switch s {
+	case captchaProofAbsent:
+		return "absent"
+	case captchaProofFresh:
+		return "fresh"
+	case captchaProofStale:
+		return "stale"
+	default:
+		return "unknown"
+	}
+}
+
+// classifyCaptchaProof derives the proof state from whether a proof value is
+// present and when it was issued. Callers decide presence because the
+// sidecar-file read path historically does not trim the stored value.
+func classifyCaptchaProof(present bool, issuedAt time.Time) captchaProofState {
+	if !present {
+		return captchaProofAbsent
+	}
 	age := time.Since(issuedAt)
-	return strings.TrimSpace(param) != "" && age >= 0 && age < captchaTTL
+	if age < 0 || age >= captchaTTL {
+		return captchaProofStale
+	}
+	return captchaProofFresh
+}
+
+func isFreshCaptcha(param string, issuedAt time.Time) bool {
+	return classifyCaptchaProof(strings.TrimSpace(param) != "", issuedAt) == captchaProofFresh
 }
 
 func (m *Manager) cachedCaptchaVerifyParam(ctx context.Context) (string, error) {
@@ -394,8 +533,7 @@ func (m *Manager) cachedCaptchaVerifyParam(ctx context.Context) (string, error) 
 			}
 			return "", fmt.Errorf("read ZCode CAPTCHA verification parameter: %w", err)
 		}
-		age := time.Since(issuedAt)
-		if strings.TrimSpace(param) != "" && age >= 0 && age < captchaTTL {
+		if isFreshCaptcha(param, issuedAt) {
 			return param, nil
 		}
 		_ = m.captcha.DeleteIfMatch(ctx, param, issuedAt)
@@ -404,8 +542,7 @@ func (m *Manager) cachedCaptchaVerifyParam(ctx context.Context) (string, error) 
 	m.captchaMu.Lock()
 	defer m.captchaMu.Unlock()
 	if record, err := readCaptchaRecord(m.captchaPath()); err == nil {
-		age := time.Since(record.IssuedAt)
-		if record.VerifyParam != "" && age >= 0 && age < captchaTTL {
+		if classifyCaptchaProof(record.VerifyParam != "", record.IssuedAt) == captchaProofFresh {
 			return record.VerifyParam, nil
 		}
 		removeCaptchaRecord(m.captchaPath(), record)
@@ -422,7 +559,7 @@ func captchaVerificationRequiredError() error {
 // Manual browser proofs cannot be refreshed without user interaction, while
 // the optional localhost solver mints one-use proofs on demand.
 func (m *Manager) RefreshCaptchaVerifyParam(ctx context.Context, rejected string) (string, error) {
-	if strings.TrimSpace(m.CaptchaSolverURL) == "" {
+	if m.captchaProofSource() != captchaFromSolver {
 		return "", errors.New("automatic ZCode CAPTCHA solver is not configured")
 	}
 	return m.freshCaptchaVerifyParam(ctx)
@@ -573,6 +710,54 @@ type pollData struct {
 	Token  string `json:"token"`
 }
 
+// oauthPollState is the CLI OAuth flow status reported by one poll. The flow
+// in LoginDevice:
+//
+//	pending  --poll-->                       pending, ready, rejected or unknown
+//	pending  --deadline (min of loginTimeout
+//	           and the flow's expires_at)--> timed out (error)
+//	ready    --token stored-->               signed in (terminal)
+//	rejected (failed, expired, denied)       error (terminal)
+//	unknown  (any other status)              error (terminal)
+//
+// An empty status counts as pending.
+type oauthPollState int
+
+const (
+	oauthPollPending oauthPollState = iota
+	oauthPollReady
+	oauthPollRejected
+	oauthPollUnknown
+)
+
+func (s oauthPollState) String() string {
+	switch s {
+	case oauthPollPending:
+		return "pending"
+	case oauthPollReady:
+		return "ready"
+	case oauthPollRejected:
+		return "rejected"
+	case oauthPollUnknown:
+		return "unknown"
+	default:
+		return "invalid"
+	}
+}
+
+func parseOAuthPollStatus(status string) oauthPollState {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pending", "":
+		return oauthPollPending
+	case "failed", "expired", "denied":
+		return oauthPollRejected
+	case "ready":
+		return oauthPollReady
+	default:
+		return oauthPollUnknown
+	}
+}
+
 // LoginDevice starts ZCode's CLI OAuth flow. The announce callback receives
 // browser-safe progress messages; it never receives the temporary poll token
 // or the resulting JWT.
@@ -620,12 +805,12 @@ func (m *Manager) LoginDevice(ctx context.Context, announce func(string)) error 
 		if err := m.oauthJSON(ctx, http.MethodGet, path, pollToken, nil, &poll); err != nil {
 			return fmt.Errorf("poll ZCode OAuth: %w", err)
 		}
-		switch strings.ToLower(strings.TrimSpace(poll.Status)) {
-		case "pending", "":
+		switch parseOAuthPollStatus(poll.Status) {
+		case oauthPollPending:
 			continue
-		case "failed", "expired", "denied":
+		case oauthPollRejected:
 			return errors.New("ZCode OAuth authorization was not completed")
-		case "ready":
+		case oauthPollReady:
 			if strings.TrimSpace(poll.Token) == "" {
 				return errors.New("ZCode OAuth response omitted the session token")
 			}
