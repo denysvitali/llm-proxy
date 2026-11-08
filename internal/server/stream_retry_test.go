@@ -401,6 +401,53 @@ func TestResponsesRelaysTooManyRequestsImmediately(t *testing.T) {
 	})
 }
 
+// TestMessagesRetriesTransient500: providers answer 500 for temporary
+// internal faults (Open Design's "failed to evaluate membership entitlement"
+// is one), so a 500 that clears on a later attempt must never reach the
+// client. Recovering inside the retry budget keeps the request invisible.
+func TestMessagesRetriesTransient500(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIChat,
+			step{resp: unavailableResponse(http.StatusInternalServerError, `{"error":{"code":"internal_error","message":"failed to evaluate membership entitlement","type":"internal_error"}}`)},
+			step{resp: sseResponse("text/event-stream", fullChatSSE)},
+		)
+		s := newMsgServerWith(t, upstream)
+
+		recovered := outcomeDelta(s, retryPhaseConnect, retryRecovered)
+
+		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != 2 {
+			t.Fatalf("upstream attempts = %d, want 2 (500 retried once)", upstream.callCount())
+		}
+		if recovered() < 1 {
+			t.Fatalf("expected a %q/%q metric increment", retryPhaseConnect, retryRecovered)
+		}
+	})
+}
+
+// TestNotImplementedIsNotRetried: 501 means the endpoint does not exist, a
+// permanent property no retry can change, so it reaches the client at once.
+func TestNotImplementedIsNotRetried(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScripted(backend.KindOpenAIChat,
+			step{resp: unavailableResponse(http.StatusNotImplemented, `{"error":{"message":"not implemented"}}`)},
+			step{resp: sseResponse("text/event-stream", fullChatSSE)},
+		)
+		s := newMsgServerWith(t, upstream)
+
+		rec := postMsg(t, s, "/v1/messages", anthropicStreamRequest)
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if upstream.callCount() != 1 {
+			t.Fatalf("upstream attempts = %d, want 1 (501 is not retried)", upstream.callCount())
+		}
+	})
+}
+
 // TestResponsesRetryHonorsRetryAfter ensures provider backoff guidance on a
 // retryable 5xx is respected without allowing an unbounded client wait.
 func TestResponsesRetryHonorsRetryAfter(t *testing.T) {

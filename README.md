@@ -1175,13 +1175,19 @@ and display names, so set `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (or append
 
 A route (or backend) can name fallback backends that take over when the
 primary fails **before anything has reached the client** — transport errors,
-a spent retry budget, or a terminal 5xx. Once streaming content has flowed,
-the break is surfaced in-band instead; replaying on another backend would
-duplicate output. Client-side rejections (4xx) are relayed, not failed over.
-Responses failures with `code: "cyber_policy"` are definitive rejections, not
-transient gateway failures: they return HTTP 400 without retries or fallback,
-preserving the provider's message. If streaming output has already started,
-the rejection is surfaced in-band instead of changing the HTTP status.
+a spent retry budget, or a server-side 5xx. A transient upstream failure
+(500/502/503/504, or a transport error) is retried in place first, so a
+provider's short-lived internal fault — for example Open Design's
+`failed to evaluate membership entitlement` — never reaches the client as a
+500; only an outcome that stays broken for the whole budget moves the request
+to the next backend. 4xx and 501 are relayed as-is instead: they are the
+upstream's answer for this request, not an outage. Once streaming content has
+flowed, a break is surfaced in-band instead of retried; replaying on another
+backend would duplicate output. Responses failures with `code: "cyber_policy"`
+are definitive rejections, not transient gateway failures: they return HTTP
+400 without retries or fallback, preserving the provider's message. If
+streaming output has already started, the rejection is surfaced in-band
+instead of changing the HTTP status.
 
 ```yaml
 backends:

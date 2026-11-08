@@ -67,10 +67,10 @@ func TestFallbackServesWhenPrimaryExhausted(t *testing.T) {
 	})
 }
 
-// TestFallbackOnTerminal5xx: a 500 is not retried by the connect-phase loop,
-// but it still moves the request to the fallback before anything reaches the
-// client.
-func TestFallbackOnTerminal5xx(t *testing.T) {
+// TestFallbackAfter5xxRetries: a transient 500 spends the connect-phase retry
+// budget in place, and only then moves the request to the fallback — still
+// before anything has reached the client.
+func TestFallbackAfter5xxRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		primary := newNamedScripted("fake", backend.KindOpenAIChat,
 			step{resp: unavailableResponse(http.StatusInternalServerError, `{"error":{"message":"boom"}}`)})
@@ -83,8 +83,8 @@ func TestFallbackOnTerminal5xx(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
-		if primary.callCount() != 1 {
-			t.Fatalf("primary attempts = %d, want 1 (500 is not retried in place)", primary.callCount())
+		if primary.callCount() != defaultRetryAttempts+1 {
+			t.Fatalf("primary attempts = %d, want %d (1 + defaultRetryAttempts)", primary.callCount(), defaultRetryAttempts+1)
 		}
 	})
 }

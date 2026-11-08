@@ -232,11 +232,16 @@ type errReader struct{ err error }
 func (r errReader) Read([]byte) (int, error) { return 0, r.err }
 
 // retryableUpstream reports whether a connection-phase outcome deserves
-// another attempt: transport errors always, and the server-side gateway
-// statuses the client must never see while nothing has been forwarded
-// (502/503/504). Every 4xx is relayed to the client on the first attempt
-// instead: a rate limit or an invalid request is the upstream's answer for
-// this request, not a transient fault, so retrying it only stalls the client.
+// another attempt: transport errors always, and transient server-side
+// statuses (500/502/503/504) — the class providers use for a temporary
+// internal fault while nothing has been forwarded to the client. A provider
+// that means a 5xx as a definitive verdict must say so with backend.Terminal
+// (or an error) instead.
+//
+// Every 4xx is relayed on the first attempt: a rate limit or an invalid
+// request is the upstream's answer for this request, not a transient fault,
+// so retrying it only stalls the client. 501 is left out as well: "not
+// implemented" is a permanent property of the endpoint, not an outage.
 func retryableUpstream(resp *backend.Response, err error) bool {
 	if err != nil {
 		// Most backend errors are transport faults worth another attempt, but a
@@ -246,7 +251,8 @@ func retryableUpstream(resp *backend.Response, err error) bool {
 		return !backend.IsTerminal(err)
 	}
 	switch resp.Status {
-	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false

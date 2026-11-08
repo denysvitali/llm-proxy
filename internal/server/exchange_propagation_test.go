@@ -55,8 +55,8 @@ func TestExchangePropagationUsesResolvedFallbackConfigAndChildSpan(t *testing.T)
 				t.Fatal(err)
 			}
 			s := newTestServer(t, []backend.Backend{openrouter.New(primaryHTTP.URL, "test-key"), fallback},
-				config.BackendConfig{Type: "openrouter", TracePropagation: primaryEnabled},
-				config.BackendConfig{Type: "mistral-vibe", TracePropagation: !primaryEnabled})
+				config.BackendConfig{Type: "openrouter", TracePropagation: primaryEnabled, RetryAttempts: intPtr(0)},
+				config.BackendConfig{Type: "mistral-vibe", TracePropagation: !primaryEnabled, RetryAttempts: intPtr(0)})
 			s.cfg.Routes = map[string]config.ModelRoute{"test": {Backend: "openrouter", Model: "test", Fallbacks: []config.FallbackRoute{{Backend: "mistral-vibe", Model: "test"}}}}
 			r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"test"}]}`))
 			r.Header.Set("Content-Type", "application/json")
