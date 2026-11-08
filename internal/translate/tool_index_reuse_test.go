@@ -176,6 +176,36 @@ func TestChatToolRepeatedNameOnContinuationIsNotAnIdentityChange(t *testing.T) {
 	}
 }
 
+// Two calls to the same tool on a reused index announce the same name, so the
+// new id is what marks them apart. Merging them would splice two argument
+// objects together.
+func TestChatToolIndexReuseSameToolTwice(t *testing.T) {
+	input := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_2","function":{"name":"bash","arguments":"{\"command\":\"pwd\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`, "",
+	}, "\n\n")
+	var anthropic bytes.Buffer
+	if err := NewStreamWriter(&anthropic, nil, "m", false).Consume(strings.NewReader(input)); err != nil {
+		t.Fatalf("reused index aborted the stream: %v", err)
+	}
+	for _, want := range []string{`"id":"toolu_call_1"`, `"id":"toolu_call_2"`, `"partial_json":"{\"command\":\"pwd\"}"`} {
+		if !strings.Contains(anthropic.String(), want) {
+			t.Fatalf("missing %q: %s", want, anthropic.String())
+		}
+	}
+	var responses bytes.Buffer
+	if err := NewResponsesStreamFromChat(&responses, nil, "m").Consume(strings.NewReader(input)); err != nil {
+		t.Fatalf("reused index aborted the stream: %v", err)
+	}
+	for _, want := range []string{`"call_id":"call_1"`, `"call_id":"call_2"`} {
+		if !strings.Contains(responses.String(), want) {
+			t.Fatalf("missing %q: %s", want, responses.String())
+		}
+	}
+}
+
 // A provider that renumbers a call mid-argument (id changes, no name) is still
 // a broken stream: merging it would concatenate two argument objects.
 func TestChatToolIDChangeWithoutNameStaysAFailure(t *testing.T) {
