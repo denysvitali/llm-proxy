@@ -1032,7 +1032,11 @@ where the destination supports them. Empty annotation/citation arrays are accept
 Namespaced upstream Responses calls require native routing because Chat/Messages
 cannot carry their namespace identity. Plain Messages thinking is display text on
 OpenAI output, not portable signed state; provider signatures are not replayed.
-Unsigned OpenAI reasoning is suppressed on translated Messages output, whether
+A Messages stream's `signature_delta` is dropped for translated clients
+(buffered and streaming alike) rather than failing the turn: providers such as
+MiniMax Code sign every thinking block, and rejecting it would cut an ordinary
+answer short. Unsigned OpenAI reasoning is suppressed on translated Messages
+output, whether
 or not thinking was requested; no synthetic thinking block or signature is
 emitted, buffered or streaming.
 Native responses retain their bytes and provider-specific output.

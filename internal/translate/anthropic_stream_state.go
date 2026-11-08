@@ -196,8 +196,14 @@ func (s *anthropicStreamState) consume(event anthropicEvent) ([]anthropicEvent, 
 			return nil, errors.New("upstream delta requires an open block")
 		}
 		delta := event.Delta
+		// A thinking block's provider signature is opaque state no translated
+		// wire can carry, so it is dropped here exactly as the buffered path
+		// drops it (see "provider signatures are not replayed" in README).
+		// Failing instead would break every translated stream from a provider
+		// that signs its thinking blocks — MiniMax Code signs every one, and
+		// the client sees an ordinary answer cut short.
 		if delta.Type == "signature_delta" && block.kind == "thinking" {
-			return nil, errors.New("opaque thinking signatures require a native route")
+			return nil, nil
 		}
 		valid := (block.kind == "text" && delta.Type == "text_delta") || (block.kind == "thinking" && delta.Type == "thinking_delta") || (block.kind == "tool_use" && delta.Type == "input_json_delta")
 		if !valid {
