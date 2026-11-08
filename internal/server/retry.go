@@ -15,6 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/shape"
 	"github.com/denysvitali/llm-proxy/internal/sse"
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
@@ -476,6 +477,7 @@ func (st gatedWriterState) String() string {
 type gatedWriter struct {
 	open  func() io.Writer
 	w     io.Writer
+	tap   *shape.Tap
 	state gatedWriterState
 	wrote int64
 	err   error
@@ -513,6 +515,9 @@ func (g *gatedWriter) Write(payload []byte) (int, error) {
 		return 0, nil
 	}
 	g.commit()
+	if g.tap != nil {
+		_, _ = g.tap.Write(payload)
+	}
 	n, err := g.w.Write(payload)
 	if err == nil && n < len(payload) {
 		err = io.ErrShortWrite
@@ -674,11 +679,12 @@ func (s *Server) relayTranslatedStreaming(
 	fetch upstreamFetch,
 	env translateEnv,
 	stream func(env translateEnv, client io.Writer, flush func()) streamTranslator,
+	shapes *tracker,
 ) exchangeResult {
 	tracker := s.newRetryTracker(upstreamPhaseBody, rt)
 	var body io.Reader = resp.Body
 	for attempt := 0; ; attempt++ {
-		gate := &gatedWriter{open: func() io.Writer {
+		gate := &gatedWriter{tap: shape.NewTap(), open: func() io.Writer {
 			responseHeader := w.Header()
 			responseHeader.Set("Content-Type", "text/event-stream")
 			responseHeader.Set("Cache-Control", "no-cache")
@@ -697,6 +703,9 @@ func (s *Server) relayTranslatedStreaming(
 		writer := stream(env, gate, flush)
 		consumeErr := writer.Consume(body)
 		closeBody(body)
+		if shapes != nil && consumeErr == nil {
+			shapes.noteClientResponse(gate.tap.Body())
+		}
 
 		if gate.failed() {
 			tracker.abandoned()

@@ -14,6 +14,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/denysvitali/llm-proxy/internal/config"
+	"github.com/denysvitali/llm-proxy/internal/shape"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
@@ -325,5 +326,35 @@ func TestRedisActivityIsReadableBeforeUpdateNotification(t *testing.T) {
 	rows := second.snapshot()
 	if len(rows) != 1 || rows[0].Requests != 1 || rows[0].StatusCodes["503"] != 1 {
 		t.Fatalf("notification preceded shared counters: %+v", rows)
+	}
+}
+
+// Shapes travel with a request's inspection record into the shared feed, so
+// every replica answers /api/shapes/{id} with the same trees.
+func TestRedisActivitySharesShapeTraces(t *testing.T) {
+	mini := miniredis.RunT(t)
+	writer, reader := activityStats(t, mini, "fleet:"), activityStats(t, mini, "fleet:")
+	tr := writer.track("provider", "model")
+	writer.inspect(tr, "proxy-shapes", "chat")
+	tr.noteClientRequest(shape.Infer([]byte(`{"model":"alias","messages":[]}`)))
+	tr.noteUpstreamRequest(shape.Infer([]byte(`{"model":"upstream","messages":[],"max_tokens":16}`)))
+	tr.setUpstreamStatus(http.StatusOK)
+	tr.done()
+	if tr.request.Shapes == nil || tr.request.Shapes.RequestChanges == nil {
+		t.Fatalf("local trace = %+v", tr.request.Shapes)
+	}
+	detail, ok, err := reader.request(context.Background(), tr.request.ID)
+	if err != nil || !ok {
+		t.Fatalf("shared request: ok=%v err=%v", ok, err)
+	}
+	if detail.Shapes == nil || detail.Shapes.RequestChanges == nil || detail.Shapes.RequestChanges.Identical {
+		t.Fatalf("shared trace = %+v", detail.Shapes)
+	}
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/shapes/"+tr.request.ID, nil)
+	request.SetPathValue("id", tr.request.ID)
+	(&Server{stats: reader}).handleShape(rec, request)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"request_upstream"`) {
+		t.Fatalf("shared shape detail: %d %s", rec.Code, rec.Body.String())
 	}
 }

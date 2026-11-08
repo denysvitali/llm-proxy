@@ -215,6 +215,7 @@ type tracker struct {
 	rep      usageReport
 	finished bool // attemptDone latch; see phase
 	request  InspectedRequest
+	shapes   ShapeTrace
 }
 
 // phase derives the attempt's lifecycle state from the done latch and the
@@ -289,6 +290,7 @@ func (t *tracker) done() {
 		return
 	}
 	t.finished = true
+	t.finishShapes()
 	a := completedAttempt{
 		at: time.Now(), backend: t.labels[0], model: t.labels[1],
 		status: t.status, success: t.succeeded(),
@@ -374,6 +376,7 @@ type UpstreamErrorEvent struct {
 // InspectedRequest is one recent upstream attempt available to the admin
 // dashboard. Request bodies are deliberately not retained: prompts, tool
 // inputs, credentials, and other client data must not become dashboard data.
+// Shapes records only each body's key/type structure, never a value.
 type InspectedRequest struct {
 	ID             string    `json:"id"`
 	At             time.Time `json:"at"`
@@ -383,6 +386,17 @@ type InspectedRequest struct {
 	Kind           string    `json:"kind,omitempty"`
 	Status         string    `json:"status"`
 	Error          string    `json:"error,omitempty"`
+	// Shapes is the key/type structure of this attempt's request and response
+	// on both sides of the translation, plus the structural diff at each hop.
+	// It never carries a value; see ShapeTrace.
+	Shapes *ShapeTrace `json:"shapes,omitempty"`
+}
+
+// withoutShapes returns a shallow copy without the request's shape trees, for
+// payloads that only need identity and outcome (live dashboard events).
+func (req InspectedRequest) withoutShapes() InspectedRequest {
+	req.Shapes = nil
+	return req
 }
 
 // maxRecentErrors caps each recent failure or inspection feed.

@@ -3,8 +3,9 @@ import { Alert, Button, Card, Group, Loader, Modal, ScrollArea, Stack, Table, Te
 import { IconClock, IconListDetails, IconServerOff, IconShieldCheck } from '@tabler/icons-react'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
-import { fetchRequest, type InspectedRequest, type UpstreamErrorEvent } from '../../api'
+import { fetchRequest, fetchShape, type InspectedRequest, type ShapeDetail, type UpstreamErrorEvent } from '../../api'
 import { requestInspectView } from '../../lib/requestInspect'
+import { ShapeInspector } from './ShapeInspector'
 import { fmtInt } from '../../format'
 import { EmptyState } from '../EmptyState'
 import { statusSeverity, severityColor, statusDescription } from '../../lib/httpStatus'
@@ -290,6 +291,9 @@ function RequestInspectButton({ id }: { id: string }) {
 }
 
 function RequestDetail({ request }: { request: InspectedRequest }) {
+  // Shapes live on the dedicated endpoint: the request feed stays small, and
+  // the tree is fetched only while the inspector is actually open.
+  const shapeQuery = useQuery({ queryKey: ['shape', request.id], queryFn: () => fetchShape(request.id), retry: 1 })
   return (
     <Stack gap="sm">
       <Group gap="xs" wrap="nowrap">
@@ -298,9 +302,22 @@ function RequestDetail({ request }: { request: InspectedRequest }) {
       </Group>
       <Text size="xs" c="dimmed" className="overview-ident">Proxy request ID: {request.proxy_request_id || 'unavailable'} · wire format: {request.kind || 'unknown'}</Text>
       {request.error && <Alert color="red" variant="light">{request.error}</Alert>}
+      <ShapeSection query={shapeQuery} />
       <Alert color="blue" variant="light">
         Request payloads are not retained by the proxy, so prompts, tool inputs, and credentials cannot appear in dashboard history.
       </Alert>
     </Stack>
   )
+}
+
+function ShapeSection({ query }: { query: { isPending: boolean; isError: boolean; data?: ShapeDetail } }) {
+  if (query.isPending) {
+    return <Group justify="center" py="sm" role="status"><Loader size="sm" aria-label="Loading recorded shapes" /></Group>
+  }
+  // A missing shape is expected for attempts from before recording existed or
+  // from a shape-less proxy build; treat every failure the same way.
+  if (query.isError || !query.data) {
+    return <Alert color="gray" variant="light">No structure was recorded for this attempt.</Alert>
+  }
+  return <ShapeInspector detail={query.data} />
 }

@@ -409,6 +409,32 @@
 .upstream-errors-table .mantine-Table-td:nth-child(2),
 .recent-requests-table .mantine-Table-td:nth-child(2) { min-width: 0; }
 
+/* Shape inspector: a schema-style outline. Keys and types are monospaced so
+   indentation lines up, and a changed path is coloured by change kind (added,
+   removed, retyped) — the badge row carries the same counts in words. */
+.shape-tree {
+  max-height: 300px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* Same fold affordance as the activity feeds: the tree scrolls inside the
+     modal and the short bottom fade says more rows exist below. */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent 100%);
+  padding: 4px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.shape-row { min-width: 0; }
+.shape-key,
+.shape-type {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shape-key { flex: none; max-width: 55%; }
+.shape-type { min-width: 0; }
+
 /* Status as severity dot + code text (never color alone). */
 .overview-status {
   display: inline-flex;

@@ -47,6 +47,88 @@ export interface InspectedRequest {
   error?: string
 }
 
+// Key/type structure of a JSON value. Types is a union because one location
+// can hold different types across array items or repeated stream events.
+export interface ShapeNode {
+  types?: string[]
+  keys?: Record<string, ShapeNode>
+  items?: ShapeNode
+  cut?: boolean
+}
+
+export interface ShapeBody {
+  format: string // json | sse | empty | unparsed | truncated
+  shape?: ShapeNode
+  events?: Record<string, ShapeNode>
+  order?: string[]
+  skipped?: number
+  truncated?: boolean
+}
+
+export interface ShapeChange {
+  path: string
+  kind: 'added' | 'removed' | 'retyped' | 'format'
+  from?: string[]
+  to?: string[]
+}
+
+export interface DiffReport {
+  changes?: ShapeChange[]
+  added: number
+  removed: number
+  retyped: number
+  cut?: boolean
+  identical?: boolean
+}
+
+// The four sides of one attempt across the translation matrix, plus the
+// structural diff at each hop. Values are never recorded.
+export interface ShapeTrace {
+  client_kind?: string
+  wire_kind?: string
+  request_client?: ShapeNode
+  request_upstream?: ShapeNode
+  request_changes?: DiffReport
+  response_upstream?: ShapeBody
+  response_client?: ShapeBody
+  response_changes?: DiffReport
+}
+
+export interface DiffSummary {
+  recorded: boolean
+  changed: boolean
+  added: number
+  removed: number
+  retyped: number
+  cut?: boolean
+}
+
+export interface ShapeSummary {
+  id: string
+  at: string
+  proxy_request_id?: string
+  backend: string
+  model: string
+  kind?: string
+  client_kind?: string
+  status: string
+  request_changes: DiffSummary
+  response_changes: DiffSummary
+}
+
+export interface ShapesResponse { shapes: ShapeSummary[] }
+
+export interface ShapeDetail {
+  id: string
+  at: string
+  proxy_request_id?: string
+  backend: string
+  model: string
+  kind?: string
+  status: string
+  shapes: ShapeTrace
+}
+
 export interface RequestsResponse { requests: InspectedRequest[] }
 
 export interface UpstreamErrorsResponse {
@@ -520,4 +602,13 @@ export async function fetchRequests(signal?: AbortSignal): Promise<RequestsRespo
 
 export function fetchRequest(id: string, signal?: AbortSignal): Promise<InspectedRequest> {
   return getJSON<InspectedRequest>(`/api/requests/${encodeURIComponent(id)}`, 'GET', signal)
+}
+
+export async function fetchShapes(signal?: AbortSignal): Promise<ShapesResponse> {
+  const data = await getJSON<ShapesResponse>('/api/shapes', 'GET', signal)
+  return { ...data, shapes: data.shapes ?? [] }
+}
+
+export function fetchShape(id: string, signal?: AbortSignal): Promise<ShapeDetail> {
+  return getJSON<ShapeDetail>(`/api/shapes/${encodeURIComponent(id)}`, 'GET', signal)
 }

@@ -8,9 +8,11 @@ import (
 
 // requestEvent encodes a completed attempt's inspected request so dashboard
 // clients can surface it immediately instead of waiting for the refetch.
+// The live payload carries the request summary only: shape trees can be large
+// and the dashboard fetches them from /api/shapes/{id} when Inspect is opened.
 // It degrades to the payload-less snapshot event if encoding ever fails.
 func requestEvent(req InspectedRequest) []byte {
-	body, err := json.Marshal(map[string]any{"type": "request", "request": req})
+	body, err := json.Marshal(map[string]any{"type": "request", "request": req.withoutShapes()})
 	if err != nil {
 		return statsUpdatedEvent
 	}

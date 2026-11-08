@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/shape"
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
@@ -353,6 +354,12 @@ func (s *Server) exchange(
 	// translated payloads can contain prompts, tool inputs, and credentials;
 	// neither should outlive this exchange in proxy-owned state.
 	s.stats.inspect(tr, RequestID(r.Context()), string(wireFormat))
+	// Record the key/type structure of both request sides: what the client
+	// sent and what this attempt actually forwards. Values never leave here.
+	tr.shapes.ClientKind, tr.shapes.WireKind = string(env.kind), string(wireFormat)
+	tr.shapes.native = wire.native
+	tr.noteClientRequest(shape.Infer(env.body))
+	tr.noteUpstreamRequest(shape.Infer(payload))
 	// Every attempt's body is sniffed against the same tracker: usage fields
 	// fold by high-water mark, so a recovered retry keeps its stats and a
 	// discarded partial one cannot inflate them. All sniffers close when
@@ -413,7 +420,7 @@ func (s *Server) exchange(
 	case wire.native:
 		result = s.relayNativeBuffered(r.Context(), w, log, rt, resp, fetch)
 	case env.streaming:
-		result = s.relayTranslatedStreaming(r.Context(), w, log, rt, resp, fetch, env, wire.path.stream)
+		result = s.relayTranslatedStreaming(r.Context(), w, log, rt, resp, fetch, env, wire.path.stream, tr)
 	default:
 		data, err := s.fetchResponseBody(r.Context(), rt, resp, fetch, maxTranslatedResponseBody)
 		if err != nil {
@@ -435,6 +442,7 @@ func (s *Server) exchange(
 		if err := json.NewEncoder(w).Encode(json.RawMessage(out)); err != nil {
 			return finish(deliveryFailure(true, err.Error()))
 		}
+		tr.noteClientResponse(shape.FromBytes(out))
 		result = servedExchange(true)
 	}
 	return finish(result)

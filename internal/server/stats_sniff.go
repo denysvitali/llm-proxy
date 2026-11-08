@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/denysvitali/llm-proxy/internal/shape"
 	"github.com/denysvitali/llm-proxy/internal/sse"
 	"github.com/denysvitali/llm-proxy/internal/translate"
 )
@@ -94,6 +95,10 @@ type sniffer struct {
 	buf           bytes.Buffer
 	state         sniffBufState
 	closed        bool
+	// tap records the body's key/type structure as it streams past, under its
+	// own bounds and independently of sniffCap, so the shape survives bodies
+	// too large for the parsing copy.
+	tap *shape.Tap
 }
 
 // newSniffer wraps one attempt's body. The status is frozen at creation:
@@ -105,7 +110,7 @@ func newSniffer(body io.ReadCloser, tr *tracker, sse bool, status int) *sniffer 
 	if status > 0 {
 		attemptStatus = strconv.Itoa(status)
 	}
-	return &sniffer{body: body, tracker: tr, sse: sse, attemptStatus: attemptStatus}
+	return &sniffer{body: body, tracker: tr, sse: sse, attemptStatus: attemptStatus, tap: shape.NewTap()}
 }
 
 // retain is the buffering → overflowed transition point: it keeps p while the
@@ -127,6 +132,7 @@ func (sn *sniffer) Read(p []byte) (int, error) {
 	if n > 0 {
 		sn.tracker.noteFirstByte()
 		sn.retain(p[:n])
+		_, _ = sn.tap.Write(p[:n])
 	}
 	return n, err
 }
@@ -169,6 +175,9 @@ func (sn *sniffer) verdict(data []byte) sniffVerdict {
 func (sn *sniffer) Finish() {
 	data := sn.buf.Bytes()
 	verdict := sn.verdict(data)
+	// The tap sees every byte, including bodies past sniffCap, so the shape is
+	// recorded even when the parsing copy was discarded.
+	sn.tracker.noteUpstreamResponse(sn.tap.Body())
 	if verdict == sniffNoBody {
 		return
 	}

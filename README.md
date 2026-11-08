@@ -1351,6 +1351,8 @@ Clients present the key either as `Authorization: Bearer llx_...` or as
 | GET/POST | `/login/minimax-code`       | Web-only MiniMax Code device-code sign-in |
 | POST     | `/login/zcode/captcha`      | Stores a browser verification parameter for the optional plan-claim flow |
 | GET    | `/stats`                      | Per-model/backend JSON stats (uptime, latency percentiles, throughput, cache and tool-call rates) |
+| GET    | `/api/shapes`                 | Retained attempts' conversion fingerprints: how many keys each hop added, removed, or retyped |
+| GET    | `/api/shapes/{id}`            | One attempt's full key/type trees for the client and upstream request and response, plus per-hop diffs |
 | GET    | `/healthz`                    | Liveness probe                                 |
 | GET    | `/readyz`                     | Readiness probe (lists enabled backends)       |
 | GET    | `/metrics`                    | Prometheus metrics                             |
@@ -1382,6 +1384,19 @@ The dashboard's recent-request history retains only request metadata and
 bounded upstream error summaries. Request bodies are never retained or exposed
 through the dashboard, so prompts, tool inputs, and client credentials do not
 become proxy-owned history.
+
+Every retained attempt additionally records a *shape trace*: the JSON
+key/type structure of the client request, the request actually forwarded
+upstream, the upstream response, and the response relayed back to the client,
+plus a structural diff at each hop (`added`, `removed`, `retyped`, ordered by
+JSON Pointer path). This is what makes the translation matrix auditable —
+`GET /api/shapes` lists fingerprints with per-hop change counts, and
+`GET /api/shapes/{id}` returns the full trees. Inference records types only
+(`object`, `array`, `string`, `number`, `boolean`, `null`) and never a value,
+so a shape cannot leak a prompt, tool argument, or credential. Trees are
+bounded (depth, keys per object, array samples, total nodes, and SSE event
+kinds); a region dropped by a bound is marked `cut`. SSE responses are decoded
+as they relay, so streaming traffic is recorded without buffering the body.
 With Redis configured, every replica serves the same latest 50 requests and
 latest 50 failures, ordered by completion timestamp with a stable ID tie-break.
 Inspection details for retained failures remain available even after successful
