@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 )
 
 type openAIChunk struct {
@@ -23,6 +24,21 @@ type chatAnthropicTool struct {
 	index int
 	id    string
 	name  string
+}
+
+// restarts reports whether a delta at an existing index announces a different
+// call instead of continuing it. Some upstreams (Open Design's AMR gateway
+// does) stream sequential calls on one reused index, so this is a second call,
+// not corruption. A name is required: Anthropic cannot open a block without
+// one, so a bare id change stays a continuation.
+func (t *chatAnthropicTool) restarts(call openAIToolCall) bool {
+	if call.Function.Name == "" {
+		return false
+	}
+	if call.ID != "" && toolUseID(call.ID) != t.id {
+		return true
+	}
+	return canonicalToolName(call.Function.Name) != t.name
 }
 
 // chatToAnthropicPhase is the message lifecycle of StreamWriter.
@@ -97,9 +113,10 @@ type StreamWriter struct {
 	writeErr   error
 	failure    error
 	textPhase  chatToAnthropicTextPhase
-	blockIndex int                        // next Anthropic content block index
-	textIndex  int                        // valid while textPhase is open
-	tools      map[int]*chatAnthropicTool // upstream index -> started tool block, open until closeBlocks
+	blockIndex int                          // next Anthropic content block index
+	textIndex  int                          // valid while textPhase is open
+	tools      map[int][]*chatAnthropicTool // upstream index -> blocks started under it, latest last
+	openTools  []int                        // started block indices still open, in order
 	toolIDs    responseCallIDs
 	stopReason string
 	usage      AnthropicUsage
@@ -107,7 +124,7 @@ type StreamWriter struct {
 
 func NewStreamWriter(writer io.Writer, flush func(), model string, includeThinking bool) *StreamWriter {
 	return &StreamWriter{writer: writer, flush: flush, model: model, includeThinking: includeThinking,
-		tools: map[int]*chatAnthropicTool{}, toolIDs: responseCallIDs{}}
+		tools: map[int][]*chatAnthropicTool{}, toolIDs: responseCallIDs{}}
 }
 
 // Consume leaves failures unfinished so the exchange can retry before output,
@@ -165,18 +182,29 @@ func (s *StreamWriter) Consume(body io.Reader) error {
 }
 
 func (s *StreamWriter) consumeChunk(chunk openAIChunk) error {
-	// Validate repeated tool metadata before publishing any part of this event.
+	// Validate tool metadata before publishing any part of this event. A call
+	// that reuses an upstream index for a different tool restarts that slot
+	// below; anything else without usable metadata is a broken stream.
 	for _, choice := range chunk.Choices {
 		for _, call := range choice.Delta.ToolCalls {
 			if call.Index < 0 {
 				return errors.New("upstream tool index must be non-negative")
 			}
-			if tool := s.tools[call.Index]; tool != nil {
-				if (call.ID != "" && tool.id != toolUseID(call.ID)) || (call.Function.Name != "" && tool.name != call.Function.Name) {
-					return errors.New("upstream changed tool identity at an existing index")
+			tool := s.openTool(call.Index)
+			if tool == nil {
+				if call.Function.Name == "" {
+					return errors.New("upstream tool arguments require a named call before deltas")
 				}
-			} else if call.Function.Name == "" {
-				return errors.New("upstream tool arguments require a named call before deltas")
+				continue
+			}
+			if tool.restarts(call) {
+				continue
+			}
+			if call.ID != "" && tool.id != toolUseID(call.ID) {
+				return errors.New("upstream changed tool identity at an existing index")
+			}
+			if call.Function.Name != "" && tool.name != canonicalToolName(call.Function.Name) {
+				return errors.New("upstream changed tool identity at an existing index")
 			}
 		}
 	}
@@ -225,10 +253,27 @@ func (s *StreamWriter) openText() {
 		"content_block": map[string]any{"type": "text", "text": ""}})
 }
 
+// openTool returns the tool block currently open for an upstream index, or nil
+// when none has started.
+func (s *StreamWriter) openTool(upstreamIndex int) *chatAnthropicTool {
+	blocks := s.tools[upstreamIndex]
+	if len(blocks) == 0 {
+		return nil
+	}
+	return blocks[len(blocks)-1]
+}
+
 // Tool state follows the upstream index, not whichever block most recently
-// emitted a delta. Repeated identity metadata is continuation, not a new call.
+// emitted a delta. Repeated identity metadata is continuation, not a new call,
+// unless the index is reused to announce a different tool: then the previous
+// block is closed and a fresh one starts under a new Anthropic index, since a
+// content block's id and name are immutable once started.
 func (s *StreamWriter) consumeToolCall(call openAIToolCall) error {
-	tool := s.tools[call.Index]
+	tool := s.openTool(call.Index)
+	if tool != nil && tool.restarts(call) {
+		s.closeBlock(tool.index)
+		tool = nil
+	}
 	if tool == nil {
 		id, err := s.toolIDs.resolve(call.ID, "toolu_")
 		if err != nil {
@@ -236,7 +281,8 @@ func (s *StreamWriter) consumeToolCall(call openAIToolCall) error {
 		}
 		tool = &chatAnthropicTool{index: s.blockIndex, id: id, name: canonicalToolName(call.Function.Name)}
 		s.blockIndex++
-		s.tools[call.Index] = tool
+		s.tools[call.Index] = append(s.tools[call.Index], tool)
+		s.openTools = append(s.openTools, tool.index)
 		s.emit("content_block_start", map[string]any{"type": "content_block_start", "index": tool.index,
 			"content_block": map[string]any{"type": "tool_use", "id": tool.id, "name": tool.name, "input": map[string]any{}}})
 	}
@@ -245,6 +291,21 @@ func (s *StreamWriter) consumeToolCall(call openAIToolCall) error {
 			"delta": map[string]any{"type": "input_json_delta", "partial_json": call.Function.Arguments}})
 	}
 	return s.writeErr
+}
+
+// closeBlock emits content_block_stop for one Anthropic block index and
+// forgets it, so a caller that closes a block early cannot close it twice.
+func (s *StreamWriter) closeBlock(index int) {
+	if s.textPhase == chatToAnthropicTextOpen && s.textIndex == index {
+		s.textPhase = chatToAnthropicTextNone
+	}
+	for position, open := range s.openTools {
+		if open == index {
+			s.openTools = append(s.openTools[:position], s.openTools[position+1:]...)
+			break
+		}
+	}
+	s.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
 }
 
 func (s *StreamWriter) ensureStarted(id, model string) {
@@ -260,11 +321,19 @@ func (s *StreamWriter) ensureStarted(id, model string) {
 	}})
 }
 
+// closeBlocks stops every block still open, in index order as before, so a
+// client never sees content_block_stop arrive out of order.
 func (s *StreamWriter) closeBlocks() {
-	for index := 0; index < s.blockIndex; index++ {
-		s.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
+	open := append([]int(nil), s.openTools...)
+	if s.textPhase == chatToAnthropicTextOpen {
+		open = append(open, s.textIndex)
+	}
+	slices.Sort(open)
+	for _, index := range open {
+		s.closeBlock(index)
 	}
 	s.blockIndex = 0
+	s.tools = map[int][]*chatAnthropicTool{}
 	s.textPhase = chatToAnthropicTextNone
 }
 

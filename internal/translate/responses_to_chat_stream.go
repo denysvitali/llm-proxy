@@ -369,7 +369,7 @@ func (s *responsesItemStream) emit(event string, payload map[string]any) {
 type ResponsesStreamFromChatWriter struct {
 	stream     responsesItemStream
 	namespaces map[string]responseNamespaceTool
-	tools      map[int]*streamedResponseItem
+	tools      map[int][]*streamedResponseItem
 	callIDs    responseCallIDs
 	content    responsesFromChatContent
 }
@@ -424,7 +424,7 @@ func NewResponsesStreamFromChatForRequest(writer io.Writer, flush func(), model 
 
 func newResponsesStreamFromChat(writer io.Writer, flush func(), model string, namespaces map[string]responseNamespaceTool) *ResponsesStreamFromChatWriter {
 	return &ResponsesStreamFromChatWriter{stream: responsesItemStream{writer: writer, flush: flush, model: model},
-		namespaces: namespaces, tools: map[int]*streamedResponseItem{}, callIDs: responseCallIDs{}}
+		namespaces: namespaces, tools: map[int][]*streamedResponseItem{}, callIDs: responseCallIDs{}}
 }
 
 func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
@@ -471,6 +471,31 @@ func (s *ResponsesStreamFromChatWriter) Consume(body io.Reader) error {
 	return errors.New("upstream stream ended without emitting any events")
 }
 
+// openTool returns the function_call item currently open for an upstream call
+// index, or nil when none has started.
+func (s *ResponsesStreamFromChatWriter) openTool(upstreamIndex int) *streamedResponseItem {
+	items := s.tools[upstreamIndex]
+	if len(items) == 0 {
+		return nil
+	}
+	return items[len(items)-1]
+}
+
+// toolRestarts reports whether a delta at an existing index announces a
+// different call instead of continuing it. Some upstreams (Open Design's AMR
+// gateway among them) stream sequential calls on one reused index; that is a
+// new call, not corruption. A name is required: a bare id change is a
+// continuation, since the item must stay bound to the call it announced.
+func toolRestarts(existingID, existingName, existingNamespace, callID, callName, callNamespace string) bool {
+	if callName == "" {
+		return false
+	}
+	if callID != "" && callID != existingID {
+		return true
+	}
+	return callName != existingName || callNamespace != existingNamespace
+}
+
 func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 	if chunk.Usage != nil {
 		if err := validateChatUsage(*chunk.Usage); err != nil {
@@ -490,13 +515,22 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 			if call.Index < 0 {
 				return errors.New("upstream tool index must be non-negative")
 			}
-			if tool := s.tools[call.Index]; tool != nil {
-				name, namespace := restoreResponsesToolName(call.Function.Name, s.namespaces)
-				if (call.ID != "" && tool.callID != call.ID) || (call.Function.Name != "" && (tool.name != name || tool.namespace != namespace)) {
-					return errors.New("upstream changed tool identity at an existing index")
+			name, namespace := restoreResponsesToolName(call.Function.Name, s.namespaces)
+			tool := s.openTool(call.Index)
+			if tool == nil {
+				if call.Function.Name == "" {
+					return errors.New("upstream tool arguments require a named call before deltas")
 				}
-			} else if call.Function.Name == "" {
-				return errors.New("upstream tool arguments require a named call before deltas")
+				continue
+			}
+			if toolRestarts(tool.callID, tool.name, tool.namespace, call.ID, name, namespace) {
+				continue
+			}
+			if call.ID != "" && tool.callID != call.ID {
+				return errors.New("upstream changed tool identity at an existing index")
+			}
+			if call.Function.Name != "" && (tool.name != name || tool.namespace != namespace) {
+				return errors.New("upstream changed tool identity at an existing index")
 			}
 		}
 	}
@@ -519,7 +553,14 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 			s.stream.appendText(*delta.Refusal)
 		}
 		for _, call := range delta.ToolCalls {
-			tool := s.tools[call.Index]
+			tool := s.openTool(call.Index)
+			if tool != nil {
+				name, namespace := restoreResponsesToolName(call.Function.Name, s.namespaces)
+				if toolRestarts(tool.callID, tool.name, tool.namespace, call.ID, name, namespace) {
+					s.stream.closeResponseItem(tool)
+					tool = nil
+				}
+			}
 			if tool == nil {
 				id, err := s.callIDs.resolve(call.ID, "")
 				if err != nil {
@@ -528,7 +569,7 @@ func (s *ResponsesStreamFromChatWriter) consumeChunk(chunk chatChunk) error {
 				name, namespace := restoreResponsesToolName(call.Function.Name, s.namespaces)
 				s.stream.closeItem()
 				tool = s.stream.addItem("function_call", id, name, namespace)
-				s.tools[call.Index] = tool
+				s.tools[call.Index] = append(s.tools[call.Index], tool)
 			}
 			if call.Function.Arguments != "" {
 				s.stream.appendItemArgs(tool, call.Function.Arguments)
