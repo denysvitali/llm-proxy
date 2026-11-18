@@ -77,6 +77,54 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 	return out, nil
 }
 
+// clampTopLevelInts lowers each named top-level integer above limit to limit,
+// preserving every other byte. Absent fields, non-integers, and values within
+// the limit are left alone; it reports whether anything changed.
+func clampTopLevelInts(body []byte, names []string, limit int64) ([]byte, bool) {
+	trimmed := bytes.TrimSpace(body)
+	if limit <= 0 || !json.Valid(body) || len(trimmed) == 0 || trimmed[0] != '{' {
+		return body, false
+	}
+	type span struct{ start, end int }
+	var spans []span
+	i := skipJSONSpace(body, 0) + 1
+	for {
+		i = skipJSONSpace(body, i)
+		if body[i] == '}' {
+			break
+		}
+		keyEnd := skipJSONString(body, i)
+		var key string
+		_ = json.Unmarshal(body[i:keyEnd], &key)
+		i = skipJSONSpace(body, keyEnd) + 1 // colon
+		i = skipJSONSpace(body, i)
+		valueEnd := skipJSONValue(body, i)
+		for _, name := range names {
+			var value int64
+			if key == name && json.Unmarshal(body[i:valueEnd], &value) == nil && value > limit {
+				spans = append(spans, span{i, valueEnd})
+			}
+		}
+		i = skipJSONSpace(body, valueEnd)
+		if body[i] == '}' {
+			break
+		}
+		i++ // comma
+	}
+	if len(spans) == 0 {
+		return body, false
+	}
+	replacement := []byte(fmt.Sprint(limit))
+	out := make([]byte, 0, len(body))
+	last := 0
+	for _, s := range spans {
+		out = append(out, body[last:s.start]...)
+		out = append(out, replacement...)
+		last = s.end
+	}
+	return append(out, body[last:]...), true
+}
+
 // These skippers operate only on a document already checked by json.Valid.
 func skipJSONString(body []byte, i int) int {
 	for i++; i < len(body); i++ {

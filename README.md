@@ -466,17 +466,21 @@ fetches the live authenticated `GET /models` catalog, so the listed models are
 those your plan allows. `base_url` can replace the default API root.
 
 Chat Completions and Responses requests use their matching Open Design
-endpoints: request JSON (apart from the proxy's model rewrite), response
-bodies, and SSE events pass through unchanged. Anthropic Messages requests are
+endpoints: request JSON (apart from the proxy's model rewrite and the output-cap
+clamp described under model metadata), response bodies, and SSE events pass
+through unchanged. Anthropic Messages requests are
 translated to Chat Completions rather than sent to Open Design's own
 `/messages`, whose origin fails any request carrying a `tool_reference` block
 (Claude Code sends one after every tool search) with a Cloudflare HTML 502 and
 whose streams end without `message_delta`/`message_stop` when `max_tokens`
 runs out. Each model's `metadata.context_limit` and
 `output_budget` feed the Codex catalog as its context window and output
-ceiling (`context_budget` only bounds the prompt and is not used). The proxy
+ceiling (`context_budget` only bounds the prompt and is not used), and the
+output budget also caps each request's output-token limit. The proxy
 sends the key as a bearer token. Upstream
-`402` responses mean the plan allowance or wallet is exhausted.
+`402` responses mean the plan allowance or wallet is exhausted. When a reply
+spends its whole budget on reasoning, Open Design returns `"choices": []`;
+translated clients receive it as an empty reply stopped by the token limit.
 
 **Plan usage (5-hour / weekly windows).** Open Design exposes Coding Plan
 windows only through its account API (`amr-api.open-design.ai`), which takes
@@ -1157,8 +1161,9 @@ backends:
 
 These example limits are illustrative, not provider defaults. Omit unknown
 limits; supplied limits must be positive, and output cannot exceed context.
-The default effort, when supplied, must be one of the listed efforts. Hints do
-not change requests, create catalog entries, or enable unsupported translation:
+The default effort, when supplied, must be one of the listed efforts. Apart
+from `max_output_tokens` (see below), hints do not change requests, create
+catalog entries, or enable unsupported translation:
 verbosity and reasoning-summary controls require native Responses; effort
 controls can also map to Chat, but never to a guessed Messages thinking budget.
 Freeform patch tools are not advertised. The 10,000-byte Codex tool-output
@@ -1170,6 +1175,16 @@ Backends whose live catalog declares limits (currently `opendesign`) fill in
 `context_window`, `max_output_tokens`, and image input for Codex
 automatically. Operator `model_metadata` still wins field by field, and an
 output limit larger than the window is dropped as an impossible claim.
+
+A known `max_output_tokens` also bounds requests: a larger `max_tokens`,
+`max_completion_tokens`, or `max_output_tokens` is lowered to it before
+sending, on every wire (native bodies keep every other byte). The cap is only
+an upper bound, while gateways reject a larger one — Open Design answers an
+opaque `400 [code=upstream_error] The request could not be completed.`, e.g.
+for `glm-5.3-flash` above 131072 — and Claude Code sizes it from its own guess
+about an unknown model. Catalog budgets can be conservative (Open Design
+declares 32000 for `glm-5.3-flash`); raise one with an operator entry. An
+Anthropic request whose thinking budget would no longer fit is left unchanged.
 Claude Code cannot consume this: its gateway model discovery reads only IDs
 and display names, so set `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (or append
 `[1m]` to the model ID) for gateway models whose window is not 200K.
@@ -1388,7 +1403,10 @@ These are process-local, reset on restart, and an absent timestamp means no
 such event has been observed by that process.
 
 The dashboard's recent-request history retains only request metadata and
-bounded upstream error summaries. Request bodies are never retained or exposed
+bounded upstream error summaries. Requests the proxy refuses before dispatch
+(the backend cannot serve the client API, or the request cannot be encoded for
+it) appear there too, with status `rejected`, the reason, and the client
+request's shape; they are not counted as backend traffic or uptime. Request bodies are never retained or exposed
 through the dashboard, so prompts, tool inputs, and client credentials do not
 become proxy-owned history.
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
 	"github.com/denysvitali/llm-proxy/internal/translate"
+	"github.com/sirupsen/logrus"
 )
 
 // Wire definitions describe how each inbound API reaches an upstream API.
@@ -143,6 +144,14 @@ type resolvedWire struct {
 	path   *translationPath // conversion to apply when not native
 }
 
+// kind is the wire format actually sent upstream for an inbound API.
+func (w resolvedWire) kind(inbound backend.Kind) backend.Kind {
+	if !w.native && w.path != nil {
+		return w.path.kind
+	}
+	return inbound
+}
+
 // resolveWire picks the first wire format the backend supports under the
 // inbound API's preference order. ok=false means the backend serves neither
 // this API nor anything translatable. When the backend implements
@@ -192,4 +201,35 @@ func applyCodexReasoningEffort(rt route, wire resolvedWire, payload []byte, effo
 	reasoning := request["reasoning"].(map[string]any)
 	reasoning["effort"] = effort
 	return json.Marshal(request)
+}
+
+// outputTokenFields names each wire's cap on generated tokens.
+var outputTokenFields = []string{"max_tokens", "max_completion_tokens", "max_output_tokens"}
+
+// clampOutputTokens lowers the request's output cap to the model's declared
+// maximum (operator model_metadata, else the backend's live catalog). A cap
+// is an upper bound the model can never exceed anyway, while gateways such as
+// Open Design reject a larger one outright with an opaque 400 — and clients
+// like Claude Code size it from their own guess about an unknown model. An
+// Anthropic request whose thinking budget would no longer fit is left as is.
+func (s *Server) clampOutputTokens(log logrus.FieldLogger, rt route, wireKind backend.Kind, payload []byte) []byte {
+	limit := s.modelMetadata(rt.backend, rt.model).MaxOutputTokens
+	if limit == nil || *limit <= 0 {
+		return payload
+	}
+	if wireKind == backend.KindAnthropic {
+		var probe struct {
+			Thinking struct {
+				BudgetTokens int64 `json:"budget_tokens"`
+			} `json:"thinking"`
+		}
+		if json.Unmarshal(payload, &probe) == nil && probe.Thinking.BudgetTokens >= int64(*limit) {
+			return payload
+		}
+	}
+	clamped, changed := clampTopLevelInts(payload, outputTokenFields, int64(*limit))
+	if changed {
+		log.WithField("max_output_tokens", *limit).Debug("clamped the request's output cap to the model maximum")
+	}
+	return clamped
 }

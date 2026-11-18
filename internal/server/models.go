@@ -169,21 +169,12 @@ func newCodexModel(id, owner string, metadata config.ModelMetadata) codexModel {
 // codexMetadata intersects exact operator hints with the Responses translation
 // path. Hints describe the upstream, but cannot enable unsupported conversions.
 func (s *Server) codexMetadata(e modelEntry) config.ModelMetadata {
-	var metadata config.ModelMetadata
 	model := strings.TrimPrefix(e.ID, e.OwnedBy+"/")
-	if cfg, ok := s.cfg.BackendByType(e.OwnedBy); ok {
-		for _, entry := range cfg.ModelMetadata {
-			if entry.Model == model {
-				metadata = entry
-				break
-			}
-		}
-	}
 	b := s.byName[e.OwnedBy]
 	if b == nil {
 		return config.ModelMetadata{}
 	}
-	mergeCatalogInfo(&metadata, b, model)
+	metadata := s.modelMetadata(b, model)
 	wire, ok := resolveWire(backend.KindOpenAIResponses, b, model)
 	if !ok {
 		return config.ModelMetadata{}
@@ -201,6 +192,22 @@ func (s *Server) codexMetadata(e modelEntry) config.ModelMetadata {
 			metadata.DefaultReasoningEffort = nil
 		}
 	}
+	return metadata
+}
+
+// modelMetadata resolves one upstream model's hints and limits: the
+// operator's model_metadata entry, completed from the backend's live catalog.
+func (s *Server) modelMetadata(b backend.Backend, model string) config.ModelMetadata {
+	var metadata config.ModelMetadata
+	if cfg, ok := s.cfg.BackendByType(b.Name()); ok {
+		for _, entry := range cfg.ModelMetadata {
+			if entry.Model == model {
+				metadata = entry
+				break
+			}
+		}
+	}
+	mergeCatalogInfo(&metadata, b, model)
 	return metadata
 }
 

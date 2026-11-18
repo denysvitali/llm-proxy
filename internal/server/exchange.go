@@ -233,6 +233,7 @@ func (s *Server) exchangeChain(
 		routeLog := log.WithField("backend", rt.backend.Name())
 		wire, servable := resolveWire(env.kind, rt.backend, rt.model)
 		if !servable {
+			s.noteRejection(r, rt, env, "", fmt.Sprintf("backend %s does not support the %s API", rt.backend.Name(), kindName(env.kind)))
 			if final {
 				routeLog.Error("backend does not support this API; rejecting request")
 				dialect.writeError(w, http.StatusBadRequest, "invalid_request_error",
@@ -248,7 +249,11 @@ func (s *Server) exchangeChain(
 		if err == nil {
 			payload, err = applyCodexReasoningEffort(rt, wire, payload, routeEnv.reasoningEffort)
 		}
+		if err == nil {
+			payload = s.clampOutputTokens(routeLog, rt, wire.kind(env.kind), payload)
+		}
 		if err != nil {
+			s.noteRejection(r, rt, env, wire.kind(env.kind), err.Error())
 			if final {
 				routeLog.WithError(err).Error("cannot encode request for backend; rejecting request")
 				dialect.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -265,6 +270,15 @@ func (s *Server) exchangeChain(
 		routeLog.WithField("fallback", chain[i+1].backend.Name()).
 			Warn("backend failed before any output reached the client; falling back")
 	}
+}
+
+// noteRejection records a route the proxy refused before dispatch, with the
+// client request's key/type structure so the offending field is visible in
+// the inspector. wireKind is empty when no wire could be chosen at all.
+func (s *Server) noteRejection(r *http.Request, rt route, env translateEnv, wireKind backend.Kind, message string) {
+	trace := &ShapeTrace{ClientKind: string(env.kind), WireKind: string(wireKind)}
+	trace.RequestClient = shape.Infer(env.body)
+	s.stats.recordRejection(rt.backend.Name(), rt.model, RequestID(r.Context()), string(wireKind), message, trace)
 }
 
 // exchange dispatches one prepared request: sends upstream on the chosen
@@ -336,10 +350,7 @@ func (s *Server) exchange(
 		return result
 	}
 
-	wireFormat := env.kind
-	if !wire.native && wire.path != nil {
-		wireFormat = wire.path.kind
-	}
+	wireFormat := wire.kind(env.kind)
 	req := &backend.Request{
 		Kind:      wireFormat,
 		Model:     rt.model,
