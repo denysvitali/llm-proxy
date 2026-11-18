@@ -68,8 +68,6 @@ func TestCatalogRefreshShared(t *testing.T) {
 	}{
 		{name: "cold success", want: []string{"fresh"}},
 		{name: "cold failure", refreshErr: unavailable, wantErr: unavailable},
-		{name: "stale success", cachedAge: time.Minute, want: []string{"fresh"}},
-		{name: "stale fallback", cachedAge: time.Minute, refreshErr: unavailable, want: []string{"stale"}},
 		{name: "beyond stale cap", cachedAge: catalogMaxStaleness, refreshErr: unavailable, wantErr: unavailable},
 	}
 	for _, tc := range cases {
@@ -101,6 +99,87 @@ func TestCatalogRefreshShared(t *testing.T) {
 			})
 		})
 	}
+}
+
+// A stale-servable entry is served immediately while one shared background
+// refresh revalidates it.
+func TestCatalogStaleWhileRevalidate(t *testing.T) {
+	cases := []struct {
+		name       string
+		refreshErr error
+		wantCached []string
+	}{
+		{name: "refresh success", wantCached: []string{"fresh"}},
+		{name: "refresh failure keeps stale", refreshErr: errors.New("unavailable"), wantCached: []string{"stale"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				cache := newCatalogCache()
+				cache.entries["provider"] = expiredCatalog(time.Minute)
+				b := newControlledCatalogBackend("provider")
+				for range 12 {
+					got, err := cache.get(t.Context(), b, quietLogger())
+					if err != nil || !reflect.DeepEqual(got, []string{"stale"}) {
+						t.Fatalf("stale lookup = %v, %v; want immediate stale entry", got, err)
+					}
+				}
+				synctest.Wait()
+				if got := b.calls.Load(); got != 1 {
+					t.Fatalf("background Models calls = %d, want 1", got)
+				}
+				b.results <- catalogResult{models: []string{"fresh"}, err: tc.refreshErr}
+				synctest.Wait()
+				cache.mu.Lock()
+				defer cache.mu.Unlock()
+				if got := cache.entries["provider"].models; !reflect.DeepEqual(got, tc.wantCached) {
+					t.Errorf("cached models = %v, want %v", got, tc.wantCached)
+				}
+				if len(cache.refresh) != 0 {
+					t.Error("background refresh slot was not released")
+				}
+			})
+		})
+	}
+}
+
+// The background refresh is detached: the request that triggered it may end.
+func TestCatalogBackgroundRefreshOutlivesCaller(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cache := newCatalogCache()
+		cache.entries["provider"] = expiredCatalog(time.Minute)
+		b := newControlledCatalogBackend("provider")
+		ctx, cancel := context.WithCancel(t.Context())
+		if _, err := cache.get(ctx, b, quietLogger()); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		synctest.Wait()
+		b.results <- catalogResult{models: []string{"fresh"}}
+		synctest.Wait()
+		if got, err := cache.get(t.Context(), b, quietLogger()); err != nil || !reflect.DeepEqual(got, []string{"fresh"}) {
+			t.Fatalf("detached refresh result = %v, %v", got, err)
+		}
+	})
+}
+
+// A hung provider cannot pin the background refresh slot forever.
+func TestCatalogBackgroundRefreshTimesOut(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cache := newCatalogCache()
+		cache.entries["provider"] = expiredCatalog(time.Minute)
+		b := newControlledCatalogBackend("provider")
+		if _, err := cache.get(t.Context(), b, quietLogger()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(catalogBackgroundRefreshTimeout + time.Second)
+		synctest.Wait()
+		cache.mu.Lock()
+		defer cache.mu.Unlock()
+		if len(cache.refresh) != 0 {
+			t.Error("timed-out background refresh still holds its slot")
+		}
+	})
 }
 
 func TestCatalogRefreshDifferentBackends(t *testing.T) {
@@ -157,16 +236,16 @@ func TestCatalogRefreshWaitingCallerCancellation(t *testing.T) {
 }
 
 func TestCatalogRefreshCanceledInitiatorRetries(t *testing.T) {
-	for _, stale := range []bool{false, true} {
+	for _, age := range []time.Duration{0, catalogMaxStaleness} {
 		name := "cold"
-		if stale {
-			name = "stale"
+		if age > 0 {
+			name = "over-age"
 		}
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				cache := newCatalogCache()
-				if stale {
-					cache.entries["provider"] = expiredCatalog(time.Minute)
+				if age > 0 {
+					cache.entries["provider"] = expiredCatalog(age)
 				}
 				b := newControlledCatalogBackend("provider")
 				ctx, cancel := context.WithCancel(t.Context())
@@ -207,15 +286,15 @@ func TestCatalogRefreshFailureRetriesAndThrottlesWarnings(t *testing.T) {
 		b := newControlledCatalogBackend("provider")
 		log, hook := logtest.NewNullLogger()
 		for i := range 2 {
-			result := startCatalogFetch(t.Context(), &cache, b, log)
+			if got, err := cache.get(t.Context(), b, log); err != nil || !reflect.DeepEqual(got, []string{"stale"}) {
+				t.Errorf("stale fallback = %v, %v", got, err)
+			}
 			synctest.Wait()
 			if got := b.calls.Load(); got != int64(i+1) {
 				t.Fatalf("Models calls = %d, want %d; failure was cached", got, i+1)
 			}
 			b.results <- catalogResult{err: errors.New("unavailable")}
-			if got := <-result; got.err != nil || !reflect.DeepEqual(got.models, []string{"stale"}) {
-				t.Errorf("stale fallback = %+v", got)
-			}
+			synctest.Wait()
 		}
 		if got := len(hook.AllEntries()); got != 1 {
 			t.Errorf("stale warnings = %d, want 1", got)
@@ -228,10 +307,19 @@ func TestCatalogRefreshCrossingStalenessCap(t *testing.T) {
 		cache := newCatalogCache()
 		cache.entries["provider"] = expiredCatalog(catalogMaxStaleness - time.Second)
 		b := newControlledCatalogBackend("provider")
-		result := startCatalogFetch(t.Context(), &cache, b, quietLogger())
+		// Still within the cap: served while a background refresh starts.
+		if got, err := cache.get(t.Context(), b, quietLogger()); err != nil || !reflect.DeepEqual(got, []string{"stale"}) {
+			t.Fatalf("within-cap lookup = %v, %v", got, err)
+		}
 		synctest.Wait()
 		time.Sleep(2 * time.Second)
 		unavailable := errors.New("unavailable")
+		b.results <- catalogResult{err: unavailable}
+		synctest.Wait()
+		// The slow failure crossed the cap; the next caller must not get the
+		// over-age entry.
+		result := startCatalogFetch(t.Context(), &cache, b, quietLogger())
+		synctest.Wait()
 		b.results <- catalogResult{err: unavailable}
 		if got := <-result; !errors.Is(got.err, unavailable) || got.models != nil {
 			t.Fatalf("over-age catalog served after slow failure: %+v", got)
@@ -326,6 +414,25 @@ func TestCatalogRefreshPanicReleasesWaiters(t *testing.T) {
 		}
 		if got := <-waiter; got.err != nil || !reflect.DeepEqual(got.models, []string{"recovered"}) {
 			t.Fatalf("waiter failed to recover from initiator panic: %+v", got)
+		}
+	})
+}
+
+func TestCatalogBackgroundRefreshPanicIsContained(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cache := newCatalogCache()
+		cache.entries["provider"] = expiredCatalog(time.Minute)
+		b := &panickingCatalogBackend{release: make(chan struct{})}
+		if got, err := cache.get(t.Context(), b, quietLogger()); err != nil || !reflect.DeepEqual(got, []string{"stale"}) {
+			t.Fatalf("stale lookup = %v, %v", got, err)
+		}
+		synctest.Wait()
+		close(b.release)
+		synctest.Wait()
+		cache.mu.Lock()
+		defer cache.mu.Unlock()
+		if len(cache.refresh) != 0 {
+			t.Error("panicked background refresh still holds its slot")
 		}
 	})
 }

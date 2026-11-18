@@ -5,7 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
+
+	"github.com/denysvitali/llm-proxy/internal/backend"
 )
 
 // Build identity shown by the overview API and SPA.
@@ -132,6 +133,7 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 		Routes:      make([]overviewRoute, 0, len(s.cfg.Routes)),
 	}
 
+	catalogs := s.overviewCatalogs(r)
 	for _, bc := range s.cfg.Backends {
 		entry := overviewBackend{
 			Name:    bc.Type,
@@ -147,7 +149,7 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 			entry.AuthConfigured = entry.HasKey
 		}
 		if entry.Enabled {
-			if models, err := s.backendCatalogForOverview(r, bc.Type); err != nil {
+			if models, err := catalogs[bc.Type].sorted(); err != nil {
 				entry.CatalogOK = false
 			} else {
 				entry.CatalogOK = true
@@ -166,8 +168,8 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 		page.Backends = append(page.Backends, entry)
 	}
 
-	page.GrokUsage = s.grokUsageMetadata(r)
-	page.ZcodeUsage = s.zcodeUsageMetadata(r)
+	page.GrokUsage = s.grokUsageMetadata()
+	page.ZcodeUsage = s.zcodeUsageMetadata()
 	page.MiniMaxUsage = s.minimaxUsageMetadata()
 	page.OpenDesign = s.openDesignUsageMetadata()
 	page.ExampleModel = exampleModel(page.Backends)
@@ -216,21 +218,29 @@ func (s *Server) backendModelCredits(name string) (map[string]string, bool) {
 	return nil, false
 }
 
-// backendCatalogForOverview lists one backend's models, sorted. A configured
-// backend without a constructed instance counts as unavailable.
-func (s *Server) backendCatalogForOverview(r *http.Request, name string) ([]string, error) {
-	b, ok := s.byName[name]
-	if !ok {
-		return nil, fmt.Errorf("backend %q is configured but not constructed", name)
+// overviewCatalogs looks up every enabled backend's catalog concurrently. A
+// configured backend without a constructed instance counts as unavailable.
+func (s *Server) overviewCatalogs(r *http.Request) map[string]catalogLookup {
+	out := make(map[string]catalogLookup, len(s.cfg.Backends))
+	var bs []backend.Backend
+	for _, bc := range s.cfg.Backends {
+		if !bc.IsEnabled() {
+			continue
+		}
+		if b, ok := s.byName[bc.Type]; ok {
+			bs = append(bs, b)
+		} else {
+			out[bc.Type] = catalogLookup{err: fmt.Errorf("backend %q is configured but not constructed", bc.Type)}
+		}
 	}
-	models, err := s.backendCatalog(r.Context(), b)
-	if err != nil {
-		s.logCatalogFailure(r.Context(), name, err)
-		return nil, err
+	for i, lookup := range s.catalogsFor(r.Context(), bs) {
+		name := bs[i].Name()
+		if lookup.err != nil {
+			s.logCatalogFailure(r.Context(), name, lookup.err)
+		}
+		out[name] = lookup
 	}
-	out := append([]string(nil), models...)
-	sort.Strings(out)
-	return out, nil
+	return out
 }
 
 // exampleModel picks a representative model for setup snippets: the first

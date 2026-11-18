@@ -291,14 +291,13 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	lists := make([]catalog, 0, len(all))
 	failures := 0
-	for _, b := range all {
-		models, err := s.backendCatalog(r.Context(), b)
-		if err != nil {
+	for i, lookup := range s.catalogsFor(r.Context(), all) {
+		if lookup.err != nil {
 			failures++
-			s.logCatalogFailure(r.Context(), b.Name(), err)
+			s.logCatalogFailure(r.Context(), all[i].Name(), lookup.err)
 			continue
 		}
-		lists = append(lists, catalog{name: b.Name(), models: models})
+		lists = append(lists, catalog{name: all[i].Name(), models: lookup.models})
 	}
 	if failures > 0 && failures == len(all) {
 		writeOpenAIError(w, http.StatusBadGateway, "api_error", "all backend catalogs are unavailable")

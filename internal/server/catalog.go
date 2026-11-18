@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -205,6 +206,11 @@ func (s *Server) backendCatalog(ctx context.Context, b backend.Backend) ([]strin
 	return s.catalog(ctx, b)
 }
 
+// get returns b's catalog. A fresh entry is returned as is. A stale entry
+// still within catalogMaxStaleness is returned immediately while one detached
+// refresh runs in the background, so callers never wait on an upstream
+// /models endpoint for a catalog they already have. Cold and over-age entries
+// refresh synchronously, owned by the calling request.
 func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.FieldLogger) ([]string, error) {
 	name := b.Name()
 	for {
@@ -223,6 +229,7 @@ func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.Fi
 		}
 		cached, ok := c.entries[name]
 		failed, held := c.failures[name]
+		running := c.refresh[name]
 		switch classifyCatalog(cached, ok, failed, held, time.Now()) {
 		case catalogFresh:
 			c.mu.Unlock()
@@ -230,8 +237,16 @@ func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.Fi
 		case catalogFailedHeld:
 			c.mu.Unlock()
 			return nil, failed.err
+		case catalogStaleServable:
+			if running == nil {
+				running = newCatalogRefresh()
+				c.refresh[name] = running
+				go c.refreshInBackground(ctx, b, log, running, cached)
+			}
+			c.mu.Unlock()
+			return cached.models, nil
 		}
-		if running := c.refresh[name]; running != nil {
+		if running != nil {
 			c.mu.Unlock()
 			select {
 			case <-ctx.Done():
@@ -246,32 +261,86 @@ func (c *catalogCache) get(ctx context.Context, b backend.Backend, log logrus.Fi
 			}
 			return running.models, running.err
 		}
-		running := newCatalogRefresh()
+		running = newCatalogRefresh()
 		c.refresh[name] = running
 		c.mu.Unlock()
-		// Also release waiters if provider code panics. The panic continues
-		// to the caller; the attempt is abandoned unless a result was published.
-		defer func() {
-			c.mu.Lock()
-			delete(c.refresh, name)
-			running.finish()
-			c.mu.Unlock()
-		}()
-
 		// The initiating request owns this synchronous fetch. Cancellation
 		// never detaches provider work from the request that started it.
-		models, err := c.fetch(ctx, b, log, cached, ok)
-		running.publish(models, err, ctx.Err() != nil)
-		if running.err != nil && !running.shouldRetry() && !ok {
-			c.mu.Lock()
-			if c.failures == nil {
-				c.failures = make(map[string]catalogFailure)
-			}
-			c.failures[name] = catalogFailure{err: running.err, until: time.Now().Add(catalogFailureTTL)}
-			c.mu.Unlock()
-		}
-		return running.models, running.err
+		return c.runRefresh(ctx, b, log, running, cached, ok)
 	}
+}
+
+// catalogBackgroundRefreshTimeout bounds a stale-while-revalidate refresh,
+// which outlives the request that triggered it.
+const catalogBackgroundRefreshTimeout = 30 * time.Second
+
+// refreshInBackground revalidates a stale-servable entry detached from the
+// triggering request. A provider panic is logged instead of crashing the
+// process; waiters are released either way.
+func (c *catalogCache) refreshInBackground(ctx context.Context, b backend.Backend, log logrus.FieldLogger, running *catalogRefresh, cached cachedCatalog) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), catalogBackgroundRefreshTimeout)
+	defer cancel()
+	defer func() {
+		if r := recover(); r != nil {
+			log.WithField("backend", b.Name()).WithField("panic", r).Error("background catalog refresh panicked")
+		}
+	}()
+	_, _ = c.runRefresh(ctx, b, log, running, cached, true)
+}
+
+// runRefresh performs one claimed refresh attempt, publishes its result to
+// waiters, and holds a failure when there is no entry to fall back on.
+func (c *catalogCache) runRefresh(ctx context.Context, b backend.Backend, log logrus.FieldLogger, running *catalogRefresh, cached cachedCatalog, hasCached bool) ([]string, error) {
+	name := b.Name()
+	// Also release waiters if provider code panics. The panic continues to
+	// the caller; the attempt is abandoned unless a result was published.
+	defer func() {
+		c.mu.Lock()
+		delete(c.refresh, name)
+		running.finish()
+		c.mu.Unlock()
+	}()
+	models, err := c.fetch(ctx, b, log, cached, hasCached)
+	running.publish(models, err, ctx.Err() != nil)
+	if running.err != nil && !running.shouldRetry() && !hasCached {
+		c.mu.Lock()
+		if c.failures == nil {
+			c.failures = make(map[string]catalogFailure)
+		}
+		c.failures[name] = catalogFailure{err: running.err, until: time.Now().Add(catalogFailureTTL)}
+		c.mu.Unlock()
+	}
+	return running.models, running.err
+}
+
+// catalogsFor looks up several backends' catalogs concurrently, preserving
+// order; one slow backend no longer serializes the others.
+func (s *Server) catalogsFor(ctx context.Context, bs []backend.Backend) []catalogLookup {
+	out := make([]catalogLookup, len(bs))
+	var wg sync.WaitGroup
+	for i, b := range bs {
+		wg.Go(func() {
+			models, err := s.catalog(ctx, b)
+			out[i] = catalogLookup{models: models, err: err}
+		})
+	}
+	wg.Wait()
+	return out
+}
+
+type catalogLookup struct {
+	models []string
+	err    error
+}
+
+// sorted returns a sorted copy of the models, leaving the shared cache intact.
+func (l catalogLookup) sorted() ([]string, error) {
+	if l.err != nil {
+		return nil, l.err
+	}
+	out := slices.Clone(l.models)
+	slices.Sort(out)
+	return out, nil
 }
 
 func (c *catalogCache) fetch(ctx context.Context, b backend.Backend, log logrus.FieldLogger, cached cachedCatalog, hasCached bool) ([]string, error) {

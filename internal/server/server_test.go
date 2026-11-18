@@ -244,8 +244,6 @@ func TestCatalogServesStaleWithinCap(t *testing.T) {
 	fb := &fakeBackend{name: "fakeoa", err: errors.New("upstream down")}
 	s := newTestServer(t, []backend.Backend{fb}, config.BackendConfig{Type: "fakeoa"})
 
-	cb := &countingBackend{Backend: fb}
-
 	// Inject an entry fetched 6 minutes ago (expired 5 minutes ago with the
 	// 1-minute TTL): within the 10-minute cap.
 	s.catalogs.mu.Lock()
@@ -256,12 +254,11 @@ func TestCatalogServesStaleWithinCap(t *testing.T) {
 	}
 	s.catalogs.mu.Unlock()
 
-	got, err := s.catalog(context.Background(), cb)
+	// The stale entry is served without waiting; revalidation runs in the
+	// background (covered by TestCatalogStaleWhileRevalidate).
+	got, err := s.catalog(context.Background(), fb)
 	if err != nil {
 		t.Fatalf("catalog() unexpected error: %v", err)
-	}
-	if cb.calls != 1 {
-		t.Errorf("Models() calls = %d, want 1", cb.calls)
 	}
 	if len(got) != 1 || got[0] != "stale-model" {
 		t.Errorf("catalog() = %v, want [stale-model] (serve stale within cap)", got)

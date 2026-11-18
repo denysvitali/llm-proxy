@@ -24,29 +24,18 @@ func (s *Server) handleGrokUsage(w http.ResponseWriter, r *http.Request) {
 
 var errUsageUnavailable = errors.New("grok account usage is unavailable")
 
-func (s *Server) grokUsageMetadata(r *http.Request) usageMetadata {
-	configured := false
+// grokUsageMetadata is local so an account-service outage cannot delay the
+// dashboard shell; the usage card reports read failures itself.
+func (s *Server) grokUsageMetadata() usageMetadata {
 	for _, bc := range s.cfg.Backends {
-		if bc.Type != grokUsageBackendName || !bc.IsEnabled() {
-			continue
+		if bc.Type == grokUsageBackendName && bc.IsEnabled() {
+			if s.accounts.Grok == nil || !s.accounts.Grok.HasSession() {
+				return usageUnavailable.metadata("")
+			}
+			return usageAvailable.metadata("")
 		}
-		configured = true
-		break
 	}
-	if !configured {
-		return usageUnconfigured.metadata("")
-	}
-	if s.accounts.Grok == nil || !s.accounts.Grok.HasSession() {
-		return usageUnavailable.metadata("")
-	}
-	usage, err := s.grokUsageCache.get(r.Context(), false)
-	if err != nil {
-		return usageUnavailable.metadata(sanitizeUsageError(err))
-	}
-	if !usage.Available {
-		return usageUnavailable.metadata("")
-	}
-	return usageAvailable.metadata("")
+	return usageUnconfigured.metadata("")
 }
 
 func grokUsageBaseURL(backends []config.BackendConfig) string {

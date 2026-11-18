@@ -30,27 +30,16 @@ func (s *Server) handleZcodeUsage(w http.ResponseWriter, r *http.Request) {
 var errZcodeUsageUnavailable = errors.New("ZCode account usage is unavailable")
 
 // zcodeUsageMetadata reports whether the dashboard should render the ZCode
-// plan usage card. Like the grok metadata, it carries only presence and a
-// sanitized failure reason — never the upstream response.
-func (s *Server) zcodeUsageMetadata(r *http.Request) usageMetadata {
-	configured := false
+// plan usage card. It is local, like the grok metadata: the card's own quota
+// request surfaces upstream failures without delaying the dashboard shell.
+func (s *Server) zcodeUsageMetadata() usageMetadata {
 	for _, bc := range s.cfg.Backends {
-		if bc.Type != zcodeUsageBackendName || !bc.IsEnabled() {
-			continue
+		if bc.Type == zcodeUsageBackendName && bc.IsEnabled() {
+			if s.accounts.ZCode == nil || !s.accounts.ZCode.HasSession() {
+				return usageUnavailable.metadata("")
+			}
+			return usageAvailable.metadata("")
 		}
-		configured = true
-		break
 	}
-	if !configured {
-		return usageUnconfigured.metadata("")
-	}
-	if s.accounts.ZCode == nil || !s.accounts.ZCode.HasSession() {
-		return usageUnavailable.metadata("")
-	}
-	// The dashboard consumes quota, which also includes plans. Share that
-	// cached snapshot with its subsequent quota request.
-	if _, err := s.zcodeUsageCache.quota(r.Context()); err != nil {
-		return usageUnavailable.metadata(err.Error())
-	}
-	return usageAvailable.metadata("")
+	return usageUnconfigured.metadata("")
 }
