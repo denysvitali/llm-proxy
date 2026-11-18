@@ -128,7 +128,7 @@ func TestAnthropicOpenAIControlBoundaries(t *testing.T) {
 		if responses {
 			convert = ToResponses
 		}
-		for _, field := range []string{`"top_k":1`, `"thinking":{"budget_tokens":8}`, `"output_config":{"format":{"type":"json_schema"}}`, `"output_config":{"effort":"extreme"}`, `"safeguards":{"example":true}`, `"tools":[{"name":"f","input_examples":[{}]}]`, `"tool_choice":{"type":"banana"}`, `"tool_choice":{"type":"tool"}`} {
+		for _, field := range []string{`"top_k":1`, `"thinking":{"budget_tokens":8}`, `"output_config":{"format":{"type":"json_schema"}}`, `"output_config":{"effort":"extreme"}`, `"unknown_control":{"example":true}`, `"tools":[{"name":"f","input_examples":[{}]}]`, `"tool_choice":{"type":"banana"}`, `"tool_choice":{"type":"tool"}`} {
 			req, err := ParseRequest([]byte(`{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` + field + `}`))
 			if err != nil {
 				t.Fatal(err)

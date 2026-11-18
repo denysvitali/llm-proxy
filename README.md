@@ -926,12 +926,15 @@ base64 data with an explicit media type.
 
 Tool choices map `auto`/`any`/`none`/named `tool`, with explicit
 `disable_parallel_tool_use` inverted into `parallel_tool_calls`. Chat retains
-stop sequences; Responses rejects nonempty stop sequences. `top_k`, `safeguards`,
-and unsupported tool or request fields are rejected rather than dropped. The
+stop sequences; Responses rejects nonempty stop sequences. `top_k` and
+unsupported tool or request fields are rejected rather than dropped. The
 controls Claude Code sends on every turn degrade gracefully instead:
 `output_config.effort` maps to the OpenAI reasoning effort (`max` becomes
-`high`), while `thinking`, `metadata`, and `context_management` are accepted
-and dropped. `output_config.format` still requires a native Messages route.
+`high`), while `thinking`, `metadata`, `context_management`, and `safeguards`
+are accepted and dropped. `safeguards` (sent in auto permission mode) feeds
+Anthropic's server-side tool-use classifier, which no OpenAI backend runs;
+Claude Code itself resends the turn without it after three rejections, so
+rejecting it only added failed round trips. `output_config.format` still requires a native Messages route.
 Thinking budgets are never guessed as reasoning effort. These boundaries do not
 modify native Messages requests.
 

@@ -14,10 +14,13 @@ func validateAnthropicTranslation(request *Request, responses bool) ([]Anthropic
 		switch name {
 		case "model", "max_tokens", "messages", "system", "temperature", "top_p", "stop_sequences", "stream", "tools", "tool_choice":
 			continue
-		case "metadata", "context_management", "thinking", "output_config":
-			// Claude Code sends these on every turn. metadata is telemetry and
-			// context_management asks for server-side history edits; neither
-			// changes what the backend should compute, so both are dropped.
+		case "metadata", "context_management", "safeguards", "thinking", "output_config":
+			// Claude Code sends these on every turn. metadata is telemetry,
+			// context_management asks for server-side history edits, and
+			// safeguards (auto permission mode) is context for Anthropic's
+			// server-side tool-use classifier — including local paths that
+			// should not reach a third party anyway. None changes what the
+			// backend should compute, so all three are dropped.
 			// thinking only gates whether reasoning is surfaced (WantsThinking)
 			// and output_config is validated and mapped by anthropicEffort.
 			// A graceful loss beats failing the turn, as on the Codex path.

@@ -105,7 +105,7 @@ func TestClaudeCodeControlsToOpenAIChat(t *testing.T) {
 	for effort, want := range map[string]string{"low": "low", "medium": "medium", "high": "high", "max": "high"} {
 		req, err := ParseRequest([]byte(`{"model":"m","max_tokens":64,"thinking":{"type":"enabled","budget_tokens":1024},` +
 			`"output_config":{"effort":"` + effort + `"},"metadata":{"user_id":"u"},"context_management":{"edits":[]},` +
-			`"messages":[{"role":"user","content":"hi"}]}`))
+			`"safeguards":[{"type":"dangerous_tool_use","classifier_context":{"v":1,"permission_mode":"auto","live_cwd":"/w"}}],"messages":[{"role":"user","content":"hi"}]}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func TestClaudeCodeControlsToOpenAIChat(t *testing.T) {
 		if string(got["reasoning_effort"]) != `"`+want+`"` {
 			t.Fatalf("effort %s: reasoning_effort = %s", effort, got["reasoning_effort"])
 		}
-		for _, key := range []string{"metadata", "context_management", "output_config", "thinking"} {
+		for _, key := range []string{"metadata", "context_management", "safeguards", "output_config", "thinking"} {
 			if _, ok := got[key]; ok {
 				t.Fatalf("%s forwarded: %s", key, encoded)
 			}

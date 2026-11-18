@@ -311,13 +311,13 @@ func TestToResponses(t *testing.T) {
 			name: "claude code controls degrade gracefully",
 			request: `{"model":"m","max_tokens":64,"thinking":{"type":"adaptive"},"output_config":{"effort":"max"},` +
 				`"metadata":{"user_id":"u"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},` +
-				`"messages":[{"role":"user","content":"Puzzle"}]}`,
+				`"safeguards":[{"type":"dangerous_tool_use","classifier_context":{"v":1,"permission_mode":"auto","live_cwd":"/w"}}],"messages":[{"role":"user","content":"Puzzle"}]}`,
 			check: func(t *testing.T, out map[string]any) {
 				reasoning := jmap(t, out["reasoning"], "reasoning")
 				if got := jstr(t, reasoning["effort"]); got != "high" {
 					t.Fatalf("effort = %q", got)
 				}
-				for _, key := range []string{"metadata", "context_management", "output_config", "thinking"} {
+				for _, key := range []string{"metadata", "context_management", "safeguards", "output_config", "thinking"} {
 					if _, ok := out[key]; ok {
 						t.Fatalf("%s forwarded: %v", key, out)
 					}
