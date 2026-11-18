@@ -28,6 +28,7 @@ type Server struct {
 	catalogs         catalogCache
 	grokUsageCache   *grokUsageCache
 	zcodeUsageCache  *zcodeUsageCache
+	minimaxUsage     *minimaxUsageCache
 	openDesignUsage  *openDesignUsageCache // nil without a usage key
 }
 
@@ -87,6 +88,7 @@ func NewWithDependencies(deps Dependencies) *Server {
 		catalogs:         newCatalogCache(),
 		grokUsageCache:   newGrokUsageCache(deps.Accounts.Grok, grokUsageBaseURL(cfg.Backends)),
 		zcodeUsageCache:  newZcodeUsageCache(deps.Accounts.ZCode),
+		minimaxUsage:     newMiniMaxUsageCache(deps.Accounts.MiniMaxCode),
 		openDesignUsage:  newOpenDesignUsageCache(cfg.Backends),
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
@@ -47,31 +46,15 @@ func (s *Server) handleMiniMaxCodeUsage(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	var view minimaxUsageView
-	var accountErr, checkinErr error
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		account, err := s.accounts.MiniMaxCode.Account(ctx)
-		if err != nil {
-			accountErr = err
-			view.AccountError = "MiniMax credits and Token Plan information are temporarily unavailable."
-			return
-		}
-		view.Account = account
-	}()
-	go func() {
-		defer wg.Done()
-		panel, err := s.accounts.MiniMaxCode.CheckinStatus(ctx)
-		if err != nil {
-			checkinErr = err
-			view.CheckinError = "MiniMax check-in status is temporarily unavailable."
-			return
-		}
-		view.Checkin = panel
-	}()
-	wg.Wait()
+	read := s.minimaxUsage.read(ctx)
+	view := minimaxUsageView{Account: read.account, Checkin: read.checkin}
+	accountErr, checkinErr := read.accountErr, read.checkinErr
+	if accountErr != nil {
+		view.AccountError = "MiniMax credits and Token Plan information are temporarily unavailable."
+	}
+	if checkinErr != nil {
+		view.CheckinError = "MiniMax check-in status is temporarily unavailable."
+	}
 	view.FetchedAt = time.Now().UTC()
 	// Independent account services can fail separately; keep the usable portion.
 	result := classifyMiniMaxUsage(view.Account != nil, view.Checkin != nil, accountErr, checkinErr)
@@ -147,6 +130,9 @@ func (s *Server) handleMiniMaxCodeCheckin(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	claim, err := s.accounts.MiniMaxCode.ClaimCheckin(ctx)
+	// Even a failed response may follow a submitted claim; the next read must
+	// not reuse a pre-attempt check-in panel or credit balance.
+	s.minimaxUsage.invalidate()
 	if err != nil {
 		status := http.StatusBadGateway
 		message := "MiniMax check-in could not be confirmed. Refresh the status before trying again."

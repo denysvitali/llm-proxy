@@ -98,6 +98,10 @@ func TestMiniMaxAccountEndpoints(t *testing.T) {
 	if claims.Load() != 0 {
 		t.Fatal("usage read must never claim credits")
 	}
+	cachedReads := reads.Load()
+	if rec := request(http.MethodGet, "/api/minimax-code/usage"); rec.Code != http.StatusOK || reads.Load() != cachedReads {
+		t.Fatalf("repeat usage read must be served from cache: %d, upstream reads %d -> %d", rec.Code, cachedReads, reads.Load())
+	}
 	crossSite := httptest.NewRequest(http.MethodPost, "/api/minimax-code/checkin", nil)
 	crossSite.Header.Set("Origin", "https://unrelated.example")
 	rec = httptest.NewRecorder()
@@ -109,12 +113,19 @@ func TestMiniMaxAccountEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK || claims.Load() != 1 || !strings.Contains(rec.Body.String(), `"points":200`) {
 		t.Fatalf("claim: %d %s, posts=%d", rec.Code, rec.Body.String(), claims.Load())
 	}
+	// The claim invalidated both snapshots, so this read reaches upstream.
 	failAccount.Store(true)
 	rec = request(http.MethodGet, "/api/minimax-code/usage")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"accountError"`) || !strings.Contains(rec.Body.String(), `"checkin"`) {
 		t.Fatalf("partial failure: %d %s", rec.Code, rec.Body.String())
 	}
+	// A failed half is not cached; the good half stays served until it
+	// expires. Expire it to observe a total failure.
+	if rec := request(http.MethodGet, "/api/minimax-code/usage"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"checkin"`) {
+		t.Fatalf("cached half lost after partial failure: %d %s", rec.Code, rec.Body.String())
+	}
 	failCheckin.Store(true)
+	s.minimaxUsage.invalidate()
 	rec = request(http.MethodGet, "/api/minimax-code/usage")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("total failure: %d %s", rec.Code, rec.Body.String())

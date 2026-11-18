@@ -32,6 +32,8 @@ func (s *Server) minimaxCodeLogin(w http.ResponseWriter, r *http.Request) {
 	case loginFailed:
 		_, _ = fmt.Fprintf(w, `</div><p class="err">Sign-in failed: %s</p><p><a href="/login/minimax-code">Try again</a> · <a href="/">Dashboard</a></p></section></main></body></html>`, html.EscapeString(err.Error()))
 	case loginSucceeded:
+		// The new session may belong to a different account.
+		s.minimaxUsage.invalidate()
 		_, _ = fmt.Fprint(w, `</div><p class="ok">Sign-in successful. MiniMax Code is ready.</p><p><a href="/">Open dashboard</a></p></section></main></body></html>`)
 	default:
 		return
