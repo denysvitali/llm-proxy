@@ -410,7 +410,15 @@ func (s *Server) exchange(
 			log.WithField("upstream_status", resp.Status).Warn("upstream server error; falling back")
 			return finish(failedExchange("upstream server error"))
 		}
-		dialect.relayError(w, resp)
+		log.WithFields(logrus.Fields{
+			"upstream_status": resp.Status,
+			"upstream_error":  tr.errMsg,
+		}).Warn("upstream rejected the request; relaying to client")
+		if wire.native {
+			dialect.relayError(w, resp)
+		} else {
+			tr.noteClientResponse(shape.FromBytes(relayTranslatedUpstreamError(w, dialect, resp, errBody)))
+		}
 		return relayedRejection(fmt.Sprintf("upstream returned HTTP %d", resp.Status))
 	}
 

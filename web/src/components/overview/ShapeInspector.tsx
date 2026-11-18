@@ -136,6 +136,7 @@ function Hop({
   shows,
   body,
   changes,
+  error,
 }: {
   title: string
   fromLabel: string
@@ -145,6 +146,9 @@ function Hop({
   shows: string
   body: ShapeBody | undefined
   changes?: DiffReport
+  // error is the attempt's failure summary, shown above the tree on the
+  // response hops so a rejected request reads as what the upstream said.
+  error?: string
 }) {
   const lines = useMemo(() => bodyLines(body, changes), [body, changes])
   return (
@@ -160,6 +164,7 @@ function Hop({
       </Accordion.Control>
       <Accordion.Panel>
         <Stack gap={6}>
+          {error && <Alert color="red" variant="light" p="xs"><Text size="xs" style={{ overflowWrap: 'anywhere' }}>{error}</Text></Alert>}
           <Text size="xs" c="dimmed">
             {changes ? `Showing the ${shows}; marks compare it against what came before.` : `Showing the ${shows}.`}
           </Text>
@@ -173,7 +178,7 @@ function Hop({
 // ShapeInspector renders all four sides of an attempt so the conversion is
 // auditable end to end: client request, forwarded request, upstream response,
 // relayed response. The two produced sides carry the per-hop diffs.
-export function ShapeInspector({ detail }: { detail: ShapeDetail }) {
+export function ShapeInspector({ detail, error }: { detail: ShapeDetail; error?: string }) {
   const trace = detail.shapes
   if (!trace || (!trace.request_client && !trace.request_upstream && !trace.response_upstream && !trace.response_client)) {
     return <Alert color="gray" variant="light">No structure was recorded for this attempt.</Alert>
@@ -208,6 +213,7 @@ export function ShapeInspector({ detail }: { detail: ShapeDetail }) {
         toLabel={`client · ${clientWire}`}
         shows="body the upstream returned"
         body={trace.response_upstream}
+        error={error}
       />
       <Hop
         title="Response"
@@ -216,6 +222,7 @@ export function ShapeInspector({ detail }: { detail: ShapeDetail }) {
         shows="relayed response body"
         body={trace.response_client}
         changes={trace.response_changes}
+        error={error}
       />
     </Accordion>
   )

@@ -15,20 +15,29 @@ import (
 
 // clientDialect holds the inbound-API-specific answers: how errors are
 // phrased when no upstream response exists, how a non-2xx upstream response
-// is passed on, and how a mid-stream break is surfaced as the protocol's
+// is passed on (verbatim on a native wire, re-enveloped by errorBody on a
+// translated one), and how a mid-stream break is surfaced as the protocol's
 // in-band failure once content has already been forwarded.
 type clientDialect struct {
 	writeError    func(w http.ResponseWriter, status int, errType, message string)
 	relayError    func(w http.ResponseWriter, resp *backend.Response)
+	errorBody     func(status int, message string) any
 	surfaceStream func(w http.ResponseWriter, message string)
 }
 
-func anthropicDialect(relay func(w http.ResponseWriter, resp *backend.Response)) clientDialect {
+func anthropicDialect() clientDialect {
 	return clientDialect{
-		writeError:    writeAnthropicError,
-		relayError:    relay,
+		writeError: writeAnthropicError,
+		relayError: relayAnthropicUpstreamError,
+		errorBody: func(status int, message string) any {
+			return anthropicErrorBody{Type: "error", Error: anthropicErrorObj{Type: anthropicErrorType(status), Message: message}}
+		},
 		surfaceStream: emitAnthropicStreamFailure,
 	}
+}
+
+func openAIErrorEnvelope(status int, message string) any {
+	return openAIErrorBody{Error: openAIErrorObj{Message: message, Type: openAIErrorType(status)}}
 }
 
 // openAIDialect serves chat-completions clients; openAIResponsesDialect
@@ -38,6 +47,7 @@ func openAIDialect() clientDialect {
 	return clientDialect{
 		writeError:    writeOpenAIError,
 		relayError:    relayOpenAIUpstreamError,
+		errorBody:     openAIErrorEnvelope,
 		surfaceStream: emitChatStreamFailure,
 	}
 }
@@ -46,6 +56,7 @@ func openAIResponsesDialect() clientDialect {
 	return clientDialect{
 		writeError:    writeOpenAIError,
 		relayError:    relayOpenAIUpstreamError,
+		errorBody:     openAIErrorEnvelope,
 		surfaceStream: emitResponsesStreamFailure,
 	}
 }
@@ -102,6 +113,27 @@ func emitResponsesStreamFailure(w http.ResponseWriter, message string) {
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+// relayTranslatedUpstreamError answers a non-2xx upstream reply that came
+// back on a different wire than the client speaks: the upstream's own message
+// is kept, but re-enveloped in the client's error shape so its SDK can parse
+// it. It returns the bytes written, for the response shape trace.
+func relayTranslatedUpstreamError(w http.ResponseWriter, dialect clientDialect, resp *backend.Response, upstreamBody []byte) []byte {
+	message := upstreamErrorText(upstreamBody)
+	if message == "" {
+		message = fmt.Sprintf("upstream request failed with status %d", resp.Status)
+	}
+	data, err := json.Marshal(dialect.errorBody(resp.Status, message))
+	if err != nil {
+		return nil
+	}
+	copyUpstreamRetryAfter(w.Header(), resp.Header)
+	copyUpstreamRequestID(w.Header(), resp.Header)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.Status)
+	_, _ = w.Write(data)
+	return data
 }
 
 // kindName labels an inbound API in client-facing error messages.

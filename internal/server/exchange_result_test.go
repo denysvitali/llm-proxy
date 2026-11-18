@@ -74,7 +74,7 @@ func TestExchangeFailureDeliveryAndTrace(t *testing.T) {
 					}
 					rec := httptest.NewRecorder()
 					req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-					result := s.exchange(rec, req, msgQuietLogger(), rt, anthropicDialect(nil), wire,
+					result := s.exchange(rec, req, msgQuietLogger(), rt, anthropicDialect(), wire,
 						[]byte(`{"model":"upstream-m1"}`), http.Header{},
 						translateEnv{kind: backend.KindAnthropic, clientModel: "m1", streaming: tc.streaming}, final)
 					if result.outcome != exchangeFailed || result.committed != final || result.fallbackEligible == final {

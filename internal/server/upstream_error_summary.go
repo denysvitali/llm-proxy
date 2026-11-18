@@ -23,13 +23,20 @@ type wireErrorObj struct {
 	Code    any    `json:"code"`
 }
 
-// upstreamErrorSummary extracts a short human-readable message from an
-// upstream error body, recognizing the JSON shapes providers actually send:
-// Anthropic {"error":{...}}, OpenAI chat/responses {"error":{...}} (code may
-// be a string or number), and flat gateways {"message": ...}. Anything else —
-// HTML interstitials, plain text, unknown envelopes — falls back to a bounded
-// snippet of raw text so operators still see *something* of what came back.
+// upstreamErrorSummary is upstreamErrorText bounded for stats, logs, and the
+// recent-errors ring.
 func upstreamErrorSummary(body []byte) string {
+	return truncateMessage(upstreamErrorText(body))
+}
+
+// upstreamErrorText extracts the human-readable message from an upstream
+// error body, recognizing the JSON shapes providers actually send: Anthropic
+// {"error":{...}}, OpenAI chat/responses {"error":{...}} (code may be a
+// string or number), and flat gateways {"message": ...}. Anything else —
+// HTML interstitials, plain text, unknown envelopes — falls back to the first
+// line of raw text so operators still see *something* of what came back.
+// The result is unbounded apart from the relay cap on the body itself.
+func upstreamErrorText(body []byte) string {
 	body = normalizeBodyBytes(body)
 	if len(body) == 0 {
 		return ""
@@ -45,18 +52,17 @@ func upstreamErrorSummary(body []byte) string {
 			if code := errorCode(probe.Error.Code); code != "" {
 				msg = code + ": " + msg
 			}
-			return truncateMessage(msg)
+			return msg
 		case probe.Error != nil && probe.Error.Type != "":
-			return truncateMessage(probe.Error.Type)
+			return probe.Error.Type
 		case probe.Message != "":
-			return truncateMessage(probe.Message)
+			return probe.Message
 		}
 	}
 	if summary := htmlErrorSummary(body); summary != "" {
-		return truncateMessage(summary)
+		return summary
 	}
-	text := firstLine(string(body))
-	return truncateMessage(text)
+	return firstLine(string(body))
 }
 
 var (

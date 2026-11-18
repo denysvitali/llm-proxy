@@ -651,7 +651,7 @@ Free models such as `opencode-zen/mimo-v2.6-flash-free` can therefore be used
 through the proxy from any client (including `claude` or plain HTTP) without
 seeing **403: OpenCode's free tier can only be used from within OpenCode**.
 If Zen still returns that 403 (for example after a gate change), the proxy
-relays the provider error verbatim rather than masking it.
+relays the provider's status and message rather than masking it.
 
 The anonymous adapter above applies to Chat Completions and Messages models.
 Responses models are forwarded with the caller's stream mode and require
@@ -1180,8 +1180,12 @@ a spent retry budget, or a server-side 5xx. A transient upstream failure
 provider's short-lived internal fault — for example Open Design's
 `failed to evaluate membership entitlement` — never reaches the client as a
 500; only an outcome that stays broken for the whole budget moves the request
-to the next backend. 4xx and 501 are relayed as-is instead: they are the
-upstream's answer for this request, not an outage. Once streaming content has
+to the next backend. 4xx and 501 are relayed instead: they are the
+upstream's answer for this request, not an outage. The status and
+`Retry-After` are kept; the body passes through verbatim on a native wire and
+is re-enveloped in the client's error shape (keeping the provider's code and
+message) when the backend speaks another API. Every relayed rejection is
+logged at warning level and shown in the dashboard's request inspector. Once streaming content has
 flowed, a break is surfaced in-band instead of retried; replaying on another
 backend would duplicate output. Responses failures with `code: "cyber_policy"`
 are definitive rejections, not transient gateway failures: they return HTTP

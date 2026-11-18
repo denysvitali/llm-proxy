@@ -59,22 +59,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		clientModel: envelope.Model,
 		streaming:   envelope.Stream,
 	}
-	s.exchangeChain(w, r, log, chain, anthropicDialect(func(w http.ResponseWriter, resp *backend.Response) {
-		s.relayUpstreamError(w, log, resp)
-	}), env)
+	s.exchangeChain(w, r, log, chain, anthropicDialect(), env)
 }
 
-// relayUpstreamError forwards a non-2xx upstream response to the client: the
-// upstream body verbatim (capped at maxErrorRelay) when there is one, an
-// Anthropic-shaped error derived from the status otherwise.
-func (s *Server) relayUpstreamError(w http.ResponseWriter, log logrus.FieldLogger, resp *backend.Response) {
+// relayAnthropicUpstreamError forwards a non-2xx native upstream response to
+// the client: the upstream body verbatim (capped at maxErrorRelay) when there
+// is one, an Anthropic-shaped error derived from the status otherwise.
+func relayAnthropicUpstreamError(w http.ResponseWriter, resp *backend.Response) {
 	copyUpstreamRetryAfter(w.Header(), resp.Header)
 	data, _ := readAll(resp.Body, maxErrorRelay)
-	log.WithFields(logrus.Fields{
-		"upstream_status": resp.Status,
-		"upstream_bytes":  len(data),
-	}).Debug("upstream returned an error response")
-
 	if len(data) > 0 {
 		if contentType := resp.Header.Get("Content-Type"); contentType != "" {
 			w.Header().Set("Content-Type", contentType)

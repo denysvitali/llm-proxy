@@ -302,7 +302,7 @@ function RequestDetail({ request }: { request: InspectedRequest }) {
       </Group>
       <Text size="xs" c="dimmed" className="overview-ident">Proxy request ID: {request.proxy_request_id || 'unavailable'} · wire format: {request.kind || 'unknown'}</Text>
       {request.error && <Alert color="red" variant="light">{request.error}</Alert>}
-      <ShapeSection query={shapeQuery} />
+      <ShapeSection query={shapeQuery} error={request.error} />
       <Alert color="blue" variant="light">
         Request payloads are not retained by the proxy, so prompts, tool inputs, and credentials cannot appear in dashboard history.
       </Alert>
@@ -310,7 +310,7 @@ function RequestDetail({ request }: { request: InspectedRequest }) {
   )
 }
 
-function ShapeSection({ query }: { query: { isPending: boolean; isError: boolean; data?: ShapeDetail } }) {
+function ShapeSection({ query, error }: { query: { isPending: boolean; isError: boolean; data?: ShapeDetail }; error?: string }) {
   if (query.isPending) {
     return <Group justify="center" py="sm" role="status"><Loader size="sm" aria-label="Loading recorded shapes" /></Group>
   }
@@ -319,5 +319,5 @@ function ShapeSection({ query }: { query: { isPending: boolean; isError: boolean
   if (query.isError || !query.data) {
     return <Alert color="gray" variant="light">No structure was recorded for this attempt.</Alert>
   }
-  return <ShapeInspector detail={query.data} />
+  return <ShapeInspector detail={query.data} error={error} />
 }
