@@ -900,9 +900,14 @@ other output shapes fail explicitly instead of being stringified.
 ### Messages → OpenAI boundaries
 
 Messages → Chat/Responses preserves string whitespace, empty text, and ordered
-text/image parts. System content becomes a leading system message, not a joined
-string. Tool-result text arrays remain arrays; missing result content means an
-empty string, while explicit null is rejected. Responses also accepts image
+text/image parts. System content becomes a leading system message. On Chat,
+content made only of text (system prompts, plain turns, tool results) is sent
+as one string with blocks joined by a blank line: strict Chat servers accept
+part arrays only for multimodal user content — Z.ai's GLM API, behind Open
+Design, rejects an array-valued system message with a 400 — and a string is
+valid everywhere. Content carrying an image keeps its parts; Responses keeps
+text arrays. Missing tool-result content means an empty string, while
+explicit null is rejected. Responses also accepts image
 results; Chat's text-only tool results do not. `is_error: true` is mapped to an
 explicit `[Tool execution failed]\n` text prefix (or initial text part), since
 OpenAI has no equivalent flag. This is a visible, non-reversible error annotation,

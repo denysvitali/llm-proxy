@@ -37,8 +37,8 @@ func TestToOpenAIDefersToolResultImages(t *testing.T) {
 	imagePart := map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}}
 	text := func(s string) map[string]any { return map[string]any{"type": "text", "text": s} }
 	want := []any{
-		map[string]any{"role": "tool", "tool_call_id": "a", "content": []any{text("file.png"), text(chatToolImageNote(1))}},
-		map[string]any{"role": "tool", "tool_call_id": "b", "content": []any{text(anthropicToolErrorPrefix), text(chatToolImageNote(1))}},
+		map[string]any{"role": "tool", "tool_call_id": "a", "content": "file.png\n\n" + chatToolImageNote(1)},
+		map[string]any{"role": "tool", "tool_call_id": "b", "content": anthropicToolErrorPrefix + "\n\n" + chatToolImageNote(1)},
 		map[string]any{"role": "user", "content": []any{
 			text("Images returned by tool call a:"), imagePart,
 			text("Images returned by tool call b:"), imagePart,
