@@ -82,3 +82,35 @@ func TestTranslatedUpstreamErrorIsReenvelopedAndInspected(t *testing.T) {
 		t.Fatalf("relayed error body shape not recorded: %+v", req.Shapes)
 	}
 }
+
+// TestTranslationRejectionIsInspected covers a request the proxy refuses
+// before dispatch: it never reaches the backend, yet the inspector and the
+// failure feed show why, with the client request's structure naming the
+// offending field — and the backend's request counters stay untouched.
+func TestTranslationRejectionIsInspected(t *testing.T) {
+	upstream := newScripted(backend.KindOpenAIChat)
+	s := newMsgServerWith(t, upstream)
+	rec := postMsg(t, s, "/v1/messages", `{"model":"m1","max_tokens":16,"unknown_control":{"x":true},"messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusBadRequest || upstream.callCount() != 0 {
+		t.Fatalf("status = %d, upstream calls = %d", rec.Code, upstream.callCount())
+	}
+	requests := s.stats.RecentRequests()
+	if len(requests) != 1 {
+		t.Fatalf("inspected requests = %d, want 1", len(requests))
+	}
+	req := requests[0]
+	if req.Status != statusRejected || !strings.Contains(req.Error, `"unknown_control"`) || req.Kind != string(backend.KindOpenAIChat) {
+		t.Fatalf("inspected = %+v", req)
+	}
+	if req.Shapes == nil || req.Shapes.RequestClient == nil || req.Shapes.RequestClient.Keys["unknown_control"] == nil {
+		t.Fatalf("client request shape missing the rejected field: %+v", req.Shapes)
+	}
+	if events := s.stats.RecentUpstreamErrors(); len(events) != 1 || events[0].Status != statusRejected {
+		t.Fatalf("failure feed = %+v", events)
+	}
+	for _, ms := range s.stats.models {
+		if ms.requests != 0 {
+			t.Fatalf("rejection counted as backend traffic: %+v", ms)
+		}
+	}
+}

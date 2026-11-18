@@ -4,6 +4,7 @@ export type Severity = 'good' | 'warning' | 'critical' | 'neutral'
 
 export function statusSeverity(status: string): Severity {
   if (status === 'error') return 'critical'
+  if (status === 'rejected') return 'warning'
   if (status.startsWith('5')) return 'critical'
   if (status.startsWith('4')) return 'warning'
   if (status.startsWith('2') || status.startsWith('3')) return 'good'
@@ -21,5 +22,6 @@ export function severityColor(severity: Severity): MantineColor {
 
 export function statusDescription(status: string): string {
   if (status === 'error') return 'No HTTP response from upstream'
+  if (status === 'rejected') return 'Refused by the proxy before reaching the backend'
   return `HTTP ${status}`
 }

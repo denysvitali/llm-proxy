@@ -358,3 +358,30 @@ func TestRedisActivitySharesShapeTraces(t *testing.T) {
 		t.Fatalf("shared shape detail: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A proxy-side rejection is shared through Redis like any failure, but adds
+// no model counters: nothing reached the backend.
+func TestSharedRejectionActivity(t *testing.T) {
+	mini := miniredis.RunT(t)
+	writer := activityStats(t, mini, "rejections:")
+	reader := activityStats(t, mini, "rejections:")
+	writer.recordRejection("provider", "model", "proxy-request", "openai-chat", "field \"x\" cannot be represented",
+		&ShapeTrace{ClientKind: "anthropic", RequestClient: shape.Infer([]byte(`{"x":1}`))})
+
+	requests, err := reader.recentRequests(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || requests[0].Status != statusRejected || requests[0].Shapes == nil {
+		t.Fatalf("shared requests = %+v", requests)
+	}
+	if keys := mini.Keys(); len(keys) == 0 {
+		t.Fatal("no shared activity written")
+	} else {
+		for _, key := range keys {
+			if strings.Contains(key, "model") {
+				t.Fatalf("rejection wrote model counters: %v", keys)
+			}
+		}
+	}
+}

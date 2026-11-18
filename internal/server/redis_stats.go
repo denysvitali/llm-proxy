@@ -142,6 +142,20 @@ func (r *redisStats) record(ctx context.Context, a completedAttempt, retentionDa
 	return r.commit(ctx, pipe, modelName, retentionDays, requestEvent(a.request))
 }
 
+// recordActivity shares an inspection/failure entry without touching any
+// model counter, for requests that never reached a backend.
+func (r *redisStats) recordActivity(ctx context.Context, a completedAttempt) error {
+	pipe := r.client.TxPipeline()
+	if err := r.queueActivity(ctx, pipe, a); err != nil {
+		return err
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	_, err := r.client.Publish(ctx, r.updatesKey(), requestEvent(a.request)).Result()
+	return err
+}
+
 func (r *redisStats) commit(ctx context.Context, pipe redis.Pipeliner, modelName string, retentionDays int, event []byte) error {
 	if retentionDays > 0 {
 		pipe.Expire(ctx, r.modelKey(modelName), time.Duration(retentionDays+1)*24*time.Hour)

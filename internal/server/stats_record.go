@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"time"
 )
@@ -63,21 +64,53 @@ func (st *Stats) recordAttempt(a completedAttempt) {
 	st.recordAttemptMemory(a)
 
 	a.request.At, a.request.Status, a.request.Error = a.at, a.status, a.message
-	st.recordRequest(a.request)
-	if !a.success {
-		st.recentMu.Lock()
-		st.recent = append(st.recent, a.errorEvent())
-		if n := len(st.recent); n > maxRecentErrors {
-			st.recent = st.recent[n-maxRecentErrors:]
-		}
-		st.recentMu.Unlock()
-	}
+	st.recordActivityLocal(a)
 	if st.storageMode() == storageShared {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		_ = st.redis.record(ctx, a, st.cfg.RetentionDays)
 		cancel()
 	}
 	st.updates.notify(requestEvent(a.request))
+}
+
+// recordRejection keeps a request the proxy refused before dispatching it
+// (no wire for the client API, or a request the translation cannot encode)
+// in the inspection and failure feeds. Nothing reached the backend, so it
+// stays out of the backend's request counters and uptime.
+func (st *Stats) recordRejection(backendName, model, proxyID, kind, message string, shapes *ShapeTrace) {
+	at := time.Now()
+	a := completedAttempt{
+		at: at, backend: backendName, model: model, status: statusRejected, message: truncateMessage(message),
+		request: InspectedRequest{
+			ID: rand.Text(), At: at, ProxyRequestID: proxyID, Backend: backendName, Model: model,
+			Kind: kind, Status: statusRejected, Error: truncateMessage(message),
+		},
+	}
+	if shapes.hasContent() {
+		a.request.Shapes = shapes
+	}
+	st.recordActivityLocal(a)
+	if st.storageMode() == storageShared {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = st.redis.recordActivity(ctx, a)
+		cancel()
+	}
+	st.updates.notify(requestEvent(a.request))
+}
+
+// recordActivityLocal appends a finished attempt to the process-local
+// inspection feed and, when it failed, to the recent-failures feed.
+func (st *Stats) recordActivityLocal(a completedAttempt) {
+	st.recordRequest(a.request)
+	if a.success {
+		return
+	}
+	st.recentMu.Lock()
+	st.recent = append(st.recent, a.errorEvent())
+	if n := len(st.recent); n > maxRecentErrors {
+		st.recent = st.recent[n-maxRecentErrors:]
+	}
+	st.recentMu.Unlock()
 }
 
 func (st *Stats) recordAttemptMetrics(a completedAttempt) {

@@ -115,6 +115,10 @@ const (
 // statusError labels requests that never reached an upstream HTTP response.
 const statusError = "error"
 
+// statusRejected marks a request the proxy refused before any upstream
+// dispatch; it appears in the inspection and failure feeds only.
+const statusRejected = "rejected"
+
 func newStats(reg *prometheus.Registry, cfg config.StatsConfig) *Stats {
 	if cfg.RedisURL != "" {
 		// Redis is the shared source of truth. Keeping a local JSON writer active
@@ -368,7 +372,7 @@ type UpstreamErrorEvent struct {
 	At        time.Time `json:"at"`
 	Backend   string    `json:"backend"`
 	Model     string    `json:"model"`
-	Status    string    `json:"status"` // HTTP code as text; "error" = no response at all
+	Status    string    `json:"status"` // HTTP code as text; "error" = no response at all, "rejected" = refused by the proxy before dispatch
 	Message   string    `json:"message,omitempty"`
 	RequestID string    `json:"request_id,omitempty"`
 }
