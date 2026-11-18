@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -149,5 +151,41 @@ func jsonResponse(status int, body string) *backend.Response {
 		Status: status,
 		Header: header,
 		Body:   io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// TestRelayTranslatedItemLimitGap checks that an item-limit rejection relayed
+// on a translated wire keeps the provider message and appends the parseable
+// compaction hint sized from the request payload.
+func TestRelayTranslatedItemLimitGap(t *testing.T) {
+	upstream := `{"error":{"code":"context_length_exceeded","message":"Input is too long: conversation history exceeds the limit on input items (1052 > 1000 items)."}}`
+	resp := &backend.Response{Status: http.StatusBadRequest, Header: http.Header{"Content-Type": []string{"application/json"}}}
+	payload := []byte(`{"model":"m","messages":[` + strings.Repeat(`{"role":"user","content":"x"},`, 999) + `{"role":"user","content":"end"}]}`) // ~11k bytes → ~3.7k tokens
+	rec := httptest.NewRecorder()
+	body := relayTranslatedUpstreamError(rec, anthropicDialect(), resp, []byte(upstream), estimateTokens(payload))
+	var relayed struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &relayed); err != nil {
+		t.Fatalf("decode relayed body: %v", err)
+	}
+	if !strings.Contains(relayed.Error.Message, "exceeds the limit on input items (1052 > 1000 items)") {
+		t.Fatalf("provider message missing: %s", relayed.Error.Message)
+	}
+	if !strings.Contains(relayed.Error.Message, "prompt is too long:") {
+		t.Fatalf("compaction hint missing: %s", relayed.Error.Message)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	// A rejection without an item-limit shape stays untouched.
+	plain := `{"error":{"message":"daily quota exhausted"}}`
+	rec2 := httptest.NewRecorder()
+	body2 := relayTranslatedUpstreamError(rec2, anthropicDialect(), resp, []byte(plain), estimateTokens(payload))
+	if !strings.Contains(string(body2), "daily quota exhausted") || strings.Contains(string(body2), "prompt is too long") {
+		t.Fatalf("non-item-limit message altered: %s", body2)
 	}
 }

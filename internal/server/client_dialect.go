@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/llm-proxy/internal/backend"
+	"github.com/denysvitali/llm-proxy/internal/translate"
 )
 
 // Client dialects own the response shapes understood by each client API.
@@ -118,9 +119,11 @@ func emitResponsesStreamFailure(w http.ResponseWriter, message string) {
 // relayTranslatedUpstreamError answers a non-2xx upstream reply that came
 // back on a different wire than the client speaks: the upstream's own message
 // is kept, but re-enveloped in the client's error shape so its SDK can parse
-// it. It returns the bytes written, for the response shape trace.
-func relayTranslatedUpstreamError(w http.ResponseWriter, dialect clientDialect, resp *backend.Response, upstreamBody []byte) []byte {
-	message := upstreamErrorText(upstreamBody)
+// it. It returns the bytes written, for the response shape trace. estimated
+// request tokens let an item-limit rejection carry a parseable drop target
+// (see translate.AppendItemLimitGap).
+func relayTranslatedUpstreamError(w http.ResponseWriter, dialect clientDialect, resp *backend.Response, upstreamBody []byte, estimatedTokens int) []byte {
+	message := translate.AppendItemLimitGap(upstreamErrorText(upstreamBody), estimatedTokens)
 	if message == "" {
 		message = fmt.Sprintf("upstream request failed with status %d", resp.Status)
 	}
@@ -134,6 +137,13 @@ func relayTranslatedUpstreamError(w http.ResponseWriter, dialect clientDialect, 
 	w.WriteHeader(resp.Status)
 	_, _ = w.Write(data)
 	return data
+}
+
+// estimateTokens applies the proxy's characters-over-three rule (the same one
+// count_tokens uses) to an outbound request payload. It feeds the item-limit
+// gap hint, where only the order of magnitude matters.
+func estimateTokens(payload []byte) int {
+	return (len(payload) + 2) / 3
 }
 
 // kindName labels an inbound API in client-facing error messages.

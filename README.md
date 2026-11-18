@@ -1202,7 +1202,12 @@ to the next backend. 4xx and 501 are relayed instead: they are the
 upstream's answer for this request, not an outage. The status and
 `Retry-After` are kept; the body passes through verbatim on a native wire and
 is re-enveloped in the client's error shape (keeping the provider's code and
-message) when the backend speaks another API. Every relayed rejection is
+message) when the backend speaks another API. Gateways that cap the number of
+history items rather than tokens — Open Design rejects beyond 1000 input
+items — get one appended hint in Claude Code's own vocabulary
+(`prompt is too long: N tokens > M tokens`), so its compaction drops enough
+history in one pass instead of exhausting its retry budget on 20%-per-attempt
+drops. Every relayed rejection is
 logged at warning level and shown in the dashboard's request inspector. Once streaming content has
 flowed, a break is surfaced in-band instead of retried; replaying on another
 backend would duplicate output. Responses failures with `code: "cyber_policy"`

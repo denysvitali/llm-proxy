@@ -428,7 +428,7 @@ func (s *Server) exchange(
 		if wire.native {
 			dialect.relayError(w, resp)
 		} else {
-			tr.noteClientResponse(shape.FromBytes(relayTranslatedUpstreamError(w, dialect, resp, errBody)))
+			tr.noteClientResponse(shape.FromBytes(relayTranslatedUpstreamError(w, dialect, resp, errBody, estimateTokens(payload))))
 		}
 		return relayedRejection(fmt.Sprintf("upstream returned HTTP %d", resp.Status))
 	}
