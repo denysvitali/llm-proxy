@@ -183,9 +183,6 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 	if len(converted.Messages) == 0 {
 		return nil, fmt.Errorf("request contains no messages")
 	}
-	for i := range converted.Messages {
-		converted.Messages[i].Content = flattenTextParts(converted.Messages[i].Content)
-	}
 
 	for _, tool := range request.Tools {
 		if tool.Name == "" {
@@ -210,40 +207,6 @@ func ToOpenAI(request *Request, model string) ([]byte, error) {
 	}
 
 	return json.Marshal(converted)
-}
-
-// flattenTextParts collapses content made only of text parts into one string.
-// Anthropic clients send block arrays everywhere (Claude Code's system prompt
-// is several text blocks), but strict Chat servers accept arrays only for
-// multimodal user content: Z.ai's GLM API, reached through gateways such as
-// Open Design, rejects an array-valued system message outright. A string is
-// valid for every role on every Chat server, so text-only content always
-// goes out as one; anything carrying an image keeps its parts.
-func flattenTextParts(content any) any {
-	data, ok := content.(json.RawMessage)
-	if !ok {
-		var err error
-		if data, err = json.Marshal(content); err != nil {
-			return content
-		}
-	}
-	if trimmed := bytes.TrimSpace(data); len(trimmed) == 0 || trimmed[0] != '[' {
-		return content
-	}
-	var parts []map[string]json.RawMessage
-	if json.Unmarshal(data, &parts) != nil || len(parts) == 0 {
-		return content
-	}
-	texts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		kind, _ := plainString(part["type"])
-		text, ok := plainString(part["text"])
-		if len(part) != 2 || kind != "text" || !ok {
-			return content
-		}
-		texts = append(texts, text)
-	}
-	return strings.Join(texts, "\n\n")
 }
 
 // translateMessage converts one Anthropic message into the one or more OpenAI

@@ -36,18 +36,14 @@ func TestClaudeCodeRequestToOpenAIChat(t *testing.T) {
 	if len(got.Messages) != 4 || got.Messages[0].Role != "system" {
 		t.Fatalf("translated messages = %#v", got.Messages)
 	}
-	if got.Messages[0].Content != "You are Claude Code.\n\nUse tools carefully." {
-		t.Fatalf("system content = %#v", got.Messages[0].Content)
-	}
+	assertContentBlocks(t, got.Messages[0].Content.([]any), []map[string]any{{"type": "text", "text": "You are Claude Code."}, {"type": "text", "text": "Use tools carefully."}})
 	if len(got.Messages[1].ToolCalls) != 1 || got.Messages[1].ToolCalls[0].Function.Name != "Read" || got.Messages[1].ToolCalls[0].Function.Arguments != `{"file_path":"/tmp/a"}` {
 		t.Fatalf("assistant tool call = %#v", got.Messages[1])
 	}
 	if got.Messages[2].Role != "tool" || got.Messages[2].ToolCallID != "toolu_1" {
 		t.Fatalf("tool result = %#v", got.Messages[2])
 	}
-	if got.Messages[2].Content != "line one\n\nline two" {
-		t.Fatalf("tool content = %#v", got.Messages[2].Content)
-	}
+	assertContentBlocks(t, got.Messages[2].Content.([]any), []map[string]any{{"type": "text", "text": "line one"}, {"type": "text", "text": "line two"}})
 	parts, ok := got.Messages[3].Content.([]any)
 	if !ok || len(parts) != 1 {
 		t.Fatalf("image message content = %#v", got.Messages[3].Content)

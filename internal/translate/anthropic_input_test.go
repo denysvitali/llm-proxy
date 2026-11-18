@@ -31,12 +31,7 @@ func TestAnthropicOpenAIContentFidelity(t *testing.T) {
 				t.Fatalf("items = %s", body)
 			}
 			system := jmap(t, items[0], "system")
-			// Chat sends text-only content as one string (strict Chat servers
-			// reject arrays there); Responses keeps the parts.
-			var want any = " \n\n"
-			if responses {
-				want = []any{map[string]any{"type": textType, "text": " "}, map[string]any{"type": textType, "text": ""}}
-			}
+			want := []any{map[string]any{"type": textType, "text": " "}, map[string]any{"type": textType, "text": ""}}
 			if system["role"] != "system" || !reflect.DeepEqual(system["content"], want) {
 				t.Fatalf("system = %#v", system)
 			}
