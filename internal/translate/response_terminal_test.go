@@ -84,6 +84,35 @@ func TestBufferedChatChoiceCount(t *testing.T) {
 	}
 }
 
+// Open Design answers "choices": [] when the whole completion budget went to
+// reasoning. That is a reply cut off by the token limit, not a malformed one;
+// zero choices without that usage still fails.
+func TestBufferedChatReasoningSpentBudget(t *testing.T) {
+	const spent = `{"choices":[],"usage":{"prompt_tokens":60,"completion_tokens":16,"total_tokens":76,"completion_tokens_details":{"reasoning_tokens":16}}}`
+	out, err := FromOpenAI([]byte(spent), "model", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message AnthropicMessageOut
+	if err := json.Unmarshal(out, &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.StopReason == nil || *message.StopReason != "max_tokens" || message.Usage.OutputTokens != 16 {
+		t.Fatalf("messages = %s", out)
+	}
+	out, err = ResponsesFromChat([]byte(spent), "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"status":"incomplete"`) || !strings.Contains(string(out), `"max_output_tokens"`) {
+		t.Fatalf("responses = %s", out)
+	}
+	const partial = `{"choices":[],"usage":{"prompt_tokens":60,"completion_tokens":16,"total_tokens":76,"completion_tokens_details":{"reasoning_tokens":10}}}`
+	if out, err := FromOpenAI([]byte(partial), "model", false); err == nil {
+		t.Fatalf("visible output lost without error: %s", out)
+	}
+}
+
 func TestBufferedTerminalBoundaries(t *testing.T) {
 	for _, stop := range []string{"pause_turn", "unknown"} {
 		body := []byte(fmt.Sprintf(`{"stop_reason":%q,"content":[{"type":"text","text":"partial"}]}`, stop))

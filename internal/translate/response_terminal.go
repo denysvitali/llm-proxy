@@ -5,11 +5,26 @@ import (
 	"fmt"
 )
 
-func validateChatChoiceCount(count int) error {
-	if count != 1 {
-		return fmt.Errorf("translated upstream response requires exactly one choice, got %d", count)
+// validateChatChoiceCount requires the single choice a translated response
+// is built from. The one exception is a reply whose whole completion budget
+// went to reasoning: Open Design answers that with "choices": [] instead of an
+// empty message, and it reports true when the caller should treat it as one
+// cut off by the token limit (finish_reason "length").
+func validateChatChoiceCount(count int, usage chatUsageOut) (budgetSpent bool, err error) {
+	if count == 0 && reasoningSpentBudget(usage) {
+		return true, nil
 	}
-	return nil
+	if count != 1 {
+		return false, fmt.Errorf("translated upstream response requires exactly one choice, got %d", count)
+	}
+	return false, nil
+}
+
+// reasoningSpentBudget reports usage where every completion token was
+// reasoning, i.e. the model never reached its answer.
+func reasoningSpentBudget(usage chatUsageOut) bool {
+	details := usage.CompletionTokensDetails
+	return usage.CompletionTokens > 0 && details != nil && details.ReasoningTokens == usage.CompletionTokens
 }
 
 func validateChatFinish(finish string) error {

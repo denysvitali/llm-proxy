@@ -259,7 +259,8 @@ func responsesFromChat(body []byte, model string, namespaces map[string]response
 	if err := validateChatOutput(body); err != nil {
 		return nil, err
 	}
-	if err := validateChatChoiceCount(len(chat.Choices)); err != nil {
+	budgetSpent, err := validateChatChoiceCount(len(chat.Choices), chat.Usage)
+	if err != nil {
 		return nil, err
 	}
 
@@ -321,6 +322,9 @@ func responsesFromChat(body []byte, model string, namespaces map[string]response
 			})
 		}
 		setResponsesFinish(&out, choice.FinishReason)
+	}
+	if budgetSpent {
+		setResponsesFinish(&out, "length")
 	}
 
 	out.Usage = chatUsageToResponses(chat.Usage)

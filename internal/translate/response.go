@@ -67,7 +67,8 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 	if err := validateChatUsage(response.Usage); err != nil {
 		return nil, err
 	}
-	if err := validateChatChoiceCount(len(response.Choices)); err != nil {
+	budgetSpent, err := validateChatChoiceCount(len(response.Choices), response.Usage)
+	if err != nil {
 		return nil, err
 	}
 
@@ -117,6 +118,10 @@ func FromOpenAI(body []byte, model string, includeThinking bool) ([]byte, error)
 			reason := "refusal"
 			out.StopReason = &reason
 		}
+	}
+	if budgetSpent {
+		reason := stopReason("length")
+		out.StopReason = &reason
 	}
 	if len(out.Content) == 0 {
 		out.Content = append(out.Content, map[string]any{"type": "text", "text": ""})
