@@ -88,21 +88,30 @@ type reasoningDetail struct {
 	Text    string `json:"text"`
 }
 
-// plainReasoningDetails reports whether raw holds only plain-text
-// reasoning_details entries (reasoning.summary / reasoning.text), which carry
-// the same unsigned trace as reasoning_content. Encrypted or unknown entries
-// make the details opaque state that cannot be translated.
+// plainReasoningDetails reports whether raw holds only reasoning_details
+// entries a translated route can account for: plain-text ones
+// (reasoning.summary / reasoning.text), which carry the same unsigned trace as
+// reasoning_content, and reasoning.encrypted ones. Encrypted entries are
+// opaque continuation state for the issuing provider; translated clients
+// never replay upstream reasoning, so they are dropped rather than failing
+// the whole reply (Open Design attaches one to every GLM answer). Unknown
+// entry types still make the details untranslatable.
 func plainReasoningDetails(raw json.RawMessage) ([]reasoningDetail, bool) {
 	var details []reasoningDetail
 	if json.Unmarshal(raw, &details) != nil {
 		return nil, false
 	}
+	plain := details[:0]
 	for _, detail := range details {
-		if detail.Type != "reasoning.summary" && detail.Type != "reasoning.text" {
+		switch detail.Type {
+		case "reasoning.summary", "reasoning.text":
+			plain = append(plain, detail)
+		case "reasoning.encrypted":
+		default:
 			return nil, false
 		}
 	}
-	return details, true
+	return plain, true
 }
 
 // unsignedReasoningDetails joins plain-text reasoning_details into the

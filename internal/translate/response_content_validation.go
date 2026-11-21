@@ -215,8 +215,8 @@ func validateChatOutput(body []byte) error {
 			}
 		}
 		// Plain-text reasoning_details are the unsigned trace also sent as
-		// reasoning_content and decode as such; encrypted entries are opaque
-		// state no other API can carry.
+		// reasoning_content and decode as such; encrypted entries are dropped
+		// (see plainReasoningDetails).
 		if raw := choice.Message["reasoning_details"]; nonNullJSON(raw) {
 			if _, ok := plainReasoningDetails(raw); !ok {
 				return fmt.Errorf("upstream Chat reasoning_details requires a native route")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // UpstreamError reports an upstream that answered an apparently successful
@@ -66,57 +67,93 @@ func (e *UpstreamError) Error() string {
 // limit on input items (1976 > 1000 items)" behind code context_length_exceeded.
 var itemLimitPattern = regexp.MustCompile(`exceeds the limit on input items \((\d+) > (\d+) items\)`)
 
+// openAIContextPattern matches OpenAI's numbered window rejection: "maximum
+// context length is 128000 tokens. However, your messages resulted in 130000
+// tokens" (or "you requested 130000 tokens").
+var openAIContextPattern = regexp.MustCompile(`(?i)maximum context length is (\d+) tokens.*?(?:resulted in|requested) (\d+) tokens`)
+
+// promptTooLongPattern is Claude Code's own parser for context overflows.
+var promptTooLongPattern = regexp.MustCompile(`(?i)prompt is too long[^0-9]*\d+\s*tokens?\s*>\s*\d+`)
+
 // itemLimitGap reports the item counts of an item-limit rejection: (actual, limit, true).
 func itemLimitGap(message string) (int, int, bool) {
-	match := itemLimitPattern.FindStringSubmatch(message)
+	return overshoot(itemLimitPattern.FindStringSubmatch(message), 1, 2)
+}
+
+// overshoot reads (actual, limit) from submatches at the given positions and
+// reports whether they describe a real overshoot.
+func overshoot(match []string, actualAt, limitAt int) (int, int, bool) {
 	if match == nil {
 		return 0, 0, false
 	}
-	actual, err := strconv.Atoi(match[1])
+	actual, err := strconv.Atoi(match[actualAt])
 	if err != nil {
 		return 0, 0, false
 	}
-	limit, err := strconv.Atoi(match[2])
+	limit, err := strconv.Atoi(match[limitAt])
 	if err != nil || limit <= 0 || actual <= limit {
 		return 0, 0, false
 	}
 	return actual, limit, true
 }
 
-// AppendItemLimitGap makes an item-limit rejection actionable for Claude Code.
+// AppendContextLimitGap makes a context-overflow rejection actionable for
+// Claude Code.
 //
-// Claude Code compacts by tokens: its recovery parses "prompt is too long:
-// <actual> tokens > <limit> tokens" from the relayed error message and drops
-// history until its own token estimate falls by the gap. An item-limit error
-// names items instead, which its parser cannot read, so its compaction loop
-// falls back to dropping 20% of the history per attempt and gives up after a
-// few attempts — repeatedly re-sending still-oversized requests while the
-// user watches the same error (observed: 1976 → 1052 items over six attempts,
-// then the surfaced failure).
+// Claude Code recovers from an overflow by parsing "prompt is too long:
+// <actual> tokens > <limit> tokens" from the relayed error message and
+// dropping history until its own token estimate falls by the gap. Other
+// providers phrase the same rejection differently, which its parser cannot
+// read, so its compaction loop falls back to dropping 20% of the history per
+// attempt and gives up after a few attempts — repeatedly re-sending
+// still-oversized requests while the user watches the same error (observed
+// on Open Design: 1976 → 1052 items over six attempts, then the surfaced
+// failure). Three phrasings are recognized:
 //
-// When the upstream named an item overshoot and the caller supplies its token
-// estimate of the request, the provider's message is kept verbatim and one
-// parseable sentence is appended: the overshoot fraction, with margin, applied
-// to the estimate. The proxy never rewrites history itself; it only tells the
-// client how much to drop, in the one vocabulary it parses.
-func AppendItemLimitGap(message string, estimatedTokens int) string {
-	actual, limit, ok := itemLimitGap(message)
-	if !ok || estimatedTokens <= 0 {
+//   - an item overshoot ("limit on input items (1052 > 1000 items)"): the
+//     overshoot fraction, with a 4/3 margin, applied to the token estimate;
+//   - OpenAI's numbered window ("maximum context length is N tokens … resulted
+//     in M tokens"): the provider's own counts, verbatim;
+//   - a bare context_length_exceeded without counts (Open Design's "exceeds
+//     the model's token context limit"): an eighth of the estimate, enough to
+//     clear the usual one-turn overshoot without discarding most of the
+//     history.
+//
+// The provider's message is kept verbatim and one parseable sentence is
+// appended; messages that already carry Claude Code's phrasing are left
+// alone. estimatedTokens is the caller's rough estimate of the request; the
+// proxy never rewrites history itself, it only tells the client how much to
+// drop, in the one vocabulary it parses.
+func AppendContextLimitGap(message string, estimatedTokens int) string {
+	if promptTooLongPattern.MatchString(message) {
 		return message
 	}
-	gap := estimatedTokens * (actual - limit) * 4 / (actual * 3) // ≈ 4/3 margin over the required fraction
-	if rest := estimatedTokens * (actual - limit) / actual; gap < rest {
-		gap = rest
+	if actual, limit, ok := overshoot(openAIContextPattern.FindStringSubmatch(message), 2, 1); ok {
+		return appendPromptTooLong(message, actual, limit)
+	}
+	if estimatedTokens <= 0 {
+		return message
+	}
+	var gap int
+	if actual, limit, ok := itemLimitGap(message); ok {
+		gap = estimatedTokens * (actual - limit) * 4 / (actual * 3) // ≈ 4/3 margin over the required fraction
+		if rest := estimatedTokens * (actual - limit) / actual; gap < rest {
+			gap = rest
+		}
+	} else if strings.Contains(message, "context_length_exceeded") {
+		gap = estimatedTokens / 8
+	} else {
+		return message
 	}
 	if minimum := 4 * 1000; gap < minimum { // a drop too small to matter wastes the client's retry
 		gap = minimum
 	}
-	kept, dropped := estimatedTokens, estimatedTokens-gap
-	if dropped < 0 {
-		dropped = 0
-	}
-	return message + " | prompt is too long: " + strconv.Itoa(kept) +
-		" tokens > " + strconv.Itoa(dropped) + " tokens"
+	return appendPromptTooLong(message, estimatedTokens, max(estimatedTokens-gap, 0))
+}
+
+func appendPromptTooLong(message string, actual, limit int) string {
+	return message + " | prompt is too long: " + strconv.Itoa(actual) +
+		" tokens > " + strconv.Itoa(limit) + " tokens"
 }
 
 // upstreamErrorObj is the {"error":{"message","type","code"}} payload

@@ -90,6 +90,12 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 				return nil, fmt.Errorf("tool_reference requires tool_name and no unsupported fields%s", unknownFieldDetail(err))
 			}
 			block = anthropicBlock{Type: "text", Text: "Tool " + value.ToolName + " is now available."}
+		case "document":
+			var err error
+			block, err = anthropicDocument(part)
+			if err != nil {
+				return nil, err
+			}
 		case "tool_addition", "tool_removal":
 			// Mid-conversation tool changes; applyAnthropicToolChanges folds
 			// them into the declared tools before translation.
@@ -131,6 +137,66 @@ func stripAnthropicAnnotations(raw json.RawMessage, keys ...string) json.RawMess
 	return mustMarshal(fields)
 }
 
+// anthropicDocument decodes a document block. Plain-text documents become a
+// text block (title and context as a header), which every route carries; a
+// base64 PDF becomes a "file" block, sent as an OpenAI file part. URL,
+// file-ID and content-block sources have no OpenAI equivalent here and stay
+// rejected, as do enabled citations, whose output the OpenAI wires cannot
+// carry.
+func anthropicDocument(part json.RawMessage) (anthropicBlock, error) {
+	var value struct {
+		Type      string           `json:"type"`
+		Source    *anthropicSource `json:"source"`
+		Title     string           `json:"title"`
+		Context   string           `json:"context"`
+		Citations *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"citations"`
+	}
+	if err := decodeContentPart(part, &value); err != nil || value.Source == nil {
+		return anthropicBlock{}, fmt.Errorf("document requires a source and no unsupported fields%s", unknownFieldDetail(err))
+	}
+	if value.Citations != nil && value.Citations.Enabled {
+		return anthropicBlock{}, fmt.Errorf("document citations require a native route")
+	}
+	source := value.Source
+	switch {
+	case source.Type == "text" && source.URL == "" && (source.MediaType == "" || source.MediaType == "text/plain"):
+		header := ""
+		if value.Title != "" {
+			header += "Document: " + value.Title + "\n"
+		}
+		if value.Context != "" {
+			header += "Context: " + value.Context + "\n"
+		}
+		if header != "" {
+			header += "\n"
+		}
+		return anthropicBlock{Type: "text", Text: header + source.Data, Document: true}, nil
+	case source.Type == "base64" && source.MediaType == "application/pdf" && source.Data != "" && source.URL == "":
+		if value.Context != "" {
+			return anthropicBlock{}, fmt.Errorf("PDF document context requires a native route")
+		}
+		name := value.Title
+		if name == "" {
+			name = "document.pdf"
+		}
+		return anthropicBlock{Type: "file", Name: name, Source: source}, nil
+	default:
+		return anthropicBlock{}, fmt.Errorf("document source %q (%s) cannot be represented on this OpenAI route", source.Type, source.MediaType)
+	}
+}
+
+// fileDataURL is the data URL OpenAI file parts carry for a decoded PDF.
+func fileDataURL(block anthropicBlock) string {
+	return "data:" + block.Source.MediaType + ";base64," + block.Source.Data
+}
+
+// chatFilePart renders a "file" block as a Chat Completions file part.
+func chatFilePart(block anthropicBlock) map[string]any {
+	return map[string]any{"type": "file", "file": map[string]string{"filename": block.Name, "file_data": fileDataURL(block)}}
+}
+
 func anthropicImageURL(source *anthropicSource) (string, error) {
 	if source != nil {
 		switch source.Type {
@@ -163,7 +229,7 @@ func anthropicSystemContent(raw json.RawMessage) (json.RawMessage, error) {
 		if block.Type == "tool_addition" || block.Type == "tool_removal" {
 			continue
 		}
-		if block.Type != "text" {
+		if block.Type != "text" || block.Document {
 			return nil, fmt.Errorf("system content requires text blocks")
 		}
 		parts = append(parts, map[string]string{"type": "text", "text": block.Text})
@@ -205,8 +271,8 @@ func anthropicToolOutput(block anthropicBlock, responses bool) (json.RawMessage,
 	return output, nil
 }
 
-// chatToolImageNote stands in for images a Chat tool message cannot carry;
-// they follow in a user message after the turn's tool messages.
+// chatToolImageNote stands in for images (and PDF files) a Chat tool message
+// cannot carry; they follow in a user message after the turn's tool messages.
 func chatToolImageNote(count int) string {
 	if count == 1 {
 		return "[1 image from this tool result is attached in the next user message.]"
@@ -277,6 +343,12 @@ func anthropicToolOutputParts(block anthropicBlock, responses bool) (json.RawMes
 				continue
 			}
 			parts = append(parts, map[string]any{"type": "input_image", "image_url": url})
+		case "file":
+			if !responses {
+				images = append(images, chatFilePart(part))
+				continue
+			}
+			parts = append(parts, map[string]any{"type": "input_file", "filename": part.Name, "file_data": fileDataURL(part)})
 		default:
 			return nil, nil, fmt.Errorf("unsupported tool result content %q", part.Type)
 		}

@@ -485,6 +485,16 @@ sends the key as a bearer token. Upstream
 spends its whole budget on reasoning, Open Design returns `"choices": []`;
 translated clients receive it as an empty reply stopped by the token limit.
 
+Two Open Design reply quirks are repaired. Non-streaming Chat replies that both
+talk and call a tool arrive split across two choices (text in `choices[0]`,
+tool calls in `choices[1]`); unless the request asked for `n > 1`, the backend
+folds them into one choice, so clients reading `choices[0]` see the tool calls.
+GLM answers carry a `reasoning.encrypted` entry in `reasoning_details`; it is
+opaque provider state, dropped on translated routes instead of failing the
+reply. Some models (GLM, `deepseek-v4.1-flash-eco`) also reject histories over
+1000 messages and every model rejects prompts past its window; both rejections
+reach Claude Code with a parseable compaction hint (see [Fallbacks](#fallbacks)).
+
 **Plan usage (5-hour / weekly windows).** Open Design exposes Coding Plan
 windows only through its account API (`amr-api.open-design.ai`), which takes
 the account **control key** — the desktop app's sign-in credential in
@@ -915,7 +925,11 @@ explicit `[Tool execution failed]\n` text prefix (or initial text part), since
 OpenAI has no equivalent flag. This is a visible, non-reversible error annotation,
 not a claim of native tool-error support.
 
-Documents, populated citations, unknown block fields, and assistant images
+Plain-text `document` blocks become text (title and context as a header) and
+base64 PDF documents become OpenAI file parts (`file` on Chat, deferred after
+the tool messages like images when inside a tool result; `input_file` on
+Responses). URL, file-ID, and content-block document sources, enabled
+citations, populated citations, unknown block fields, and assistant images
 require a native route. Annotations Claude Code sends on every turn degrade
 instead: `cache_control` hints and empty `citations` are stripped, replayed
 thinking/redacted-thinking blocks are dropped (their signed state is useless to
@@ -926,6 +940,11 @@ annotation on `tool_use` is dropped, tool-search `tool_reference` results become
 a short "Tool X is now available." text (deferred tools are always declared on
 the OpenAI side), and `tool_addition`/`tool_removal` blocks in system messages
 are folded into the request's tool list, which OpenAI declares once up front.
+An empty assistant text block — what a reasoning-only answer becomes on the
+way back to Claude Code — is not replayed to Chat, whose upstreams reject
+empty assistant content. While a Chat upstream streams reasoning that
+Messages clients do not receive, the translated stream sends a `ping` event
+every 10 seconds so client idle watchdogs do not abort long thinking.
 Chat cannot preserve text
 following a tool call inside one assistant message and rejects that ordering;
 Responses retains it as ordered input items. Images require a URL source or
@@ -1191,8 +1210,9 @@ about an unknown model. Catalog budgets can be conservative (Open Design
 declares 32000 for `glm-5.3-flash`); raise one with an operator entry. An
 Anthropic request whose thinking budget would no longer fit is left unchanged.
 Claude Code cannot consume this: its gateway model discovery reads only IDs
-and display names, so set `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (or append
-`[1m]` to the model ID) for gateway models whose window is not 200K.
+and display names, and it assumes a 1M window for model IDs it does not
+recognize, so set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` for gateway models whose
+window is smaller (e.g. `262000` for `opendesign/kimi-k2.7-code`).
 
 ### Fallbacks
 
@@ -1207,12 +1227,14 @@ to the next backend. 4xx and 501 are relayed instead: they are the
 upstream's answer for this request, not an outage. The status and
 `Retry-After` are kept; the body passes through verbatim on a native wire and
 is re-enveloped in the client's error shape (keeping the provider's code and
-message) when the backend speaks another API. Gateways that cap the number of
-history items rather than tokens — Open Design rejects beyond 1000 input
-items — get one appended hint in Claude Code's own vocabulary
+message) when the backend speaks another API. Context-overflow rejections
+that Claude Code cannot parse get one appended hint in its own vocabulary
 (`prompt is too long: N tokens > M tokens`), so its compaction drops enough
 history in one pass instead of exhausting its retry budget on 20%-per-attempt
-drops. Every relayed rejection is
+drops: item caps (Open Design rejects beyond 1000 input items) get the
+overshoot fraction of the request's estimated tokens, OpenAI's numbered
+"maximum context length" errors get the provider's counts, and a count-free
+`context_length_exceeded` gets an eighth of the estimate. Every relayed rejection is
 logged at warning level and shown in the dashboard's request inspector. Once streaming content has
 flowed, a break is surfaced in-band instead of retried; replaying on another
 backend would duplicate output. Responses failures with `code: "cyber_policy"`

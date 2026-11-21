@@ -104,6 +104,8 @@ type responsesInputContent struct {
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	FileData string `json:"file_data,omitempty"`
 }
 
 func (p responsesInputContent) MarshalJSON() ([]byte, error) {
@@ -307,6 +309,11 @@ func responsesItems(message AnthropicMessage) ([]responsesInputItem, error) {
 				return nil, err
 			}
 			parts = append(parts, responsesInputContent{Type: "input_image", ImageURL: url})
+		case "file":
+			if role != "user" {
+				return nil, fmt.Errorf("responses cannot represent assistant documents")
+			}
+			parts = append(parts, responsesInputContent{Type: "input_file", Filename: block.Name, FileData: fileDataURL(block)})
 		case "tool_use":
 			arguments, err := compactJSON(block.Input)
 			if err != nil {

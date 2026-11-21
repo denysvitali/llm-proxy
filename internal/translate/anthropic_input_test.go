@@ -3,6 +3,7 @@ package translate
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -106,7 +107,8 @@ func TestAnthropicOpenAIRejectsUnsupportedContent(t *testing.T) {
 		`[{"type":"text","text":"hi","citations":[{"type":"char_location","cited_text":"x"}]}]`,
 		`[{"type":"text","text":"hi","extra":true}]`,
 		`[{"type":"text","text":null}]`,
-		`[{"type":"document","source":{"type":"text","data":"hello"}}]`,
+		`[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]`,
+		`[{"type":"document","source":{"type":"text","data":"hello"},"citations":{"enabled":true}}]`,
 		`[{"type":"image","source":{"type":"base64","data":"YWJj"}}]`,
 		`[{"type":"image","source":{"type":"url","url":"https://example.invalid/a","extra":true}}]`,
 	} {
@@ -154,5 +156,99 @@ func TestAnthropicOpenAIControlBoundaries(t *testing.T) {
 				t.Fatalf("choice = %s", got)
 			}
 		}
+	}
+}
+
+// Claude Code sends PDFs it reads as base64 document blocks, in user messages
+// and inside tool results; plain-text documents also occur. Chat carries a PDF
+// as a file part (deferred to the user message after the tool messages, like
+// images), Responses as input_file, and text documents as text everywhere.
+func TestAnthropicDocumentsTranslate(t *testing.T) {
+	pdf := `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0x"},"title":"spec.pdf"}`
+	text := `{"type":"document","source":{"type":"text","media_type":"text/plain","data":"hello doc"},"title":"notes","citations":{"enabled":false}}`
+	body := `{"model":"m","max_tokens":16,"messages":[` +
+		`{"role":"user","content":[` + pdf + `,` + text + `,{"type":"text","text":"summarize"}]},` +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"a.pdf"}}]},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[` + pdf + `]}]}]}`
+	request, err := ParseRequest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := ToOpenAI(request, "m")
+	if err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	var decoded struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(chat, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	roles := []string{}
+	for _, m := range decoded.Messages {
+		roles = append(roles, m.Role)
+	}
+	if strings.Join(roles, ",") != "user,assistant,tool,user" {
+		t.Fatalf("roles = %v: %s", roles, chat)
+	}
+	filePart := `{"file":{"file_data":"data:application/pdf;base64,JVBERi0x","filename":"spec.pdf"},"type":"file"}`
+	if first := string(decoded.Messages[0].Content); !strings.Contains(first, filePart) || !strings.Contains(first, `"Document: notes\n\nhello doc"`) {
+		t.Fatalf("user content = %s", first)
+	}
+	if tool := string(decoded.Messages[2].Content); strings.Contains(tool, "file_data") || !strings.Contains(tool, "attached in the next user message") {
+		t.Fatalf("tool message = %s", tool)
+	}
+	if last := string(decoded.Messages[3].Content); !strings.Contains(last, filePart) {
+		t.Fatalf("deferred tool file = %s", last)
+	}
+
+	responses, err := ToResponses(request, "m")
+	if err != nil {
+		t.Fatalf("responses: %v", err)
+	}
+	if got := string(responses); strings.Count(got, `"type":"input_file"`) != 2 || !strings.Contains(got, `"file_data":"data:application/pdf;base64,JVBERi0x"`) {
+		t.Fatalf("responses input = %s", got)
+	}
+}
+
+// A reasoning-only answer comes back to Claude Code as an empty text block,
+// which it replays; Chat upstreams reject empty assistant content, so the
+// replay must not reach them.
+func TestEmptyAssistantTextNotReplayed(t *testing.T) {
+	for _, assistant := range []string{
+		`{"role":"assistant","content":""}`,
+		`{"role":"assistant","content":[{"type":"text","text":""}]}`,
+		`{"role":"assistant","content":[{"type":"thinking","thinking":"hm","signature":"s"},{"type":"text","text":""}]}`,
+	} {
+		body := `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hi"},` + assistant + `,{"role":"user","content":"again"}]}`
+		request, err := ParseRequest([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := ToOpenAI(request, "m")
+		if err != nil {
+			t.Fatalf("%s: %v", assistant, err)
+		}
+		if strings.Contains(string(out), `"assistant"`) {
+			t.Fatalf("%s: empty assistant replayed: %s", assistant, out)
+		}
+	}
+	// Empty text next to a tool call keeps the call.
+	body := `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":[{"type":"text","text":""},{"type":"tool_use","id":"toolu_1","name":"f","input":{}}]},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}]}`
+	request, err := ParseRequest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ToOpenAI(request, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"tool_calls"`) || strings.Contains(string(out), `"text":""`) {
+		t.Fatalf("tool call turn = %s", out)
 	}
 }

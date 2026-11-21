@@ -57,6 +57,9 @@ type anthropicBlock struct {
 	IsError   bool             `json:"is_error"`
 	Source    *anthropicSource `json:"source"`
 	Tool      json.RawMessage  `json:"-"`
+	// Document marks text decoded from a plain-text document block, which
+	// system content must still refuse.
+	Document bool `json:"-"`
 }
 
 type anthropicSource struct {
@@ -230,6 +233,15 @@ func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 		return nil, fmt.Errorf("unsupported Messages role %q", role)
 	}
 	if text, ok := plainString(message.Content); ok {
+		// A model that answered with reasoning only reaches the client as an
+		// empty text block, which the client replays. Chat upstreams reject
+		// empty assistant content (Open Design: "The request is invalid"),
+		// failing every later turn of the session, while the text carries
+		// nothing: it is dropped, and an assistant message left empty is
+		// omitted like a thinking-only one.
+		if role == "assistant" && text == "" {
+			return nil, nil
+		}
 		return []openAIMessage{{Role: role, Content: text}}, nil
 	}
 	blocks, err := anthropicInputBlocks(message.Content)
@@ -260,12 +272,20 @@ func translateMessage(message AnthropicMessage) ([]openAIMessage, error) {
 	}
 	for _, block := range blocks {
 		switch block.Type {
-		case "text", "image":
+		case "text", "image", "file":
 			if len(calls) > 0 {
 				return nil, fmt.Errorf("chat cannot preserve content following tool_use within an assistant message")
 			}
 			if block.Type == "text" {
+				if role == "assistant" && block.Text == "" {
+					continue // replayed empty answer; see the plain-string case
+				}
 				parts = append(parts, map[string]any{"type": "text", "text": block.Text})
+			} else if block.Type == "file" {
+				if role != "user" {
+					return nil, fmt.Errorf("chat cannot represent assistant documents")
+				}
+				parts = append(parts, chatFilePart(block))
 			} else {
 				if role != "user" {
 					return nil, fmt.Errorf("chat cannot represent assistant images")

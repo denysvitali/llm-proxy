@@ -23,7 +23,7 @@ func TestSystemMessageValidationErrors(t *testing.T) {
 		}{
 			{"missing text", `{"type":"text"}`, "text block requires string text and no unsupported fields"},
 			{"null text", `{"type":"text","text":null}`, "text block requires string text and no unsupported fields"},
-			{"document", `{"type":"document","source":{"type":"text","data":"` + privateContent + `"}}`, `messages content type "document" cannot be represented on this OpenAI route`},
+			{"document", `{"type":"document","source":{"type":"text","data":"` + privateContent + `"}}`, `system content requires text blocks`},
 			{"image", `{"type":"image","source":{"type":"url","url":"https://example.invalid/` + privateContent + `"}}`, "system content requires text blocks"},
 			{"unknown field", `{"type":"text","text":"` + privateContent + `","extension":"` + privateContent + `"}`, `text block requires string text and no unsupported fields (unknown field "extension")`},
 		} {

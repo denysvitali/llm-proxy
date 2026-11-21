@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"time"
 )
 
 type openAIChunk struct {
@@ -120,11 +121,21 @@ type StreamWriter struct {
 	toolIDs    responseCallIDs
 	stopReason string
 	usage      AnthropicUsage
+
+	now       func() time.Time // clock for keepalive pings; tests replace it
+	lastWrite time.Time
 }
+
+// streamPingInterval bounds how long a translated stream stays silent while
+// upstream chunks keep arriving but produce no Anthropic event — reasoning
+// deltas, which Messages clients do not receive. Claude Code aborts a stream
+// that sends no bytes for five minutes and a slow reasoning model can think
+// that long; Anthropic itself sends ping events through long thinking.
+const streamPingInterval = 10 * time.Second
 
 func NewStreamWriter(writer io.Writer, flush func(), model string, includeThinking bool) *StreamWriter {
 	return &StreamWriter{writer: writer, flush: flush, model: model, includeThinking: includeThinking,
-		tools: map[int][]*chatAnthropicTool{}, toolIDs: responseCallIDs{}}
+		tools: map[int][]*chatAnthropicTool{}, toolIDs: responseCallIDs{}, now: time.Now}
 }
 
 // Consume leaves failures unfinished so the exchange can retry before output,
@@ -167,6 +178,7 @@ func (s *StreamWriter) Consume(body io.Reader) error {
 		if err := s.consumeChunk(chunk); err != nil {
 			return false, err
 		}
+		s.keepAlive()
 		return false, s.writeErr
 	})
 	if err != nil {
@@ -376,5 +388,14 @@ func (s *StreamWriter) Fail(message string) {
 func (s *StreamWriter) emit(event string, payload any) {
 	if s.writeErr == nil {
 		s.writeErr = writeStreamFrame(s.writer, s.flush, event, payload)
+		s.lastWrite = s.now()
+	}
+}
+
+// keepAlive sends a ping once the open stream has been silent for
+// streamPingInterval although upstream chunks are still arriving.
+func (s *StreamWriter) keepAlive() {
+	if s.phase == chatToAnthropicOpen && s.now().Sub(s.lastWrite) >= streamPingInterval {
+		s.emit("ping", map[string]any{"type": "ping"})
 	}
 }

@@ -65,13 +65,13 @@ func TestDecodersAcceptSuccessBodiesWithoutError(t *testing.T) {
 	}
 }
 
-// TestAppendItemLimitGap covers the compaction hint appended to item-limit
+// TestAppendContextLimitGap covers the compaction hint appended to item-limit
 // rejections: the provider's message stays verbatim, and the appended sentence
 // matches Claude Code's "prompt is too long: N tokens > M tokens" parser with
 // a gap that clears the overshoot.
-func TestAppendItemLimitGap(t *testing.T) {
+func TestAppendContextLimitGap(t *testing.T) {
 	provider := "context_length_exceeded: [code=context_length_exceeded] Input is too long: conversation history exceeds the limit on input items (1052 > 1000 items). Compact the conversation and retry."
-	enriched := AppendItemLimitGap(provider, 300000)
+	enriched := AppendContextLimitGap(provider, 300000)
 	if enriched == provider {
 		t.Fatalf("no gap appended: %s", provider)
 	}
@@ -93,7 +93,7 @@ func TestAppendItemLimitGap(t *testing.T) {
 		t.Fatalf("gap %d below required fraction %d", actual-limit, wantGap)
 	}
 	// Below the floor (4k tokens), the gap is floored so a retry can matter.
-	small := AppendItemLimitGap(provider, 300)
+	small := AppendContextLimitGap(provider, 300)
 	if small == provider {
 		t.Fatalf("floored gap not appended for tiny estimate")
 	}
@@ -105,11 +105,51 @@ func TestAppendItemLimitGap(t *testing.T) {
 		"exceeds the limit on input items (900 > 1000 items)",
 		"exceeds the limit on input items (abc > 1000 items)",
 	} {
-		if got := AppendItemLimitGap(msg, 300000); got != msg {
-			t.Fatalf("AppendItemLimitGap(%q) = %q, want unchanged", msg, got)
+		if got := AppendContextLimitGap(msg, 300000); got != msg {
+			t.Fatalf("AppendContextLimitGap(%q) = %q, want unchanged", msg, got)
 		}
 	}
-	if got := AppendItemLimitGap(provider, 0); got != provider {
+	if got := AppendContextLimitGap(provider, 0); got != provider {
 		t.Fatalf("zero estimate must not append: %s", got)
+	}
+}
+
+// Token-window rejections get the same parseable sentence: OpenAI's numbered
+// phrasing keeps the provider's counts, a count-free context_length_exceeded
+// gets a fixed fraction of the estimate, and Anthropic-phrased messages stay
+// untouched.
+func TestAppendContextLimitGapTokenWindow(t *testing.T) {
+	parse := func(t *testing.T, enriched, provider string) (int, int) {
+		t.Helper()
+		if !strings.HasPrefix(enriched, provider) || enriched == provider {
+			t.Fatalf("hint not appended verbatim: %s", enriched)
+		}
+		var actual, limit int
+		if _, err := fmt.Sscanf(enriched[len(provider):], " | prompt is too long: %d tokens > %d tokens", &actual, &limit); err != nil {
+			t.Fatalf("appended sentence unparsable: %s", enriched)
+		}
+		return actual, limit
+	}
+
+	openai := "context_length_exceeded: This model's maximum context length is 128000 tokens. However, your messages resulted in 130500 tokens."
+	if actual, limit := parse(t, AppendContextLimitGap(openai, 999999), openai); actual != 130500 || limit != 128000 {
+		t.Fatalf("OpenAI counts = %d > %d, want 130500 > 128000", actual, limit)
+	}
+
+	bare := "context_length_exceeded: [code=context_length_exceeded] Input is too long: the request exceeds the model's token context limit. Compact the conversation and retry."
+	if actual, limit := parse(t, AppendContextLimitGap(bare, 800000), bare); actual != 800000 || limit != 700000 {
+		t.Fatalf("bare overflow = %d > %d, want 800000 > 700000", actual, limit)
+	}
+	if got := AppendContextLimitGap(bare, 0); got != bare {
+		t.Fatalf("zero estimate must not append: %s", got)
+	}
+
+	for _, msg := range []string{
+		"prompt is too long: 210000 tokens > 200000 maximum",
+		"upstream_error: [code=upstream_error] The request could not be completed.",
+	} {
+		if got := AppendContextLimitGap(msg, 300000); got != msg {
+			t.Fatalf("AppendContextLimitGap(%q) = %q, want unchanged", msg, got)
+		}
 	}
 }

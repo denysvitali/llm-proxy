@@ -120,10 +120,10 @@ func emitResponsesStreamFailure(w http.ResponseWriter, message string) {
 // back on a different wire than the client speaks: the upstream's own message
 // is kept, but re-enveloped in the client's error shape so its SDK can parse
 // it. It returns the bytes written, for the response shape trace. estimated
-// request tokens let an item-limit rejection carry a parseable drop target
-// (see translate.AppendItemLimitGap).
+// request tokens let a context-overflow rejection carry a parseable drop
+// target (see translate.AppendContextLimitGap).
 func relayTranslatedUpstreamError(w http.ResponseWriter, dialect clientDialect, resp *backend.Response, upstreamBody []byte, estimatedTokens int) []byte {
-	message := translate.AppendItemLimitGap(upstreamErrorText(upstreamBody), estimatedTokens)
+	message := translate.AppendContextLimitGap(upstreamErrorText(upstreamBody), estimatedTokens)
 	if message == "" {
 		message = fmt.Sprintf("upstream request failed with status %d", resp.Status)
 	}

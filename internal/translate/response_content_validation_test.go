@@ -71,7 +71,7 @@ func TestBufferedUnsupportedOutputBoundaries(t *testing.T) {
 
 	for _, fields := range []string{
 		`"audio":{"id":"audio"}`, `"function_call":{"name":"lookup","arguments":"{}"}`,
-		`"reasoning_details":[{"type":"reasoning.encrypted","data":"opaque"}]`,
+		`"reasoning_details":[{"type":"reasoning.unknown","data":"opaque"}]`,
 		`"annotations":[{"type":"url_citation","url":"https://example.com"}]`,
 		`"content":[{"type":"image_url","image_url":{"url":"https://example.com/i"}}]`,
 		`"content":[{"type":"text","text":null}]`,
@@ -113,10 +113,12 @@ func TestBufferedEmptyAndPlainReasoningOutput(t *testing.T) {
 // Open Design (and other OpenRouter-style gateways) send the unsigned trace
 // as plain-text reasoning_details instead of reasoning_content. It must decode
 // like reasoning_content — suppressed on Messages, a summary on Responses —
-// rather than fail the response.
+// rather than fail the response. The trailing reasoning.encrypted entry Open
+// Design attaches to GLM answers is dropped, not a reason to fail.
 func TestPlainReasoningDetailsDecodeAsReasoning(t *testing.T) {
 	body := []byte(`{"id":"c","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"No: 17*23.",` +
-		`"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":"check 17"},{"type":"reasoning.text","text":" and 23"}]}}]}`)
+		`"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":"check 17"},{"type":"reasoning.text","text":" and 23"},` +
+		`{"index":1,"type":"reasoning.encrypted","data":"367a31c2-2cec-4d02-94d9-0ed11244f2cb-0"}]}}]}`)
 	out, err := FromOpenAI(body, "m", false)
 	if err != nil {
 		t.Fatal(err)
