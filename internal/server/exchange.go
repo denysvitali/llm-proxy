@@ -422,8 +422,9 @@ func (s *Server) exchange(
 			return finish(failedExchange("upstream server error"))
 		}
 		log.WithFields(logrus.Fields{
-			"upstream_status": resp.Status,
-			"upstream_error":  tr.errMsg,
+			"upstream_status":     resp.Status,
+			"upstream_error":      tr.errMsg,
+			"request_fingerprint": requestFingerprint(wireFormat, payload),
 		}).Warn("upstream rejected the request; relaying to client")
 		if wire.native {
 			dialect.relayError(w, resp)

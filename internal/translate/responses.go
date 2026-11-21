@@ -23,6 +23,7 @@ type responsesRequest struct {
 	ToolChoice        any                     `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool                   `json:"parallel_tool_calls,omitempty"`
 	Reasoning         *responsesReasoning     `json:"reasoning,omitempty"`
+	Text              any                     `json:"text,omitempty"`
 	Store             *bool                   `json:"store,omitempty"`
 	Stream            bool                    `json:"stream,omitempty"`
 	MaxOutputTokens   int                     `json:"max_output_tokens,omitempty"`
@@ -195,8 +196,14 @@ func ToResponses(request *Request, model string) ([]byte, error) {
 		Temperature:     request.Temperature,
 		TopP:            request.TopP,
 	}
-	if effort, _ := anthropicEffort(request.fields["output_config"]); effort != "" {
+	effort, schema, _ := anthropicOutputConfig(request.fields["output_config"])
+	if effort != "" {
 		converted.Reasoning = &responsesReasoning{Effort: effort}
+	}
+	if schema != nil {
+		converted.Text = map[string]any{"format": map[string]any{
+			"type": "json_schema", "name": outputSchemaName, "schema": schema, "strict": true,
+		}}
 	}
 
 	var inputItems []responsesInputItem

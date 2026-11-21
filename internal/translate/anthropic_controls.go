@@ -42,7 +42,7 @@ func validateAnthropicTranslation(request *Request, responses bool) ([]Anthropic
 			return nil, fmt.Errorf("messages thinking requires an object with a type")
 		}
 	}
-	if _, err := anthropicEffort(request.fields["output_config"]); err != nil {
+	if _, _, err := anthropicOutputConfig(request.fields["output_config"]); err != nil {
 		return nil, err
 	}
 	if responses && len(request.StopSequences) != 0 {
@@ -204,43 +204,54 @@ func isJSONNull(raw json.RawMessage) bool {
 	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
 }
 
-// anthropicEffort maps Messages output_config.effort onto the OpenAI
-// reasoning effort. Only effort is mappable: format (structured output)
-// changes the response contract, so it still requires a native route.
-// "max" has no portable OpenAI value and degrades to "high".
-func anthropicEffort(raw json.RawMessage) (string, error) {
+// anthropicOutputConfig maps Messages output_config onto OpenAI controls.
+// effort becomes the reasoning effort ("max" has no portable OpenAI value and
+// degrades to "high"); format, Anthropic's structured output, carries a JSON
+// schema that OpenAI's json_schema response format expresses the same way
+// (Claude Code names its sessions with one). schema is nil when absent.
+func anthropicOutputConfig(raw json.RawMessage) (effort string, schema json.RawMessage, err error) {
 	if isJSONNull(raw) {
-		return "", nil
+		return "", nil, nil
 	}
 	var config map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &config); err != nil || config == nil {
-		return "", fmt.Errorf("messages output_config requires an object")
+		return "", nil, fmt.Errorf("messages output_config requires an object")
 	}
-	var effort string
 	for key, value := range config {
+		if isJSONNull(value) {
+			continue
+		}
 		switch key {
 		case "effort":
-			if isJSONNull(value) {
-				continue
-			}
 			if err := json.Unmarshal(value, &effort); err != nil {
-				return "", fmt.Errorf("output_config.effort must be a string")
+				return "", nil, fmt.Errorf("output_config.effort must be a string")
 			}
+		case "format":
+			var format struct {
+				Type   string          `json:"type"`
+				Schema json.RawMessage `json:"schema"`
+			}
+			if err := decodeContentPart(value, &format); err != nil || format.Type != "json_schema" || !bytes.HasPrefix(bytes.TrimSpace(format.Schema), []byte("{")) {
+				return "", nil, fmt.Errorf("output_config.format requires type json_schema with an object schema")
+			}
+			schema = format.Schema
 		default:
-			if !isJSONNull(value) {
-				return "", fmt.Errorf("messages output_config.%s cannot be represented on this OpenAI route", key)
-			}
+			return "", nil, fmt.Errorf("messages output_config.%s cannot be represented on this OpenAI route", key)
 		}
 	}
 	switch effort {
 	case "", "low", "medium", "high":
-		return effort, nil
 	case "max":
-		return "high", nil
+		effort = "high"
 	default:
-		return "", fmt.Errorf("output_config.effort %q has no OpenAI mapping", effort)
+		return "", nil, fmt.Errorf("output_config.effort %q has no OpenAI mapping", effort)
 	}
+	return effort, schema, nil
 }
+
+// outputSchemaName names a translated structured-output schema; OpenAI
+// requires one and Anthropic has none.
+const outputSchemaName = "output"
 
 func anthropicToolChoice(raw json.RawMessage, responses bool) (any, *bool, error) {
 	if len(raw) == 0 {

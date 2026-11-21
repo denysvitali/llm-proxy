@@ -52,7 +52,7 @@ func TestTranslatedControlRejectionPreservesNativeRequests(t *testing.T) {
 func TestMessagesTranslationBoundariesPreserveNative(t *testing.T) {
 	for _, extra := range []string{
 		`"unknown_control":{"example":true}`,
-		`"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}}`,
+		`"output_config":{"format":{"type":"json_schema"}}`,
 		`"system":[{"type":"document","source":{"type":"text","data":"system"}}]`,
 		`"tools":[{"name":"f","input_schema":{"type":"object"},"input_examples":[{}]}]`,
 	} {

@@ -252,3 +252,29 @@ func TestEmptyAssistantTextNotReplayed(t *testing.T) {
 		t.Fatalf("tool call turn = %s", out)
 	}
 }
+
+// Claude Code names sessions with output_config.format; the JSON schema maps
+// onto OpenAI's json_schema response format on both wires.
+func TestAnthropicStructuredOutputTranslates(t *testing.T) {
+	body := `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"name it"}],` +
+		`"output_config":{"effort":"high","format":{"type":"json_schema","schema":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}}}}`
+	request, err := ParseRequest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := `"schema":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}`
+	chat, err := ToOpenAI(request, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(chat); !strings.Contains(got, `"response_format":{"json_schema":{"name":"output",`+schema+`,"strict":true},"type":"json_schema"}`) || !strings.Contains(got, `"reasoning_effort":"high"`) {
+		t.Fatalf("chat = %s", got)
+	}
+	responses, err := ToResponses(request, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(responses); !strings.Contains(got, `"text":{"format":{"name":"output",`+schema+`,"strict":true,"type":"json_schema"}}`) {
+		t.Fatalf("responses = %s", got)
+	}
+}

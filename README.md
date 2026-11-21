@@ -960,7 +960,7 @@ controls Claude Code sends on every turn degrade gracefully instead:
 are accepted and dropped. `safeguards` (sent in auto permission mode) feeds
 Anthropic's server-side tool-use classifier, which no OpenAI backend runs;
 Claude Code itself resends the turn without it after three rejections, so
-rejecting it only added failed round trips. `output_config.format` still requires a native Messages route.
+rejecting it only added failed round trips. `output_config.format` (structured output, which Claude Code uses to name sessions) maps a `json_schema` format to a strict OpenAI `json_schema` response format (`response_format` on Chat, `text.format` on Responses); other format types require a native Messages route.
 Thinking budgets are never guessed as reasoning effort. These boundaries do not
 modify native Messages requests.
 
@@ -1235,7 +1235,9 @@ drops: item caps (Open Design rejects beyond 1000 input items) get the
 overshoot fraction of the request's estimated tokens, OpenAI's numbered
 "maximum context length" errors get the provider's counts, and a count-free
 `context_length_exceeded` gets an eighth of the estimate. Every relayed rejection is
-logged at warning level and shown in the dashboard's request inspector. Once streaming content has
+logged at warning level with a content-free `request_fingerprint` (sizes,
+counts, generation controls, and the role/part sequence of the conversation
+tail) to debug opaque provider 400s, and shown in the dashboard's request inspector. Once streaming content has
 flowed, a break is surfaced in-band instead of retried; replaying on another
 backend would duplicate output. Responses failures with `code: "cyber_policy"`
 are definitive rejections, not transient gateway failures: they return HTTP
