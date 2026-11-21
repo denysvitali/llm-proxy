@@ -115,11 +115,12 @@ func entryFingerprint(raw json.RawMessage) string {
 		label = label[:1]
 	}
 	var parts []string
-	if entry.Type == "function_call_output" {
+	switch entry.Type {
+	case "function_call_output":
 		parts = append(parts, fmt.Sprint(len(entry.Output)))
-	} else if entry.Type == "function_call" {
+	case "function_call":
 		parts = append(parts, fmt.Sprintf("args:%d", len(entry.Arguments)))
-	} else {
+	default:
 		parts = append(parts, contentFingerprint(entry.Content)...)
 	}
 	if n := len(entry.ToolCalls); n > 0 {
