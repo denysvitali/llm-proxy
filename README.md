@@ -33,6 +33,7 @@ not upstream API keys.
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
+| `zai`       | [Z.ai GLM Coding Plan](https://docs.z.ai/devpack/overview) | Anthropic Messages, Chat Completions | API-key plan on `api.z.ai/api`; Responses requests are translated server-side. See [Z.ai GLM Coding Plan](#zai-glm-coding-plan). |
 | `minimax-code` | [MiniMax Code](https://agent.minimax.io/docs/cli/quick-start) | Anthropic Messages | Device-code sign-in stores a MiniMax account session; other request shapes are translated server-side. |
 | `mimo-token-plan` | [Xiaomi MiMo Token Plan](https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/subscription) | Chat Completions, Responses | Uses only MiMo's OpenAI-compatible regional endpoint; Anthropic Messages requests are translated through Chat Completions. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
@@ -245,6 +246,24 @@ requests with HTTP 400 before contacting the provider. Header presence triggers
 this rejection regardless of its value. This check does not certify any other
 backend, and cancelling a stream or truncating a response does not bound provider
 billing. Existing requests without the header keep their prior behavior.
+
+### Z.ai GLM Coding Plan
+
+The `zai` backend uses a [Z.ai GLM Coding Plan](https://docs.z.ai/devpack/overview)
+API key (not the ZCode account session used by `zcode`):
+
+```yaml
+backends:
+  - type: zai
+    api_key_env: ZAI_API_KEY
+```
+
+Anthropic Messages requests go to `/api/anthropic/v1/messages` and Chat
+Completions to `/api/coding/paas/v4/chat/completions`; Responses clients are
+translated. The general `/api/paas/v4` route is never used because it bills
+the pay-as-you-go balance rather than the plan. The catalog comes from the
+plan's `GET /api/coding/paas/v4/models`; use `zai/<model>` to pin the backend.
+`base_url` overrides the `https://api.z.ai/api` root.
 
 ### ZCode Start Plan
 
@@ -1300,7 +1319,7 @@ non-loopback listener; intentional loopback-only operation remains supported.
 | `minimax_code_auth_file`     | `LLM_PROXY_MINIMAX_CODE_AUTH_FILE` | `~/.config/llm-proxy/minimax-code-auth.json` | MiniMax Code session created by device-code sign-in. |
 | `minimax_code_auto_checkin` | `LLM_PROXY_MINIMAX_CODE_AUTO_CHECKIN` | `true` | Automatically claim eligible MiniMax daily rewards at startup and on hourly checks. |
 | —                            | `LLM_PROXY_ZCODE_CAPTCHA_SOLVER_URL` | empty | Optional internal endpoint that returns a fresh one-use ZCode CAPTCHA proof for optional plan claims and rare model-request security challenges. Solver failures are surfaced instead of silently reusing a browser proof. |
-| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `opendesign`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`, `paperinstruments`); at most one backend per type. |
+| `backends[].type`            | —                                    | required                 | Registered backend type (`abliteration`, `anyrouter`, `apodex`, `opendesign`, `venice`, `opencode`, `opencode-zen`, `opencode-go`, `grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`, `mimo-token-plan`, `mistral`, `mistral-vibe`, `nous`, `openrouter`, `cloudflare`, `paperinstruments`, `zai`); at most one backend per type. |
 | `backends[].base_url`        | —                                    | per-provider default     | Override the upstream endpoint; required for `cloudflare` (account-scoped URL). |
 | `backends[].api_key_env`     | —                                    | —                        | Name of an environment variable holding an ordinary upstream key. Account-backed backends (`grok`, `workbuddy`, `codex`, `zcode`, `minimax-code`) use their web sign-in sessions instead. |
 | `backends[].api_key`         | —                                    | —                        | Literal ordinary upstream key. Account-backed backends use their web sign-in sessions instead. |
