@@ -33,7 +33,7 @@ not upstream API keys.
 | `workbuddy` | CodeBuddy International account  | Chat Completions                         | Browser sign-in against `www.codebuddy.ai`; Anthropic and Responses requests are translated server-side. |
 | `codex`     | OpenAI Codex subscription         | Responses API                            | ChatGPT device-code sign-in; Anthropic and Chat Completions requests are translated server-side. |
 | `zcode`     | ZCode Start Plan                 | Anthropic Messages                       | Browser sign-in stores a ZCode session; Chat Completions and Responses requests are translated server-side. |
-| `zai`       | [Z.ai GLM Coding Plan](https://docs.z.ai/devpack/overview) | Anthropic Messages, Chat Completions | API-key plan on `api.z.ai/api`; Responses requests are translated server-side. See [Z.ai GLM Coding Plan](#zai-glm-coding-plan). |
+| `zai`       | [Z.ai GLM Coding Plan](https://docs.z.ai/devpack/overview) | Anthropic Messages, Responses | API-key plan on `api.z.ai/api`; Chat Completions requests are translated server-side. See [Z.ai GLM Coding Plan](#zai-glm-coding-plan). |
 | `minimax-code` | [MiniMax Code](https://agent.minimax.io/docs/cli/quick-start) | Anthropic Messages | Device-code sign-in stores a MiniMax account session; other request shapes are translated server-side. |
 | `mimo-token-plan` | [Xiaomi MiMo Token Plan](https://mimo.mi.com/docs/en-US/tokenplan/Token%20Plan/subscription) | Chat Completions, Responses | Uses only MiMo's OpenAI-compatible regional endpoint; Anthropic Messages requests are translated through Chat Completions. |
 | `nous`      | [Nous Portal](https://portal.nousresearch.com/) | Chat Completions (OpenAI-compatible) | Anthropic requests are translated server-side. Models use `vendor/model` slugs (e.g. `nousresearch/hermes-4-70b`). |
@@ -258,10 +258,11 @@ backends:
     api_key_env: ZAI_API_KEY
 ```
 
-Anthropic Messages requests go to `/api/anthropic/v1/messages` and Chat
-Completions to `/api/coding/paas/v4/chat/completions`; Responses clients are
-translated. The general `/api/paas/v4` route is never used because it bills
-the pay-as-you-go balance rather than the plan. The catalog comes from the
+Anthropic Messages requests go to `/api/anthropic/v1/messages` and Responses
+requests to `/api/v1/responses`. Chat Completions clients are translated: the
+plan's `/api/coding/paas/v4/chat/completions` endpoint silently serves a
+different model for older IDs (`glm-4.7` and `glm-4.5-air` answer as
+`glm-5.3-flash`), so the proxy does not use it. The catalog comes from the
 plan's `GET /api/coding/paas/v4/models`; use `zai/<model>` to pin the backend.
 `base_url` overrides the `https://api.z.ai/api` root.
 

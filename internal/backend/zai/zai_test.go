@@ -21,7 +21,7 @@ func TestSupportsAndDefaults(t *testing.T) {
 	if got := New("https://x.test/api/", "k").BaseURL; got != "https://x.test/api" {
 		t.Errorf("trailing slash kept: %q", got)
 	}
-	if !c.Supports(backend.KindAnthropic) || !c.Supports(backend.KindOpenAIChat) || c.Supports(backend.KindOpenAIResponses) {
+	if !c.Supports(backend.KindAnthropic) || !c.Supports(backend.KindOpenAIResponses) || c.Supports(backend.KindOpenAIChat) {
 		t.Error("wrong native wire support")
 	}
 }
@@ -32,7 +32,7 @@ func TestSendRoutesPerKind(t *testing.T) {
 		path string
 	}{
 		{backend.KindAnthropic, anthropicPath},
-		{backend.KindOpenAIChat, chatPath},
+		{backend.KindOpenAIResponses, responsesPath},
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != tc.path {
@@ -60,7 +60,7 @@ func TestSendRejectsMissingKeyAndResponses(t *testing.T) {
 	if _, err := New("", "").Send(context.Background(), &backend.Request{Kind: backend.KindAnthropic}); err == nil {
 		t.Error("expected missing-key error")
 	}
-	if _, err := New("", "k").Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIResponses}); err == nil {
+	if _, err := New("", "k").Send(context.Background(), &backend.Request{Kind: backend.KindOpenAIChat}); err == nil {
 		t.Error("expected unsupported-kind error")
 	}
 }

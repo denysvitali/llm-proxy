@@ -66,7 +66,7 @@ func TestEveryInferenceBackendHonorsPropagationOptIn(t *testing.T) {
 					t.Fatal(err)
 				}
 				kind := backend.KindOpenAIChat
-				if name == "grok" || name == "codex" {
+				if name == "grok" || name == "codex" || name == "zai" {
 					kind = backend.KindOpenAIResponses
 				}
 				if name == "zcode" || name == "minimax-code" {

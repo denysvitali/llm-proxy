@@ -1,7 +1,8 @@
 // Package zai implements the Z.ai GLM Coding Plan backend. The plan is
-// API-key based and exposes an Anthropic Messages endpoint and an OpenAI Chat
-// Completions endpoint under separate paths of api.z.ai; Responses clients are
-// translated by the server.
+// API-key based and served natively over Anthropic Messages and OpenAI
+// Responses. Its Chat Completions endpoint is deliberately unused: it silently
+// substitutes models (e.g. glm-4.7 is served as glm-5.3-flash), so Chat
+// clients are translated by the server instead.
 package zai
 
 import (
@@ -17,12 +18,10 @@ import (
 
 const (
 	// defaultBaseURL is the API root; the Coding Plan endpoints hang off it.
-	// The general-purpose /api/paas/v4 route bills the pay-as-you-go balance
-	// instead of the plan, so it is deliberately not used.
 	defaultBaseURL = "https://api.z.ai/api"
 
 	anthropicPath = "/anthropic/v1/messages"
-	chatPath      = "/coding/paas/v4/chat/completions"
+	responsesPath = "/v1/responses"
 	modelsPath    = "/coding/paas/v4/models"
 
 	anthropicVersion = "2023-06-01"
@@ -55,7 +54,7 @@ func init() {
 
 // Supports reports the native API shapes of the Coding Plan.
 func (c *Client) Supports(kind backend.Kind) bool {
-	return kind == backend.KindAnthropic || kind == backend.KindOpenAIChat
+	return kind == backend.KindAnthropic || kind == backend.KindOpenAIResponses
 }
 
 func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Response, error) {
@@ -66,8 +65,8 @@ func (c *Client) Send(ctx context.Context, req *backend.Request) (*backend.Respo
 	switch req.Kind {
 	case backend.KindAnthropic:
 		path = anthropicPath
-	case backend.KindOpenAIChat:
-		path = chatPath
+	case backend.KindOpenAIResponses:
+		path = responsesPath
 	default:
 		return nil, fmt.Errorf("zai backend does not support kind %q", req.Kind)
 	}
