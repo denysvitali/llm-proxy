@@ -14,12 +14,13 @@ import {
   Title,
 } from '@mantine/core'
 import type { UseQueryResult } from '@tanstack/react-query'
-import type { GrokUsage, MiniMaxUsage, ModelStat, OpenDesignUsage, OverviewBackend, StatsSeries } from '../../api'
+import type { GrokUsage, MiniMaxUsage, ModelStat, OpenDesignUsage, OverviewBackend, StatsSeries, ZaiUsage } from '../../api'
 import { fmtInt, fmtSec, fmtTps } from '../../format'
 import { healthState } from '../../lib/stats'
 import GrokUsageCompact from '../GrokUsageCompact'
 import MiniMaxUsageCard from '../MiniMaxUsageCard'
 import OpenDesignUsageCard from '../OpenDesignUsageCard'
+import ZaiUsageCard from '../ZaiUsageCard'
 import UptimeBadge from '../UptimeBadge'
 import { TimeRangeControl } from '../TimeRangeControl'
 import { HistoryBarChart, HistoryLineChart, historyData, historyFormatters } from '../HistoryCharts'
@@ -85,6 +86,7 @@ export default function ProviderDetail({
   grokUsage,
   minimaxUsageQuery,
   openDesignUsageQuery,
+  zaiUsageQuery,
   series,
   seriesLoading,
   seriesError,
@@ -99,6 +101,7 @@ export default function ProviderDetail({
   grokUsage?: GrokUsage
   minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
   openDesignUsageQuery?: UseQueryResult<OpenDesignUsage, Error>
+  zaiUsageQuery?: UseQueryResult<ZaiUsage, Error>
   series?: StatsSeries
   seriesLoading?: boolean
   seriesError?: string
@@ -201,10 +204,11 @@ export default function ProviderDetail({
           </section>
         )}
 
-        {(minimaxUsageQuery || openDesignUsageQuery || (backend.name === 'grok' && grokUsage)) && (
+        {(minimaxUsageQuery || openDesignUsageQuery || zaiUsageQuery || (backend.name === 'grok' && grokUsage)) && (
           <div className="catalog-detail-usage">
             {minimaxUsageQuery && <MiniMaxUsageCard query={minimaxUsageQuery} />}
             {openDesignUsageQuery && <OpenDesignUsageCard query={openDesignUsageQuery} />}
+            {zaiUsageQuery && <ZaiUsageCard query={zaiUsageQuery} />}
             {backend.name === 'grok' && grokUsage && <GrokUsageCompact usage={grokUsage} />}
           </div>
         )}

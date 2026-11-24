@@ -1,6 +1,6 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
 import {
-  ApiError, fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage, fetchOpenDesignUsage,
+  ApiError, fetchBackendStatsSeries, fetchGrokUsage, fetchMiniMaxUsage, fetchOpenDesignUsage, fetchZaiUsage,
   fetchOverview, fetchRequests, fetchStats, fetchStatsSeries,
   fetchUpstreamErrors, fetchZcodeOffers, fetchZcodeQuota,
 } from './api.ts'
@@ -29,6 +29,7 @@ export const queryKeys = {
   zcodeOffers: ['zcode-offers'],
   minimaxUsage: ['minimax-usage'],
   openDesignUsage: ['opendesign-usage'],
+  zaiUsage: ['zai-usage'],
 } as const
 
 const usageOptions = { refetchInterval: 60_000, retry: retryTransient(1) }
@@ -102,11 +103,17 @@ export const dashboardQueries = {
     queryFn: ({ signal }) => fetchOpenDesignUsage(signal),
     enabled,
   }),
+  zaiUsage: (enabled: boolean) => queryOptions({
+    ...usageOptions,
+    queryKey: queryKeys.zaiUsage,
+    queryFn: ({ signal }) => fetchZaiUsage(signal),
+    enabled,
+  }),
 }
 
 const liveQueryRoots = new Set<string>([
   queryKeys.stats[0], queryKeys.series[0], queryKeys.errors[0], queryKeys.requests[0],
-  queryKeys.grokUsage[0], queryKeys.zcodeQuota[0], queryKeys.minimaxUsage[0], queryKeys.openDesignUsage[0],
+  queryKeys.grokUsage[0], queryKeys.zcodeQuota[0], queryKeys.minimaxUsage[0], queryKeys.openDesignUsage[0], queryKeys.zaiUsage[0],
 ])
 
 export function refreshLiveQueries(queryClient: QueryClient) {

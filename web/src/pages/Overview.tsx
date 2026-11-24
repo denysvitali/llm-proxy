@@ -12,6 +12,7 @@ import GrokUsageCard from '../components/GrokUsageCard'
 import ZcodeUsageCard from '../components/ZcodeUsageCard'
 import MiniMaxUsageCard from '../components/MiniMaxUsageCard'
 import OpenDesignUsageCard from '../components/OpenDesignUsageCard'
+import ZaiUsageCard from '../components/ZaiUsageCard'
 import { PageHeader } from '../components/PageHeader'
 import { PageSection } from '../components/PageSection'
 import { clampRate, fmtInt, fmtTps } from '../format'
@@ -40,6 +41,8 @@ export default function OverviewPage() {
   const minimaxUsageQ = useQuery(dashboardQueries.minimaxUsage(minimaxUsageEnabled))
   const openDesignUsageEnabled = ov?.openDesignUsage?.configured ?? false
   const openDesignUsageQ = useQuery(dashboardQueries.openDesignUsage(openDesignUsageEnabled))
+  const zaiUsageEnabled = ov?.zaiUsage?.configured ?? false
+  const zaiUsageQ = useQuery(dashboardQueries.zaiUsage(zaiUsageEnabled))
   const [range, setRange] = useState('24h')
   const seriesQ = useQuery(dashboardQueries.series(range))
   const errorsQ = useQuery(dashboardQueries.errors())
@@ -62,7 +65,7 @@ export default function OverviewPage() {
   const successRatio = totals.requests ? totals.successes / totals.requests : Number.NaN
   const successPercent = totals.requests ? `${(100 * clampRate(successRatio)).toFixed(1)}%` : '—'
 
-  const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax', openDesignUsageEnabled && 'Open Design'].filter((name): name is string => Boolean(name))
+  const usageNames = [grokUsageEnabled && 'Grok', zcodeUsageEnabled && 'ZCode', minimaxUsageEnabled && 'MiniMax', openDesignUsageEnabled && 'Open Design', zaiUsageEnabled && 'Z.ai'].filter((name): name is string => Boolean(name))
 
   const coreFailed = statsQ.isError && ovQ.isError && seriesQ.isError && errorsQ.isError && requestsQ.isError
   return (
@@ -150,6 +153,7 @@ export default function OverviewPage() {
               {zcodeUsageEnabled && <ZcodeUsageCard query={zcodeQuotaQ} />}
               {minimaxUsageEnabled && <MiniMaxUsageCard query={minimaxUsageQ} />}
               {openDesignUsageEnabled && <OpenDesignUsageCard query={openDesignUsageQ} />}
+              {zaiUsageEnabled && <ZaiUsageCard query={zaiUsageQ} />}
             </OverviewSubscriptions>
           </OverviewReveal>
         )}

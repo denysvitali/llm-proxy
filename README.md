@@ -266,6 +266,13 @@ different model for older IDs (`glm-4.7` and `glm-4.5-air` answer as
 plan's `GET /api/coding/paas/v4/models`; use `zai/<model>` to pin the backend.
 `base_url` overrides the `https://api.z.ai/api` root.
 
+The dashboard shows the plan's quota (5-hour and weekly prompt windows, the
+monthly MCP tool-call allowance, reset times) using the same API key; `GET
+/api/zai/usage` serves it as JSON, cached for a minute. It reads Z.ai's
+undocumented `GET /api/monitor/usage/quota/limit` (the endpoint behind the
+z.ai usage page), so it may change without notice; unknown limit types are
+skipped.
+
 ### ZCode Start Plan
 
 The `zcode` backend uses the ZCode Start Plan account session. It does not

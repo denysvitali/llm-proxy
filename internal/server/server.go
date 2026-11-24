@@ -30,6 +30,7 @@ type Server struct {
 	zcodeUsageCache  *zcodeUsageCache
 	minimaxUsage     *minimaxUsageCache
 	openDesignUsage  *openDesignUsageCache // nil without a usage key
+	zaiUsage         *zaiUsageCache        // nil without a zai API key
 }
 
 // Dependencies names the components required to assemble a Server. Backends
@@ -90,6 +91,7 @@ func NewWithDependencies(deps Dependencies) *Server {
 		zcodeUsageCache:  newZcodeUsageCache(deps.Accounts.ZCode),
 		minimaxUsage:     newMiniMaxUsageCache(deps.Accounts.MiniMaxCode),
 		openDesignUsage:  newOpenDesignUsageCache(cfg.Backends),
+		zaiUsage:         newZaiUsageCache(cfg.Backends),
 	}
 }
 
@@ -114,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/updates/ws", s.handleUpdatesWebSocket)
 	mux.HandleFunc("GET /api/updates/sse", s.handleUpdatesSSE)
 	mux.HandleFunc("GET /api/opendesign/usage", s.handleOpenDesignUsage)
+	mux.HandleFunc("GET /api/zai/usage", s.handleZaiUsage)
 	for _, provider := range s.accountProviders {
 		provider.registerRoutes(s, mux)
 	}

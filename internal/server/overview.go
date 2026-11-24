@@ -108,6 +108,7 @@ type overviewPage struct {
 	ZcodeUsage    usageMetadata     `json:"zcodeUsage"`
 	MiniMaxUsage  usageMetadata     `json:"minimaxUsage"`
 	OpenDesign    usageMetadata     `json:"openDesignUsage"`
+	ZaiUsage      usageMetadata     `json:"zaiUsage"`
 	HasDefault    bool              `json:"hasDefault"`
 	DefaultRoute  overviewRoute     `json:"defaultRoute"`
 	ExampleModel  string            `json:"exampleModel"`
@@ -172,6 +173,7 @@ func (s *Server) buildOverviewPage(r *http.Request) overviewPage {
 	page.ZcodeUsage = s.zcodeUsageMetadata()
 	page.MiniMaxUsage = s.minimaxUsageMetadata()
 	page.OpenDesign = s.openDesignUsageMetadata()
+	page.ZaiUsage = s.zaiUsageMetadata()
 	page.ExampleModel = exampleModel(page.Backends)
 
 	for _, name := range s.sortedRoutes() {

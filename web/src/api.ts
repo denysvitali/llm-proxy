@@ -239,6 +239,7 @@ export interface Overview {
   zcodeUsage: ZcodeUsageMetadata
   minimaxUsage?: GrokUsageMetadata
   openDesignUsage?: GrokUsageMetadata
+  zaiUsage?: GrokUsageMetadata
   hasDefault: boolean
   defaultRoute: OverviewRoute
   exampleModel: string
@@ -399,6 +400,29 @@ export interface OpenDesignUsage {
 
 export async function fetchOpenDesignUsage(signal?: AbortSignal): Promise<OpenDesignUsage> {
   const usage = await getJSON<OpenDesignUsage>('/api/opendesign/usage', 'GET', signal)
+  return { ...usage, windows: usage.windows ?? [] }
+}
+
+export interface ZaiWindow {
+  kind: 'prompts' | 'tools' | string
+  durationSeconds?: number
+  usedPercent: number
+  used?: number
+  limit?: number
+  remaining?: number
+  resetsAt?: string
+  details?: { name: string; usage: number }[]
+}
+
+export interface ZaiUsage {
+  plan?: string
+  level?: string
+  windows: ZaiWindow[]
+  fetchedAt: string
+}
+
+export async function fetchZaiUsage(signal?: AbortSignal): Promise<ZaiUsage> {
+  const usage = await getJSON<ZaiUsage>('/api/zai/usage', 'GET', signal)
   return { ...usage, windows: usage.windows ?? [] }
 }
 

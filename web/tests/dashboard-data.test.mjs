@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import {
-  ApiError, claimMiniMaxCheckin, claimZcodeOffer, fetchBackendStatsSeries, fetchOpenDesignUsage, fetchStats, fetchStatsSeries, fetchZcodeOffers, fetchZcodeQuota,
+  ApiError, claimMiniMaxCheckin, claimZcodeOffer, fetchBackendStatsSeries, fetchOpenDesignUsage, fetchZaiUsage, fetchStats, fetchStatsSeries, fetchZcodeOffers, fetchZcodeQuota,
 } from '../src/api.ts'
 import { dashboardQueries, dashboardQueryDefaults, queryKeys, refreshLiveQueries } from '../src/queries.ts'
 import { createLiveRefreshScheduler } from '../src/liveRefresh.ts'
@@ -85,6 +85,20 @@ test('Open Design usage normalizes absent windows and is a live usage query', as
   assert.deepEqual((await fetchOpenDesignUsage()).windows, [window])
   assert.equal(dashboardQueries.openDesignUsage(false).enabled, false)
   assert.deepEqual(dashboardQueries.openDesignUsage(true).queryKey, queryKeys.openDesignUsage)
+})
+
+test('Z.ai usage normalizes absent windows and is a live usage query', async (t) => {
+  let body = { level: 'pro', fetchedAt: '2030-01-01T00:00:00Z' }
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    assert.equal(url, '/api/zai/usage')
+    return Response.json(body)
+  })
+  assert.deepEqual((await fetchZaiUsage()).windows, [])
+  const window = { kind: 'prompts', durationSeconds: 18000, usedPercent: 17 }
+  body = { ...body, windows: [window] }
+  assert.deepEqual((await fetchZaiUsage()).windows, [window])
+  assert.equal(dashboardQueries.zaiUsage(false).enabled, false)
+  assert.deepEqual(dashboardQueries.zaiUsage(true).queryKey, queryKeys.zaiUsage)
 })
 
 test('ZCode quota normalizes nullable collections without inventing counters', async (t) => {

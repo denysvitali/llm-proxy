@@ -1,11 +1,12 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import { Badge, Box, Button, Card, Group, Text, Tooltip } from '@mantine/core'
 import { IconChevronRight } from '@tabler/icons-react'
-import type { GrokUsage, MiniMaxUsage, OpenDesignUsage, OverviewBackend } from '../../api'
+import type { GrokUsage, MiniMaxUsage, OpenDesignUsage, OverviewBackend, ZaiUsage } from '../../api'
 import { fmtInt, plural } from '../../format'
 import UptimeBadge from '../UptimeBadge'
 import { MiniMaxUsageCompact } from '../MiniMaxUsageCard'
 import { OpenDesignUsageCompact } from '../OpenDesignUsageCard'
+import { ZaiUsageCompact } from '../ZaiUsageCard'
 import TokenMixBar from '../TokenMixBar'
 import UsageMeter from '../UsageMeter'
 import { periodTypeLabel, usagePercent } from '../usageFormatting'
@@ -28,6 +29,7 @@ export default function ProviderCard({
   grokUsage,
   minimaxUsageQuery,
   openDesignUsageQuery,
+  zaiUsageQuery,
   onInspect,
 }: {
   backend: OverviewBackend
@@ -38,6 +40,7 @@ export default function ProviderCard({
   grokUsage?: GrokUsage
   minimaxUsageQuery?: UseQueryResult<MiniMaxUsage, Error>
   openDesignUsageQuery?: UseQueryResult<OpenDesignUsage, Error>
+  zaiUsageQuery?: UseQueryResult<ZaiUsage, Error>
   onInspect: () => void
 }) {
   const ready = statsState === 'ready'
@@ -126,7 +129,7 @@ export default function ProviderCard({
           </div>
         )}
 
-        {(grokUsage || minimaxUsageQuery || openDesignUsageQuery) && (
+        {(grokUsage || minimaxUsageQuery || openDesignUsageQuery || zaiUsageQuery) && (
           <div className="catalog-provider-usage">
             {grokUsage && <GrokUsageLine usage={grokUsage} />}
             {minimaxUsageQuery &&
@@ -143,6 +146,14 @@ export default function ProviderCard({
               ) : (
                 <Text size="xs" c="dimmed">
                   {openDesignUsageQuery.isPending ? 'Loading Open Design plan…' : 'Usage unavailable'}
+                </Text>
+              ))}
+            {zaiUsageQuery &&
+              (zaiUsageQuery.data ? (
+                <ZaiUsageCompact usage={zaiUsageQuery.data} />
+              ) : (
+                <Text size="xs" c="dimmed">
+                  {zaiUsageQuery.isPending ? 'Loading Z.ai plan…' : 'Usage unavailable'}
                 </Text>
               ))}
           </div>

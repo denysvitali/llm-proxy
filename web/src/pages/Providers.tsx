@@ -37,6 +37,8 @@ export default function ProvidersPage() {
   const minimaxUsage = useQuery(dashboardQueries.minimaxUsage(minimaxEnabled))
   const openDesignEnabled = overview.data?.openDesignUsage?.configured ?? false
   const openDesignUsage = useQuery(dashboardQueries.openDesignUsage(openDesignEnabled))
+  const zaiEnabled = overview.data?.zaiUsage?.configured ?? false
+  const zaiUsage = useQuery(dashboardQueries.zaiUsage(zaiEnabled))
   const palette = useChartPalette()
   const mobile = useMediaQuery('(max-width: 48em)') ?? false
   const [search, setSearch] = useState('')
@@ -228,6 +230,7 @@ export default function ProvidersPage() {
                     openDesignUsageQuery={
                       backend.name === 'opendesign' && openDesignEnabled ? openDesignUsage : undefined
                     }
+                    zaiUsageQuery={backend.name === 'zai' && zaiEnabled ? zaiUsage : undefined}
                     onInspect={() => setSelectedName(backend.name)}
                   />
                 ))}
@@ -282,6 +285,7 @@ export default function ProvidersPage() {
               openDesignUsageQuery={
                 selected.backend.name === 'opendesign' && openDesignEnabled ? openDesignUsage : undefined
               }
+              zaiUsageQuery={selected.backend.name === 'zai' && zaiEnabled ? zaiUsage : undefined}
               series={history.data?.series}
               seriesLoading={history.isPending}
               seriesError={history.error?.message}
