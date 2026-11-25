@@ -158,3 +158,36 @@ func TestRequestPipelineAnthropicTranslationValidation(t *testing.T) {
 		t.Error("invalid translated request reached backend")
 	}
 }
+
+// Replayed MCP connector calls are rendered as text on native Anthropic
+// passthrough: Anthropic-compatible providers reject the block types.
+func TestRequestPipelineNativeFlattensMCPBlocks(t *testing.T) {
+	body := []byte(`{"model":"client","messages":[{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"mcp_tool_use","id":"m1","name":"search","server_name":"docs","input":{"q":"x"}},{"type":"mcp_tool_result","tool_use_id":"m1","is_error":false,"content":[{"type":"text","text":"found"}]}]}]}`)
+	env := &translateEnv{kind: backend.KindAnthropic, body: body}
+	got, err := prepareRouteRequest(route{backend: &fakeBackend{name: "b"}, model: "up"}, resolvedWire{native: true}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		Model    string `json:"model"`
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(got, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Model != "up" {
+		t.Fatalf("model = %q", req.Model)
+	}
+	blocks := req.Messages[0].Content
+	want := []string{"hi", "[MCP tool call docs/search id=m1]\n{\"q\":\"x\"}", "[MCP tool result id=m1]\nfound"}
+	if len(blocks) != len(want) {
+		t.Fatalf("blocks = %v", blocks)
+	}
+	for i, block := range blocks {
+		if block["type"] != "text" || block["text"] != want[i] {
+			t.Fatalf("block %d = %v, want text %q", i, block, want[i])
+		}
+	}
+}

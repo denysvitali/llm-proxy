@@ -967,6 +967,9 @@ annotation on `tool_use` is dropped, tool-search `tool_reference` results become
 a short "Tool X is now available." text (deferred tools are always declared on
 the OpenAI side), and `tool_addition`/`tool_removal` blocks in system messages
 are folded into the request's tool list, which OpenAI declares once up front.
+Replayed MCP connector calls (`mcp_tool_use`/`mcp_tool_result`) become text
+on every route, native Anthropic passthrough included: no backend runs the
+connector and Anthropic-compatible providers such as MiniMax reject the types.
 An empty assistant text block — what a reasoning-only answer becomes on the
 way back to Claude Code — is not replayed to Chat, whose upstreams reject
 empty assistant content. While a Chat upstream streams reasoning that

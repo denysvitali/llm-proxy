@@ -96,6 +96,8 @@ func anthropicInputBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 			if err != nil {
 				return nil, err
 			}
+		case "mcp_tool_use", "mcp_tool_result":
+			block = anthropicBlock{Type: "text", Text: mcpBlockText(part)}
 		case "tool_addition", "tool_removal":
 			// Mid-conversation tool changes; applyAnthropicToolChanges folds
 			// them into the declared tools before translation.

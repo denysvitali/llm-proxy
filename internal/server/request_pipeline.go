@@ -80,6 +80,10 @@ func prepareRouteRequest(rt route, wire resolvedWire, env *translateEnv) ([]byte
 		if err != nil {
 			return nil, errors.New("request body is not valid JSON")
 		}
+		if env.kind == backend.KindAnthropic {
+			// No backend runs Anthropic's MCP connector; replayed calls go as text.
+			rewritten, _ = translate.FlattenMCPBlocks(rewritten)
+		}
 		return rewritten, nil
 	}
 	if env.kind == backend.KindAnthropic {
